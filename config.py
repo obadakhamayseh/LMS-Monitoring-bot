@@ -11,6 +11,8 @@ LMS_MY_COURSES_URL = f"{LMS_BASE_URL}/my/courses.php"
 LMS_API_URL = f"{LMS_BASE_URL}/webservice/rest/server.php"
 
 DATABASE_PATH = "lms_monitor.db"
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+DIRECT_URL = os.getenv("DIRECT_URL", "")
 
 CHECK_INTERVAL_MINUTES = 5
 
