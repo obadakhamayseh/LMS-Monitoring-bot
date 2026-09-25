@@ -192,7 +192,8 @@ async def login_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return STATE_LOGIN_USER
 
 async def login_got_user(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    ctx.user_data["lms_user"] = update.message.text.strip()
+    raw_user = update.message.text.strip()
+    ctx.user_data["lms_user"] = raw_user.translate(str.maketrans('٠١٢٣٤٥٦٧٨٩', '0123456789'))
     try:
         await update.message.delete()
     except Exception:
@@ -219,7 +220,8 @@ async def login_got_user(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return STATE_LOGIN_PASS
 
 async def login_got_pass(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    password = update.message.text.strip()
+    raw_pass = update.message.text.strip()
+    password = raw_pass.translate(str.maketrans('٠١٢٣٤٥٦٧٨٩', '0123456789'))
     username = ctx.user_data.get("lms_user", "")
     tid      = update.effective_user.id
 
@@ -268,13 +270,15 @@ async def login_got_pass(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
     else:
+        err_detail = scraper.error_message or "تحقق من رقم الطالب وكلمة المرور وحاول مجدداً."
         try:
             await bot.edit_message_text(
                 chat_id=update.effective_chat.id,
                 message_id=ctx.user_data.get("login_msg_id"),
                 text=(
                     "❌ *فشل تسجيل الدخول!*\n\n"
-                    "تحقق من رقم الطالب وكلمة المرور وحاول مجدداً."
+                    f"📌 *السبب:* {_esc(err_detail)}\n\n"
+                    "يرجى التأكد من البيانات والمحاولة مجدداً."
                 ),
                 parse_mode=MD,
                 reply_markup=InlineKeyboardMarkup([[

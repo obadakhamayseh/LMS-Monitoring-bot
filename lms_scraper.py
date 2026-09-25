@@ -27,20 +27,25 @@ class LMSScraper:
         self.logged_in = False
         self.user_id: Optional[str] = None
         self.full_name: Optional[str] = None
+        self.error_message: Optional[str] = None
 
     def login(self) -> bool:
+        self.error_message = None
         try:
             logger.info(f"محاولة تسجيل الدخول: {self.username}")
 
             resp = self.session.get(LMS_LOGIN_URL, timeout=30)
-            resp.raise_for_status()
+            if resp.status_code != 200:
+                self.error_message = f"موقع الجامعة غير متاح (رمز {resp.status_code})"
+                logger.error(self.error_message)
+                return False
+
             soup = BeautifulSoup(resp.text, "lxml")
 
             login_token = ""
             token_input = soup.find("input", {"name": "logintoken"})
             if token_input:
                 login_token = token_input.get("value", "")
-            logger.debug(f"Login token: {login_token[:10]}...")
 
             payload = {
                 "username": self.username,
@@ -56,7 +61,12 @@ class LMSScraper:
                 timeout=30,
                 allow_redirects=True
             )
-            resp.raise_for_status()
+
+            if resp.status_code != 200:
+                self.error_message = f"فشل الاستجابة بعد إرسال البيانات (رمز {resp.status_code})"
+                logger.error(self.error_message)
+                return False
+
             soup = BeautifulSoup(resp.text, "lxml")
 
             if self._check_logged_in(soup):
@@ -66,12 +76,22 @@ class LMSScraper:
                 return True
             else:
                 err = soup.find(class_=["loginerrors", "alert-danger", "error"])
-                msg = err.get_text(strip=True) if err else "سبب مجهول"
+                msg = err.get_text(strip=True) if err else "اسم المستخدم أو كلمة المرور غير صحيحة"
+                self.error_message = msg
                 logger.error(f"❌ فشل تسجيل الدخول: {msg}")
                 return False
 
+        except requests.exceptions.Timeout:
+            self.error_message = "انتهت مهلة الاتصال بموقع الجامعة (Timeout)"
+            logger.error(self.error_message)
+            return False
         except requests.RequestException as e:
-            logger.error(f"❌ خطأ شبكي: {e}")
+            self.error_message = f"خطأ في الاتصال بالشبكة: {e}"
+            logger.error(self.error_message)
+            return False
+        except Exception as e:
+            self.error_message = f"خطأ غير متوقع: {e}"
+            logger.error(self.error_message)
             return False
 
     def _check_logged_in(self, soup: BeautifulSoup) -> bool:
