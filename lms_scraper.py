@@ -74,12 +74,24 @@ class LMSScraper:
                 self._extract_user_info(soup)
                 logger.info(f"✅ تسجيل الدخول ناجح - {self.full_name}")
                 return True
-            else:
-                err = soup.find(class_=["loginerrors", "alert-danger", "error"])
-                msg = err.get_text(strip=True) if err else "اسم المستخدم أو كلمة المرور غير صحيحة"
-                self.error_message = msg
-                logger.error(f"❌ فشل تسجيل الدخول: {msg}")
-                return False
+
+            try:
+                my_resp = self.session.get(f"{LMS_BASE_URL}/my/", timeout=15)
+                if my_resp.status_code == 200 and "login" not in my_resp.url:
+                    my_soup = BeautifulSoup(my_resp.text, "lxml")
+                    if self._check_logged_in(my_soup):
+                        self.logged_in = True
+                        self._extract_user_info(my_soup)
+                        logger.info(f"✅ تسجيل الدخول ناجح عبر /my/ - {self.full_name}")
+                        return True
+            except Exception:
+                pass
+
+            err = soup.find(class_=["loginerrors", "alert-danger", "error"]) or soup.find(id="loginerrormessage")
+            msg = err.get_text(strip=True) if err else "اسم المستخدم أو كلمة المرور غير صحيحة"
+            self.error_message = msg
+            logger.error(f"❌ فشل تسجيل الدخول: {msg}")
+            return False
 
         except requests.exceptions.Timeout:
             self.error_message = "انتهت مهلة الاتصال بموقع الجامعة (Timeout)"
@@ -97,10 +109,20 @@ class LMSScraper:
     def _check_logged_in(self, soup: BeautifulSoup) -> bool:
         body = soup.find("body")
         if body:
+            classes = body.get("class", [])
+            if "notloggedin" in classes:
+                return False
             uid = body.get("data-userid", "0")
             if uid and uid != "0":
                 return True
-        if soup.find("a", href=re.compile(r"logout")):
+
+        if soup.find("a", href=re.compile(r"logout", re.I)):
+            return True
+        if soup.find("form", action=re.compile(r"logout", re.I)):
+            return True
+        if soup.find(class_=["userinitials", "userbutton", "usermenu"]):
+            return True
+        if soup.find(attrs={"data-region": "user-menu"}):
             return True
         return False
 

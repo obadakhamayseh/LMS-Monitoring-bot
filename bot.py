@@ -225,6 +225,26 @@ async def login_got_pass(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     username = ctx.user_data.get("lms_user", "")
     tid      = update.effective_user.id
 
+    if not username:
+        bot = update.get_bot()
+        try:
+            await bot.edit_message_text(
+                chat_id=update.effective_chat.id,
+                message_id=ctx.user_data.get("login_msg_id"),
+                text=(
+                    "⚠️ *انتهت الجلسة المؤقتة!*\n\n"
+                    "يرجى إعادة المحاولة من جديد بالضغط على الزر أدناه وإدخال رقم الطالب ثم كلمة المرور."
+                ),
+                parse_mode=MD,
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🔄 البدء من جديد", callback_data="login_start"),
+                    InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
+                ]])
+            )
+        except Exception:
+            pass
+        return ConversationHandler.END
+
     try:
         await update.message.delete()
     except Exception:
