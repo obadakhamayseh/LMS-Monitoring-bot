@@ -3,7 +3,7 @@ import logging
 import re
 from bs4 import BeautifulSoup
 from typing import Optional, List, Dict, Any
-from config import LMS_BASE_URL, LMS_LOGIN_URL
+from config import LMS_BASE_URL, LMS_LOGIN_URL, LMS_PROXY
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,11 @@ class LMSScraper:
         self.password = password
         self.session = requests.Session()
         self.session.headers.update(HEADERS)
+        if LMS_PROXY:
+            self.session.proxies.update({
+                "http": LMS_PROXY,
+                "https": LMS_PROXY,
+            })
         self.logged_in = False
         self.user_id: Optional[str] = None
         self.full_name: Optional[str] = None
