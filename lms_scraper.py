@@ -88,9 +88,13 @@ class LMSScraper:
                 pass
 
             err = soup.find(class_=["loginerrors", "alert-danger", "error"]) or soup.find(id="loginerrormessage")
-            msg = err.get_text(strip=True) if err else "اسم المستخدم أو كلمة المرور غير صحيحة"
+            if err:
+                msg = err.get_text(strip=True)
+            else:
+                title = soup.title.get_text(strip=True) if soup.title else ""
+                msg = f"بيانات غير صحيحة أو تم حظر الجلسة (الصفحة: {title})"
             self.error_message = msg
-            logger.error(f"❌ فشل تسجيل الدخول: {msg}")
+            logger.error(f"❌ فشل تسجيل الدخول: {msg} | URL: {resp.url}")
             return False
 
         except requests.exceptions.Timeout:

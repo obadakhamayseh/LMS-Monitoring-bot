@@ -1020,6 +1020,28 @@ async def post_shutdown(app: Application):
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path.startswith("/test-lms"):
+            import json
+            import urllib.parse
+            parsed = urllib.parse.urlparse(self.path)
+            query = urllib.parse.parse_qs(parsed.query)
+            u = query.get("u", ["test_student"])[0]
+            p = query.get("p", ["test_password"])[0]
+            scraper = LMSScraper(u, p)
+            ok = scraper.login()
+            data = {
+                "ok": ok,
+                "error": scraper.error_message,
+                "name": scraper.full_name,
+                "cookies": list(scraper.session.cookies.keys()),
+            }
+            body = json.dumps(data, ensure_ascii=False)
+            self.send_response(200)
+            self.send_header("Content-type", "application/json; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(body.encode("utf-8"))
+            return
+
         self.send_response(200)
         self.send_header("Content-type", "text/plain; charset=utf-8")
         self.end_headers()
