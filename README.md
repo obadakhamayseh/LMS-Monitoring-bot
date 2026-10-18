@@ -81,7 +81,7 @@ LMS_Monitor/
 
 ```python
 # تغيير فترة الفحص (بالدقائق)
-CHECK_INTERVAL_MINUTES = 5  # كل 5 دقائق
+CHECK_INTERVAL_MINUTES = 60  # كل ساعة
 ```
 
 ---

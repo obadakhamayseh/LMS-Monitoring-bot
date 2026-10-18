@@ -75,7 +75,7 @@ def init_db():
                     notify_assign   INTEGER DEFAULT 1,
                     notify_quiz     INTEGER DEFAULT 1,
                     notify_resource INTEGER DEFAULT 1,
-                    check_interval  INTEGER DEFAULT 600,
+                    check_interval  INTEGER DEFAULT 60,
                     created_at      TIMESTAMPTZ DEFAULT NOW(),
                     last_check      TEXT
                 )
@@ -137,7 +137,7 @@ def init_db():
                     notify_assign   INTEGER DEFAULT 1,
                     notify_quiz     INTEGER DEFAULT 1,
                     notify_resource INTEGER DEFAULT 1,
-                    check_interval  INTEGER DEFAULT 600,
+                    check_interval  INTEGER DEFAULT 60,
                     created_at      TEXT    DEFAULT (datetime('now','localtime')),
                     last_check      TEXT
                 )
@@ -187,6 +187,15 @@ def init_db():
                     UNIQUE(telegram_id, content_id)
                 )
             """)
+        # Migrate users from the old 10-hour default to the new 1-hour default
+        # once, without overwriting later per-user interval choices.
+        db.execute("CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY)")
+        interval_migration = "check_interval_600_to_60_v1"
+        if not db.fetchone("SELECT version FROM schema_migrations WHERE version=?",
+                           (interval_migration,)):
+            db.execute("UPDATE users SET check_interval=60 WHERE check_interval=600")
+            db.execute("INSERT INTO schema_migrations (version) VALUES (?)",
+                       (interval_migration,))
     logger.info("DB initialised")
 
 def save_user(telegram_id, lms_username, lms_password,

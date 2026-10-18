@@ -50,7 +50,7 @@ def _esc(text: str) -> str:
     return text
 
 def _format_interval(minutes: int) -> str:
-    minutes = int(minutes or 600)
+    minutes = int(minutes or 60)
     if minutes >= 60:
         hours = minutes // 60
         rem_min = minutes % 60
@@ -591,7 +591,7 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not courses:
             await q.answer("لا توجد مواد مراقَبة!\nأضف مادة أولاً.", show_alert=True); return
         db.set_monitoring(tid, True)
-        iv_txt = _format_interval(user.get("check_interval", 600))
+        iv_txt = _format_interval(user.get("check_interval", 60))
         clist = "\n".join(f"  • *{_esc(c['course_name'][:40])}*" for c in courses)
         await _send(q.message,
             f"🟢 *تم تفعيل المراقبة بنجاح!*\n\n"
@@ -726,7 +726,7 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         uname   = _esc(user.get("full_name") or user["lms_username"])
         std_id  = _esc(user.get("lms_username") or "")
 
-        iv_txt  = _format_interval(user.get("check_interval", 600))
+        iv_txt  = _format_interval(user.get("check_interval", 60))
 
         await _send(q.message,
             f"📊 *الإحصائيات والحالة*\n"
@@ -951,7 +951,7 @@ async def _render_settings(msg_obj, user, edit=False):
     a  = "🔔 مفعل" if user.get("notify_assign",   1) else "🔕 معطل"
     q  = "🔔 مفعل" if user.get("notify_quiz",     1) else "🔕 معطل"
     r  = "🔔 مفعل" if user.get("notify_resource", 1) else "🔕 معطل"
-    iv = user.get("check_interval", 600)
+    iv = user.get("check_interval", 60)
     iv_txt = _format_interval(iv)
 
     keyboard = [

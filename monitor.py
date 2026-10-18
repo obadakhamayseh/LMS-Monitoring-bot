@@ -85,7 +85,7 @@ class MonitorEngine:
     async def _check_user(self, user: dict):
         import time
         tid  = user["telegram_id"]
-        interval_sec = user.get("check_interval", 600) * 60
+        interval_sec = user.get("check_interval", 60) * 60
 
         last_check = user.get("last_check")
         if last_check:
