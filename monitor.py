@@ -12,45 +12,6 @@ import database as db
 
 logger = logging.getLogger(__name__)
 
-ASSIGN_MSG = """
-📚 *{event}!*
-
-📖 المادة: *{course}*
-📝 عنوان الواجب: *{name}*
-⏰ الموعد النهائي: `{due}`
-🔗 [افتح الواجب هنا]({url})
-
-_تم اكتشافه بواسطة بوت مراقب LMS_
-""".strip()
-
-QUIZ_MSG = """
-📝 *{event}!*
-
-📖 المادة: *{course}*
-❓ عنوان الكويز: *{name}*
-⏰ متاح حتى: `{due}`
-🔗 [افتح الكويز هنا]({url})
-
-_تم اكتشافه بواسطة بوت مراقب LMS_
-""".strip()
-
-RESOURCE_MSG = """
-📎 *{event}!*
-
-📖 المادة: *{course}*
-📁 الملف/المورد: *{name}*
-🔗 [افتح المورد هنا]({url})
-
-_تم اكتشافه بواسطة بوت مراقب LMS_
-""".strip()
-
-def _esc(text: str) -> str:
-    if not text:
-        return ""
-    for ch in ["_", "*", "`", "["]:
-        text = text.replace(ch, f"\\{ch}")
-    return text
-
 def _canonical_content_url(url: str) -> str:
     """Normalize volatile Moodle link parameters before checking for updates."""
     if not url:
@@ -243,13 +204,34 @@ class MonitorEngine:
         tid = int(user["telegram_id"])
         sent_count = 0
         complete = True
+        events = []
         for course in courses:
             if scraper.session_expired:
                 complete = False
                 break
-            count, course_complete = await self._check_course(tid, user, scraper, course)
-            sent_count += count
+            course_events, course_complete = await self._check_course(
+                tid, user, scraper, course
+            )
+            events.extend(course_events)
             complete = complete and course_complete
+
+        for chunk_events, message in self._build_change_chunks(events):
+            for event in chunk_events:
+                if event["is_new"]:
+                    self._mark_new_seen(event)
+            sent = await self._send(tid, message, plain=True)
+            if sent:
+                for event in chunk_events:
+                    self._save_change(event)
+                sent_count += len(chunk_events)
+            else:
+                for event in chunk_events:
+                    if event["is_new"]:
+                        db.delete_seen(
+                            event["telegram_id"], event["content_id"],
+                            event["content_type"],
+                        )
+                complete = False
         return sent_count, complete
 
     async def _check_course(self, tid, user, scraper, course):
@@ -263,117 +245,182 @@ class MonitorEngine:
 
         if not scraper.last_fetch_ok:
             logger.warning(f"Incomplete LMS content response for user {tid}, course {cid}")
-            return 0, False
+            return [], False
 
         assignments = content.get("assignments", [])
         if self.reminder_engine:
             self.reminder_engine.register_assignments(tid, cid, assignments)
 
-        sent_count = 0
-        complete = True
+        events = []
 
         for item in assignments:
-            sent, ok = await self._notify_item(
+            event = self._collect_change(
                 tid, cid, cname, item, "assign", user.get("notify_assign", 1)
             )
-            sent_count += int(sent)
-            complete = complete and ok
+            if event:
+                events.append(event)
 
         for item in content.get("quizzes", []):
-            sent, ok = await self._notify_item(
+            event = self._collect_change(
                 tid, cid, cname, item, "quiz", user.get("notify_quiz", 1)
             )
-            sent_count += int(sent)
-            complete = complete and ok
+            if event:
+                events.append(event)
 
         for item in content.get("resources", []):
-            sent, ok = await self._notify_item(
+            event = self._collect_change(
                 tid, cid, cname, item, "resource", user.get("notify_resource", 1)
             )
-            sent_count += int(sent)
-            complete = complete and ok
+            if event:
+                events.append(event)
 
-        return sent_count, complete
+        return events, True
 
-    async def _notify_item(self, tid, cid, cname, item, content_type, enabled):
+    def _collect_change(self, tid, cid, cname, item, content_type, enabled):
         content_id = str(item["id"])
         name = item.get("name", "")
         url = item.get("url", "")
         due = item.get("due_date", "")
         existing = db.get_seen_content(tid, content_id, content_type)
         is_new = existing is None
-        is_update = bool(existing and (
-            (existing.get("content_name") or "") != name or
-            _canonical_content_url(existing.get("content_url") or "") !=
-                _canonical_content_url(url) or
-            (existing.get("due_date") or "") != due
-        ))
+        changes = []
+        if existing:
+            old_name = existing.get("content_name") or ""
+            old_url = existing.get("content_url") or ""
+            old_due = existing.get("due_date") or ""
+            if old_name != name:
+                changes.append(
+                    f"تغيّر الاسم: «{self._one_line(old_name)}» ← «{self._one_line(name)}»"
+                )
+            if old_due != due:
+                changes.append(
+                    f"تغيّر موعد التسليم: «{self._one_line(old_due)}» ← "
+                    f"«{self._one_line(due)}»"
+                )
+            if _canonical_content_url(old_url) != _canonical_content_url(url):
+                changes.append("تم تغيير رابط المحتوى")
 
-        if not is_new and not is_update:
+        if not is_new and not changes:
             # Refresh the stored link if only its temporary query token changed.
             if (existing.get("content_url") or "") != url:
                 db.update_seen_content(tid, content_id, content_type, name, url, due)
-            return False, True
+            return None
 
         if not enabled:
             if is_new:
                 db.mark_seen(tid, cid, content_id, content_type, name, url, due)
             else:
                 db.update_seen_content(tid, content_id, content_type, name, url, due)
-            return False, True
+            return None
 
-        template = {
-            "assign": ASSIGN_MSG,
-            "quiz": QUIZ_MSG,
-            "resource": RESOURCE_MSG,
-        }[content_type]
-        event = {
-            "assign": "واجب جديد تم نشره" if is_new else "تم تحديث الواجب",
-            "quiz": "كويز جديد تم نشره" if is_new else "تم تحديث الكويز",
-            "resource": "محتوى جديد تم نشره" if is_new else "تم تحديث المحتوى",
-        }[content_type]
-        text = template.format(
-            event=event,
-            course=_esc(cname),
-            name=_esc(name),
-            due=_esc(due or "غير محدد"),
-            url=url,
+        return {
+            "telegram_id": tid,
+            "course_id": cid,
+            "course_name": cname,
+            "content_id": content_id,
+            "content_type": content_type,
+            "name": name,
+            "url": url,
+            "due": due,
+            "is_new": is_new,
+            "changes": changes,
+        }
+
+    @staticmethod
+    def _one_line(value):
+        return " ".join(str(value or "غير محدد").split())
+
+    def _build_change_chunks(self, events, max_chars=3400):
+        if not events:
+            return []
+
+        labels = {"assign": "واجب", "quiz": "كويز", "resource": "مورد"}
+        grouped = {}
+        for event in events:
+            grouped.setdefault(
+                (event["course_id"], event["course_name"]), []
+            ).append(event)
+
+        chunks = []
+        current_events = []
+        current_lines = []
+        current_course = None
+
+        for (course_id, course_name), course_events in grouped.items():
+            for event in course_events:
+                course_key = (course_id, course_name)
+                item_label = labels.get(event["content_type"], "محتوى")
+                status = "🆕 جديد" if event["is_new"] else "✏️ تحديث"
+                block = []
+                if current_course != course_key:
+                    block.append(f"📚 المادة: {self._one_line(course_name)}")
+                block.append(
+                    f"{status} {item_label}: {self._one_line(event['name'])}"
+                )
+                if event["is_new"]:
+                    block.append(f"   التغيير: إضافة {item_label} جديد للمادة")
+                else:
+                    block.extend(f"   • {change}" for change in event["changes"])
+                if event["is_new"] and event["due"]:
+                    block.append(f"   • موعد التسليم: {self._one_line(event['due'])}")
+                if event["url"]:
+                    block.append(f"   🔗 {event['url']}")
+
+                proposed = "\n".join(current_lines + block)
+                if current_events and len(proposed) > max_chars:
+                    chunks.append((current_events, "\n".join(current_lines)))
+                    current_events = []
+                    current_lines = []
+                    current_course = None
+                    if not block or not block[0].startswith("📚 المادة:"):
+                        block.insert(0, f"📚 المادة: {self._one_line(course_name)}")
+
+                current_lines.extend(block)
+                current_events.append(event)
+                current_course = course_key
+
+        if current_events:
+            chunks.append((current_events, "\n".join(current_lines)))
+
+        total = len(events)
+        return [
+            (
+                chunk_events,
+                f"🔔 ملخص تغييرات المواد ({index}/{len(chunks)})\n"
+                f"عدد التغييرات: {total}\n\n{body}",
+            )
+            for index, (chunk_events, body) in enumerate(chunks, start=1)
+        ]
+
+    @staticmethod
+    def _mark_new_seen(event):
+        db.mark_seen(
+            event["telegram_id"], event["course_id"], event["content_id"],
+            event["content_type"], event["name"], event["url"], event["due"],
         )
 
-        keyboard = None
-        if content_type == "assign" and url:
-            keyboard = InlineKeyboardMarkup([[
-                InlineKeyboardButton("🔗 افتح الواجب", url=url)
-            ]])
-
-        # Store before sending; remove it on failure so the next scan retries.
-        if is_new:
-            db.mark_seen(tid, cid, content_id, content_type, name, url, due)
-
-        sent = await self._send(tid, text, keyboard=keyboard)
-        if not sent:
-            if is_new:
-                db.delete_seen(tid, content_id, content_type)
-            return False, False
-
-        if is_update:
-            db.update_seen_content(tid, content_id, content_type, name, url, due)
-        return True, True
+    @staticmethod
+    def _save_change(event):
+        if not event["is_new"]:
+            db.update_seen_content(
+                event["telegram_id"], event["content_id"], event["content_type"],
+                event["name"], event["url"], event["due"],
+            )
 
     async def _send(self, chat_id: int, text: str,
-                    keyboard: InlineKeyboardMarkup = None):
+                    keyboard: InlineKeyboardMarkup = None, plain: bool = False):
         try:
             await self.bot.send_message(
                 chat_id=chat_id,
                 text=text,
-                parse_mode=MD,
+                parse_mode=None if plain else MD,
                 disable_web_page_preview=True,
                 reply_markup=keyboard,
             )
             await asyncio.sleep(0.3)
             return True
         except TelegramError as e:
-            logger.warning(f"Markdown notification failed for {chat_id}; retrying plain: {e}")
+            logger.warning(f"Notification send failed for {chat_id}; retrying plain: {e}")
             try:
                 await self.bot.send_message(
                     chat_id=chat_id,
