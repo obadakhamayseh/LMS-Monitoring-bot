@@ -3,7 +3,7 @@ import time
 import sqlite3
 import logging
 from datetime import datetime
-from config import DATABASE_PATH, DATABASE_URL, DIRECT_URL
+from config import DATABASE_PATH, DATABASE_URL, DIRECT_URL, CHECK_INTERVAL_MINUTES
 
 try:
     import psycopg
@@ -75,7 +75,7 @@ def init_db():
                     notify_assign   INTEGER DEFAULT 1,
                     notify_quiz     INTEGER DEFAULT 1,
                     notify_resource INTEGER DEFAULT 1,
-                    check_interval  INTEGER DEFAULT 60,
+                    check_interval  INTEGER DEFAULT 5,
                     created_at      TIMESTAMPTZ DEFAULT NOW(),
                     last_check      TEXT
                 )
@@ -137,7 +137,7 @@ def init_db():
                     notify_assign   INTEGER DEFAULT 1,
                     notify_quiz     INTEGER DEFAULT 1,
                     notify_resource INTEGER DEFAULT 1,
-                    check_interval  INTEGER DEFAULT 60,
+                    check_interval  INTEGER DEFAULT 5,
                     created_at      TEXT    DEFAULT (datetime('now','localtime')),
                     last_check      TEXT
                 )
@@ -203,14 +203,15 @@ def save_user(telegram_id, lms_username, lms_password,
     with DBContext() as db:
         db.execute("""
             INSERT INTO users (telegram_id, lms_username, lms_password,
-                               lms_user_id, full_name)
-            VALUES (?,?,?,?,?)
+                               lms_user_id, full_name, check_interval)
+            VALUES (?,?,?,?,?,?)
             ON CONFLICT(telegram_id) DO UPDATE SET
                 lms_username = excluded.lms_username,
                 lms_password = excluded.lms_password,
                 lms_user_id  = excluded.lms_user_id,
                 full_name    = excluded.full_name
-        """, (telegram_id, lms_username, lms_password, lms_user_id, full_name))
+        """, (telegram_id, lms_username, lms_password, lms_user_id, full_name,
+              CHECK_INTERVAL_MINUTES))
 
 def get_user(telegram_id):
     with DBContext() as db:
@@ -306,6 +307,31 @@ def is_seen(telegram_id, content_id, content_type) -> bool:
         )
         return row is not None
 
+def get_seen_content(telegram_id, content_id, content_type):
+    with DBContext() as db:
+        return db.fetchone(
+            """SELECT * FROM seen_content
+               WHERE telegram_id=? AND content_id=? AND content_type=?""",
+            (telegram_id, str(content_id), content_type)
+        )
+
+def delete_seen(telegram_id, content_id, content_type):
+    with DBContext() as db:
+        db.execute(
+            "DELETE FROM seen_content WHERE telegram_id=? AND content_id=? AND content_type=?",
+            (telegram_id, str(content_id), content_type)
+        )
+
+def update_seen_content(telegram_id, content_id, content_type,
+                        name=None, url=None, due=None):
+    with DBContext() as db:
+        db.execute(
+            """UPDATE seen_content
+               SET content_name=?, content_url=?, due_date=?
+               WHERE telegram_id=? AND content_id=? AND content_type=?""",
+            (name, url, due, telegram_id, str(content_id), content_type)
+        )
+
 def mark_seen(telegram_id, course_id, content_id, content_type,
               name=None, url=None, due=None):
     with DBContext() as db:
@@ -340,10 +366,20 @@ def upsert_reminder(telegram_id, course_id, content_id, content_name,
             ON CONFLICT(telegram_id, content_id) DO UPDATE SET
                 content_name = excluded.content_name,
                 content_url  = excluded.content_url,
+                reminded_24h = CASE WHEN reminders.due_ts IS NULL OR reminders.due_ts <> excluded.due_ts THEN 0 ELSE reminders.reminded_24h END,
+                reminded_3h  = CASE WHEN reminders.due_ts IS NULL OR reminders.due_ts <> excluded.due_ts THEN 0 ELSE reminders.reminded_3h END,
+                reminded_1h  = CASE WHEN reminders.due_ts IS NULL OR reminders.due_ts <> excluded.due_ts THEN 0 ELSE reminders.reminded_1h END,
                 due_ts       = excluded.due_ts,
                 due_str      = excluded.due_str
         """, (telegram_id, course_id, str(content_id), content_name,
               content_url, due_ts, due_str))
+
+def delete_reminder(telegram_id, content_id):
+    with DBContext() as db:
+        db.execute(
+            "DELETE FROM reminders WHERE telegram_id=? AND content_id=?",
+            (telegram_id, str(content_id))
+        )
 
 def get_pending_reminders(now_ts: int) -> list:
     with DBContext() as db:
@@ -352,6 +388,7 @@ def get_pending_reminders(now_ts: int) -> list:
             FROM reminders r
             JOIN users u ON r.telegram_id = u.telegram_id
             WHERE u.is_monitoring = 1
+              AND u.notify_assign = 1
               AND r.due_ts IS NOT NULL
               AND r.due_ts > ?
               AND (

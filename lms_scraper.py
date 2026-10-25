@@ -1,11 +1,16 @@
 import requests
 import logging
 import re
+import time
 from bs4 import BeautifulSoup
 from typing import Optional, List, Dict, Any
 from config import LMS_BASE_URL, LMS_LOGIN_URL, LMS_PROXY
 
 logger = logging.getLogger(__name__)
+
+
+class LMSAuthError(RuntimeError):
+    """Raised when an authenticated LMS page still requires a login."""
 
 HEADERS = {
     "User-Agent": (
@@ -33,13 +38,61 @@ class LMSScraper:
         self.user_id: Optional[str] = None
         self.full_name: Optional[str] = None
         self.error_message: Optional[str] = None
+        self.last_request_at = 0.0
+        self.last_fetch_ok = True
+        self.session_expired = False
+
+    def _is_login_response(self, resp) -> bool:
+        if "/login/index.php" in (resp.url or "").lower():
+            return True
+
+        soup = BeautifulSoup(resp.text, "lxml")
+        body = soup.find("body")
+        if body and "notloggedin" in body.get("class", []):
+            return True
+
+        login_form = soup.find("form", id="login") or soup.find(
+            "form", action=re.compile(r"/login/index\.php", re.I)
+        )
+        return bool(login_form and login_form.find("input", {"name": "username"}))
+
+    def authenticated_get(self, url: str, timeout: int = 30, **kwargs):
+        """Fetch a protected page and report an expired session to the monitor."""
+        resp = self.session.get(url, timeout=timeout, **kwargs)
+        self.last_request_at = time.monotonic()
+        if not self._is_login_response(resp):
+            return resp
+
+        logger.info("LMS session expired; waiting for the user to sign in again")
+        self.logged_in = False
+        self.session_expired = True
+        self.last_fetch_ok = False
+        raise LMSAuthError("انتهت جلسة LMS؛ يرجى تسجيل الدخول مجدداً من البوت")
+
+    def keep_session_alive(self) -> bool:
+        """Make a lightweight authenticated request to keep an active monitor session warm."""
+        try:
+            resp = self.authenticated_get(f"{LMS_BASE_URL}/my/", timeout=15)
+            resp.raise_for_status()
+            return self.logged_in
+        except Exception as e:
+            self.last_fetch_ok = False
+            logger.warning(f"LMS keepalive failed: {e}")
+            return False
+
+    def close(self):
+        self.session.close()
 
     def login(self) -> bool:
+        self.logged_in = False
+        self.session_expired = False
+        self.last_fetch_ok = True
         self.error_message = None
         try:
             logger.info(f"محاولة تسجيل الدخول: {self.username}")
 
             resp = self.session.get(LMS_LOGIN_URL, timeout=30)
+            self.last_request_at = time.monotonic()
             if resp.status_code != 200:
                 self.error_message = f"موقع الجامعة غير متاح (رمز {resp.status_code})"
                 logger.error(self.error_message)
@@ -66,6 +119,7 @@ class LMSScraper:
                 timeout=30,
                 allow_redirects=True
             )
+            self.last_request_at = time.monotonic()
 
             if resp.status_code != 200:
                 self.error_message = f"فشل الاستجابة بعد إرسال البيانات (رمز {resp.status_code})"
@@ -197,9 +251,7 @@ class LMSScraper:
         seen_ids: set = set()
 
         try:
-            resp = self.session.get(
-                f"{LMS_BASE_URL}/my/courses.php", timeout=30
-            )
+            resp = self.authenticated_get(f"{LMS_BASE_URL}/my/courses.php", timeout=30)
             soup = BeautifulSoup(resp.text, "lxml")
             self._extract_courses_from_soup(soup, courses, seen_ids)
         except Exception as e:
@@ -207,7 +259,7 @@ class LMSScraper:
 
         if not courses:
             try:
-                resp = self.session.get(f"{LMS_BASE_URL}/my/", timeout=30)
+                resp = self.authenticated_get(f"{LMS_BASE_URL}/my/", timeout=30)
                 soup = BeautifulSoup(resp.text, "lxml")
                 self._extract_courses_from_soup(soup, courses, seen_ids)
             except Exception as e:
@@ -259,6 +311,7 @@ class LMSScraper:
         return name if len(name) > 2 else ""
 
     def get_course_content(self, course_id: int) -> Dict[str, List[Dict]]:
+        self.last_fetch_ok = True
         result = {
             "assignments": [],
             "quizzes": [],
@@ -268,10 +321,14 @@ class LMSScraper:
         result["assignments"] = self._get_activities_from_index(
             course_id, "assign"
         )
+        if not self.last_fetch_ok:
+            return result
 
         result["quizzes"] = self._get_activities_from_index(
             course_id, "quiz"
         )
+        if not self.last_fetch_ok:
+            return result
 
         result["resources"] = self._get_resources_from_course_page(course_id)
 
@@ -283,7 +340,7 @@ class LMSScraper:
         activities = []
 
         try:
-            resp = self.session.get(url, timeout=30)
+            resp = self.authenticated_get(url, timeout=30)
             if resp.status_code == 404:
                 return activities
             resp.raise_for_status()
@@ -351,6 +408,7 @@ class LMSScraper:
             logger.debug(f"المادة {course_id} | {mod_type}: {len(activities)} نشاط")
 
         except Exception as e:
+            self.last_fetch_ok = False
             logger.error(f"خطأ في جلب {mod_type} للمادة {course_id}: {e}")
 
         return activities
@@ -360,7 +418,7 @@ class LMSScraper:
         url = f"{LMS_BASE_URL}/course/view.php?id={course_id}"
 
         try:
-            resp = self.session.get(url, timeout=30)
+            resp = self.authenticated_get(url, timeout=30)
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "lxml")
 
@@ -407,6 +465,7 @@ class LMSScraper:
             logger.debug(f"المادة {course_id} | resources: {len(resources)} مورد")
 
         except Exception as e:
+            self.last_fetch_ok = False
             logger.error(f"خطأ في جلب موارد المادة {course_id}: {e}")
 
         return resources
@@ -417,7 +476,7 @@ class LMSScraper:
 
         try:
             url = f"{LMS_BASE_URL}/course/view.php?id={course_id}"
-            resp = self.session.get(url, timeout=30)
+            resp = self.authenticated_get(url, timeout=30)
 
             if resp.status_code == 404 or "login" in resp.url:
                 return None, content
@@ -446,6 +505,7 @@ class LMSScraper:
             content = self.get_course_content(course_id)
 
         except Exception as e:
+            self.last_fetch_ok = False
             logger.error(f"get_course_info error for {course_id}: {e}")
             return None, content
 
@@ -453,7 +513,7 @@ class LMSScraper:
 
     def get_assignment_due_date(self, assignment_url: str) -> str:
         try:
-            resp = self.session.get(assignment_url, timeout=20)
+            resp = self.authenticated_get(assignment_url, timeout=20)
             soup = BeautifulSoup(resp.text, "lxml")
 
             for row in soup.find_all("tr"):

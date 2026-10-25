@@ -8,7 +8,7 @@ from datetime import datetime
 
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
-    BotCommand, ReplyKeyboardRemove, ForceReply
+    BotCommand, ReplyKeyboardRemove
 )
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -50,7 +50,7 @@ def _esc(text: str) -> str:
     return text
 
 def _format_interval(minutes: int) -> str:
-    minutes = int(minutes or 60)
+    minutes = int(minutes or 5)
     if minutes >= 60:
         hours = minutes // 60
         rem_min = minutes % 60
@@ -267,7 +267,32 @@ async def login_got_pass(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if ok:
         db.save_user(tid, username, password, scraper.user_id, scraper.full_name)
+        engine: MonitorEngine = ctx.bot_data.get("engine")
+        if engine:
+            await engine.resume_user(tid, scraper)
+        else:
+            scraper.close()
         full = _esc(scraper.full_name or username)
+        monitored_courses = db.get_user_courses(tid, monitored_only=True)
+        registered_courses = db.get_user_courses(tid)
+        if monitored_courses and db.get_user(tid).get("is_monitoring"):
+            next_step = "موادك المراقبة محفوظة، وسيستأنف البوت متابعتها قريباً."
+            actions = [
+                InlineKeyboardButton("📚 موادي المسجلة", callback_data="my_courses"),
+                InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
+            ]
+        elif registered_courses:
+            next_step = "موادك المسجلة محفوظة. يمكنك مراجعتها أو تشغيل المراقبة من القائمة الرئيسية."
+            actions = [
+                InlineKeyboardButton("📚 موادي المسجلة", callback_data="my_courses"),
+                InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
+            ]
+        else:
+            next_step = "ابدأ الآن بإضافة المواد التي تريد مراقبتها:"
+            actions = [
+                InlineKeyboardButton("➕ إضافة مادة", callback_data="add_course_start"),
+                InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
+            ]
 
         try:
             await bot.edit_message_text(
@@ -277,14 +302,11 @@ async def login_got_pass(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                     f"✅ *تم تسجيل الدخول بنجاح!*\n\n"
                     f"👤 الطالب: *{full}*\n"
                     f"🆔 الرقم الجامعي: `{_esc(username)}`\n\n"
-                    "ابدأ الآن بإضافة المواد التي تريد مراقبتها:"
+                    f"{next_step}"
                 ),
                 parse_mode=MD,
                 reply_markup=InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton("➕ إضافة مادة", callback_data="add_course_start"),
-                        InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
-                    ]
+                    actions
                 ])
             )
         except Exception:
@@ -591,7 +613,7 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not courses:
             await q.answer("لا توجد مواد مراقَبة!\nأضف مادة أولاً.", show_alert=True); return
         db.set_monitoring(tid, True)
-        iv_txt = _format_interval(user.get("check_interval", 60))
+        iv_txt = _format_interval(user.get("check_interval", 5))
         clist = "\n".join(f"  • *{_esc(c['course_name'][:40])}*" for c in courses)
         await _send(q.message,
             f"🟢 *تم تفعيل المراقبة بنجاح!*\n\n"
@@ -702,8 +724,10 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             count, status = await engine.force_check(tid)
             result = (f"🔔 تم إرسال *{count}* إشعار جديد!" if count > 0
                       else "😴 لا يوجد محتوى جديد حالياً.")
+            if status != "ok":
+                result += f"\n\n⚠️ {status}"
             await _send(q.message,
-                f"✅ *اكتمل الفحص!*\n\n{result}",
+                f"{'✅' if status == 'ok' else '⚠️'} *{'اكتمل الفحص' if status == 'ok' else 'الفحص غير مكتمل'}*\n\n{result}",
                 [
                     [InlineKeyboardButton("⚡ فحص مجدداً", callback_data="check_now")],
                     [
@@ -726,7 +750,7 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         uname   = _esc(user.get("full_name") or user["lms_username"])
         std_id  = _esc(user.get("lms_username") or "")
 
-        iv_txt  = _format_interval(user.get("check_interval", 60))
+        iv_txt  = _format_interval(user.get("check_interval", 5))
 
         await _send(q.message,
             f"📊 *الإحصائيات والحالة*\n"
@@ -951,7 +975,7 @@ async def _render_settings(msg_obj, user, edit=False):
     a  = "🔔 مفعل" if user.get("notify_assign",   1) else "🔕 معطل"
     q  = "🔔 مفعل" if user.get("notify_quiz",     1) else "🔕 معطل"
     r  = "🔔 مفعل" if user.get("notify_resource", 1) else "🔕 معطل"
-    iv = user.get("check_interval", 60)
+    iv = user.get("check_interval", 5)
     iv_txt = _format_interval(iv)
 
     keyboard = [
@@ -965,11 +989,14 @@ async def _render_settings(msg_obj, user, edit=False):
             InlineKeyboardButton(f"الملفات والموارد: {r}", callback_data="sett_resource"),
         ],
         [
-            InlineKeyboardButton(f"{'✔ ' if iv==30   else ''}30 د",  callback_data="iv_30"),
-            InlineKeyboardButton(f"{'✔ ' if iv==60   else ''}1 س",   callback_data="iv_60"),
-            InlineKeyboardButton(f"{'✔ ' if iv==360  else ''}6 س",   callback_data="iv_360"),
-            InlineKeyboardButton(f"{'✔ ' if iv==600  else ''}10 س",  callback_data="iv_600"),
-            InlineKeyboardButton(f"{'✔ ' if iv==1440 else ''}24 س",  callback_data="iv_1440"),
+            InlineKeyboardButton(f"{'✔ ' if iv==5    else ''}5 د",  callback_data="iv_5"),
+            InlineKeyboardButton(f"{'✔ ' if iv==10   else ''}10 د", callback_data="iv_10"),
+            InlineKeyboardButton(f"{'✔ ' if iv==30   else ''}30 د", callback_data="iv_30"),
+            InlineKeyboardButton(f"{'✔ ' if iv==60   else ''}1 س",  callback_data="iv_60"),
+        ],
+        [
+            InlineKeyboardButton(f"{'✔ ' if iv==360  else ''}6 س",  callback_data="iv_360"),
+            InlineKeyboardButton(f"{'✔ ' if iv==1440 else ''}24 س", callback_data="iv_1440"),
         ],
         [
             InlineKeyboardButton("📚 موادي المسجلة", callback_data="my_courses"),
@@ -1002,11 +1029,11 @@ async def post_init(app: Application):
     await app.bot.set_my_commands([
         BotCommand("start", "🏠 القائمة الرئيسية"),
     ])
-    engine = MonitorEngine(app.bot)
-    app.bot_data["engine"] = engine
-    await engine.start()
     rem_engine = ReminderEngine(app.bot)
     app.bot_data["reminder_engine"] = rem_engine
+    engine = MonitorEngine(app.bot, rem_engine)
+    app.bot_data["engine"] = engine
+    await engine.start()
     await rem_engine.start()
     logger.info("Bot ready — button-only mode!")
 
@@ -1020,26 +1047,9 @@ async def post_shutdown(app: Application):
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path.startswith("/test-lms"):
-            import json
-            import urllib.parse
-            parsed = urllib.parse.urlparse(self.path)
-            query = urllib.parse.parse_qs(parsed.query)
-            u = query.get("u", ["test_student"])[0]
-            p = query.get("p", ["test_password"])[0]
-            scraper = LMSScraper(u, p)
-            ok = scraper.login()
-            data = {
-                "ok": ok,
-                "error": scraper.error_message,
-                "name": scraper.full_name,
-                "cookies": list(scraper.session.cookies.keys()),
-            }
-            body = json.dumps(data, ensure_ascii=False)
-            self.send_response(200)
-            self.send_header("Content-type", "application/json; charset=utf-8")
+        if self.path.split("?", 1)[0] not in ("/", "/health"):
+            self.send_response(404)
             self.end_headers()
-            self.wfile.write(body.encode("utf-8"))
             return
 
         self.send_response(200)
@@ -1091,7 +1101,10 @@ def main():
                 MessageHandler(filters.TEXT & ~filters.COMMAND, login_got_pass)
             ],
         },
-        fallbacks=[CallbackQueryHandler(cancel_conv, pattern="^cancel_conv$")],
+        fallbacks=[
+            CallbackQueryHandler(login_start, pattern="^login_start$"),
+            CallbackQueryHandler(cancel_conv, pattern="^cancel_conv$"),
+        ],
         per_message=False,
     )
 

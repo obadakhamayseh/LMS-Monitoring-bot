@@ -2,7 +2,7 @@ import re
 import time
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from telegram import Bot
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
@@ -33,7 +33,12 @@ def _parse_due_date(due_str: str):
     if not due_str:
         return None
 
-    s = due_str.strip()
+    s = due_str.strip().translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789"))
+
+    def _timestamp(dt):
+        # Moodle displays course dates in Jordan local time; do not depend on
+        # the host machine's timezone (Render commonly runs in UTC).
+        return int(dt.replace(tzinfo=timezone(timedelta(hours=3))).timestamp())
 
     formats = [
         "%A, %d %B %Y, %I:%M %p",
@@ -50,8 +55,7 @@ def _parse_due_date(due_str: str):
     for fmt in formats:
         try:
             dt = datetime.strptime(s, fmt)
-            ts = int(dt.timestamp()) - (3 * 3600)
-            return ts
+            return _timestamp(dt)
         except ValueError:
             continue
 
@@ -85,7 +89,7 @@ def _parse_due_date(due_str: str):
             elif am_pm and am_pm.lower() == "am" and h == 12:
                 h = 0
             dt = datetime(int(year), m, int(day), h, int(minute))
-            return int(dt.timestamp()) - (3 * 3600)
+            return _timestamp(dt)
         except Exception:
             pass
 
@@ -142,8 +146,8 @@ class ReminderEngine:
             else:
                 continue
 
-            await self._send_reminder(tid, rem, slot)
-            db.mark_reminded(rid, field)
+            if await self._send_reminder(tid, rem, slot):
+                db.mark_reminded(rid, field)
 
     async def _send_reminder(self, tid: int, rem: dict, slot: str):
         emoji = REMIND_MSG[slot]
@@ -171,19 +175,35 @@ class ReminderEngine:
                 parse_mode=MD, disable_web_page_preview=True
             )
             logger.info(f"Reminder sent ({slot}) to {tid} for '{rem.get('content_name')}'")
+            return True
         except TelegramError as e:
             logger.error(f"Reminder send error: {e}")
+            try:
+                await self.bot.send_message(
+                    chat_id=tid, text=text,
+                    parse_mode=None, disable_web_page_preview=True
+                )
+                return True
+            except Exception as retry_error:
+                logger.error(f"Reminder retry failed for {tid}: {retry_error}")
+                return False
+        except Exception as e:
+            logger.error(f"Reminder send error: {e}")
+            return False
 
     def register_assignments(self, telegram_id: int, course_id: int,
                               assignments: list):
         for a in assignments:
             due_str = a.get("due_date", "")
             if not due_str:
+                db.delete_reminder(telegram_id, a["id"])
                 continue
             due_ts = _parse_due_date(due_str)
             if not due_ts:
+                db.delete_reminder(telegram_id, a["id"])
                 continue
             if due_ts <= int(time.time()):
+                db.delete_reminder(telegram_id, a["id"])
                 continue
             db.upsert_reminder(
                 telegram_id  = telegram_id,
