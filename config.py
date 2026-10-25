@@ -14,7 +14,7 @@ DATABASE_PATH = "lms_monitor.db"
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 DIRECT_URL = os.getenv("DIRECT_URL", "")
 LMS_PROXY = os.getenv("LMS_PROXY", "")
-CHECK_INTERVAL_MINUTES = 5
+CHECK_INTERVAL_MINUTES = 10
 
 MESSAGES = {
     "welcome": (

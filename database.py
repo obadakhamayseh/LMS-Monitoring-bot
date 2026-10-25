@@ -75,7 +75,7 @@ def init_db():
                     notify_assign   INTEGER DEFAULT 1,
                     notify_quiz     INTEGER DEFAULT 1,
                     notify_resource INTEGER DEFAULT 1,
-                    check_interval  INTEGER DEFAULT 5,
+                    check_interval  INTEGER DEFAULT 10,
                     created_at      TIMESTAMPTZ DEFAULT NOW(),
                     last_check      TEXT
                 )
@@ -137,7 +137,7 @@ def init_db():
                     notify_assign   INTEGER DEFAULT 1,
                     notify_quiz     INTEGER DEFAULT 1,
                     notify_resource INTEGER DEFAULT 1,
-                    check_interval  INTEGER DEFAULT 5,
+                    check_interval  INTEGER DEFAULT 10,
                     created_at      TEXT    DEFAULT (datetime('now','localtime')),
                     last_check      TEXT
                 )
@@ -194,6 +194,12 @@ def init_db():
         if not db.fetchone("SELECT version FROM schema_migrations WHERE version=?",
                            (interval_migration,)):
             db.execute("UPDATE users SET check_interval=60 WHERE check_interval=600")
+            db.execute("INSERT INTO schema_migrations (version) VALUES (?)",
+                       (interval_migration,))
+        interval_migration = "check_interval_5_to_10_v1"
+        if not db.fetchone("SELECT version FROM schema_migrations WHERE version=?",
+                           (interval_migration,)):
+            db.execute("UPDATE users SET check_interval=10 WHERE check_interval=5")
             db.execute("INSERT INTO schema_migrations (version) VALUES (?)",
                        (interval_migration,))
     logger.info("DB initialised")
