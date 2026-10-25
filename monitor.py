@@ -1,6 +1,7 @@
 import logging
 import asyncio
 import time
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 
@@ -49,6 +50,27 @@ def _esc(text: str) -> str:
     for ch in ["_", "*", "`", "["]:
         text = text.replace(ch, f"\\{ch}")
     return text
+
+def _canonical_content_url(url: str) -> str:
+    """Normalize volatile Moodle link parameters before checking for updates."""
+    if not url:
+        return ""
+    try:
+        parts = urlsplit(url)
+        query = sorted(
+            (key, value)
+            for key, value in parse_qsl(parts.query, keep_blank_values=True)
+            if key.casefold() != "__ncforminfo"
+        )
+        return urlunsplit((
+            parts.scheme.casefold(),
+            parts.netloc.casefold(),
+            parts.path,
+            urlencode(query, doseq=True),
+            "",
+        ))
+    except ValueError:
+        return url.strip()
 
 class MonitorEngine:
 
@@ -282,11 +304,15 @@ class MonitorEngine:
         is_new = existing is None
         is_update = bool(existing and (
             (existing.get("content_name") or "") != name or
-            (existing.get("content_url") or "") != url or
+            _canonical_content_url(existing.get("content_url") or "") !=
+                _canonical_content_url(url) or
             (existing.get("due_date") or "") != due
         ))
 
         if not is_new and not is_update:
+            # Refresh the stored link if only its temporary query token changed.
+            if (existing.get("content_url") or "") != url:
+                db.update_seen_content(tid, content_id, content_type, name, url, due)
             return False, True
 
         if not enabled:
