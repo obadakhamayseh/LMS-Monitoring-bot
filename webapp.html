@@ -3,17 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>LMS Monitor - لوحة التحكم الذكية</title>
+    <title>بوابة المتابعة الأكاديمية - جامعة مؤتة</title>
     <!-- Telegram WebApp SDK -->
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Font Awesome Icons -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <!-- Google Fonts: Cairo -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     
     <script>
         tailwind.config = {
@@ -24,14 +22,19 @@
                         cairo: ['Cairo', 'sans-serif'],
                     },
                     colors: {
-                        tg: {
-                            bg: 'var(--tg-theme-bg-color, #0f172a)',
-                            secondary: 'var(--tg-theme-secondary-bg-color, #1e293b)',
-                            text: 'var(--tg-theme-text-color, #f8fafc)',
-                            hint: 'var(--tg-theme-hint-color, #94a3b8)',
-                            link: 'var(--tg-theme-link-color, #38bdf8)',
-                            btn: 'var(--tg-theme-button-color, #3b82f6)',
-                            btnText: 'var(--tg-theme-button-text-color, #ffffff)',
+                        obsidian: '#090A0F',
+                        surface: {
+                            DEFAULT: '#11131B',
+                            hover: '#161924',
+                            border: 'rgba(255, 255, 255, 0.07)',
+                        },
+                        muted: '#7E8695',
+                        subtle: '#4A5060',
+                        accent: {
+                            blue: '#38BDF8',
+                            emerald: '#10B981',
+                            amber: '#F59E0B',
+                            rose: '#F43F5E',
                         }
                     }
                 }
@@ -39,310 +42,242 @@
         }
     </script>
     <style>
-        body {
-            font-family: 'Cairo', sans-serif;
-            background-color: var(--tg-theme-bg-color, #0f172a);
-            color: var(--tg-theme-text-color, #f8fafc);
+        * {
+            font-family: 'Cairo', -apple-system, BlinkMacSystemFont, sans-serif;
             -webkit-tap-highlight-color: transparent;
+            box-sizing: border-box;
         }
-        .hide-scrollbar::-webkit-scrollbar {
-            display: none;
+        body {
+            background-color: #090A0F;
+            color: #F8FAFC;
         }
-        .hide-scrollbar {
-            -ms-overflow-style: none;
-            scrollbar-width: none;
+        .hairline-border {
+            border: 1px solid rgba(255, 255, 255, 0.07);
         }
-        .glass {
-            background: rgba(30, 41, 59, 0.7);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.08);
+        .hairline-top {
+            border-top: 1px solid rgba(255, 255, 255, 0.07);
         }
-        .tab-active {
-            color: #38bdf8;
-            border-bottom: 2px solid #38bdf8;
+        .card-surface {
+            background-color: #11131B;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+        }
+        .card-surface:hover {
+            border-color: rgba(255, 255, 255, 0.12);
+        }
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 4px;
+            height: 4px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
         }
     </style>
 </head>
-<body class="min-h-screen pb-24 transition-colors duration-200">
+<body class="min-h-screen pb-24 selection:bg-sky-500/20 selection:text-sky-300">
 
-    <!-- Top App Bar -->
-    <header class="sticky top-0 z-30 glass px-4 py-3 flex items-center justify-between border-b border-slate-700/50">
-        <div class="flex items-center gap-3">
-            <div class="w-10 h-10 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-blue-500/20 text-white text-lg font-bold">
-                <i class="fa-solid fa-graduation-cap"></i>
-            </div>
-            <div>
-                <h1 id="userFullName" class="font-bold text-sm leading-tight text-slate-100">جاري التحميل...</h1>
-                <div class="flex items-center gap-1.5 text-xs text-slate-400">
-                    <span id="userStdId">...</span>
-                    <span>•</span>
-                    <span class="text-blue-400">جامعة مؤتة</span>
+    <!-- Top Executive Header -->
+    <header class="sticky top-0 z-30 bg-[#090A0F]/90 backdrop-blur-xl hairline-border border-t-0 border-x-0 px-4 py-3.5">
+        <div class="max-w-lg mx-auto flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div id="userAvatar" class="w-10 h-10 rounded-full bg-gradient-to-br from-zinc-800 to-zinc-900 hairline-border flex items-center justify-center font-bold text-sm text-zinc-200">
+                    --
+                </div>
+                <div>
+                    <h1 id="userFullName" class="font-bold text-sm text-zinc-100 leading-tight">جاري المزامنة...</h1>
+                    <div class="flex items-center gap-2 text-[11px] text-zinc-400 mt-0.5">
+                        <span id="userStdId" class="font-mono tracking-wider text-zinc-300">...</span>
+                        <span>•</span>
+                        <span>جامعة مؤتة</span>
+                    </div>
                 </div>
             </div>
-        </div>
-        <div class="flex items-center gap-2">
-            <button onclick="refreshData()" class="w-9 h-9 rounded-xl bg-slate-800/80 border border-slate-700 flex items-center justify-center text-slate-300 hover:text-white active:scale-95 transition-all">
-                <i id="refreshIcon" class="fa-solid fa-arrows-rotate text-sm"></i>
-            </button>
-            <div id="monitoringBadge" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                <span>نشط</span>
+
+            <div class="flex items-center gap-2">
+                <button onclick="refreshData()" title="تحديث البيانات" class="w-8 h-8 rounded-full bg-zinc-900 hairline-border flex items-center justify-center text-zinc-400 hover:text-white transition-all active:scale-90">
+                    <svg id="refreshIcon" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                    </svg>
+                </button>
+                <div id="monitoringBadge" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                    <span>متصل</span>
+                </div>
             </div>
         </div>
     </header>
 
     <!-- Main Container -->
-    <main class="max-w-md mx-auto px-4 pt-4">
+    <main class="max-w-lg mx-auto px-4 pt-4 space-y-4">
 
-        <!-- TAB 1: DASHBOARD -->
-        <section id="tab-dashboard" class="space-y-4">
-            
-            <!-- Welcome & Progress Banner -->
-            <div class="p-4 rounded-3xl bg-gradient-to-br from-indigo-900/60 via-slate-900/80 to-slate-900 border border-indigo-500/20 shadow-xl relative overflow-hidden">
-                <div class="absolute -left-6 -bottom-6 w-32 h-32 bg-indigo-500/10 rounded-full blur-2xl"></div>
-                <div class="flex items-center justify-between mb-3">
-                    <div>
-                        <span class="text-xs font-semibold text-indigo-400 uppercase tracking-wider">لوحة المتابعة الذكية</span>
-                        <h2 class="text-base font-bold text-white mt-0.5">جاهز للفصل الدراسي؟ 🚀</h2>
-                    </div>
-                    <span id="progressPercent" class="text-xl font-extrabold text-blue-400">0%</span>
+        <!-- Executive Metrics Strip -->
+        <div class="card-surface rounded-2xl p-4">
+            <div class="grid grid-cols-3 divide-x divide-x-reverse divide-white/[0.06] text-center">
+                <div class="px-2">
+                    <p class="text-[11px] text-zinc-400 font-medium">المقررات</p>
+                    <p id="metricCoursesCount" class="text-xl font-bold text-zinc-100 mt-1">0</p>
+                    <p class="text-[10px] text-zinc-500 mt-0.5">مادة نشطة</p>
                 </div>
-                <!-- Progress Bar -->
-                <div class="w-full bg-slate-800/80 rounded-full h-2.5 p-0.5 border border-slate-700/50 mb-2">
-                    <div id="progressBar" class="bg-gradient-to-r from-blue-500 to-emerald-400 h-1.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+                <div class="px-2">
+                    <p class="text-[11px] text-zinc-400 font-medium">المحتويات</p>
+                    <p id="metricItemsCount" class="text-xl font-bold text-zinc-100 mt-1">0</p>
+                    <p class="text-[10px] text-zinc-500 mt-0.5">مرصودة بالنظام</p>
                 </div>
-                <div class="flex justify-between items-center text-xs text-slate-400">
-                    <span>نسبة تسليم الواجبات المقررة</span>
-                    <span id="progressRatio" class="font-semibold text-slate-300">0 / 0 واجب</span>
+                <div class="px-2">
+                    <p class="text-[11px] text-zinc-400 font-medium">دورة الفحص</p>
+                    <p id="metricInterval" class="text-xl font-bold text-zinc-100 mt-1">10د</p>
+                    <p class="text-[10px] text-zinc-500 mt-0.5">معدل التحديث</p>
                 </div>
             </div>
 
-            <!-- 4 Quick Metric Cards -->
-            <div class="grid grid-cols-2 gap-3">
-                <div class="p-3.5 rounded-2xl glass hover:border-slate-600 transition-all">
-                    <div class="flex items-center justify-between text-blue-400 mb-1">
-                        <i class="fa-solid fa-book-open text-base"></i>
-                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-400">المواد</span>
-                    </div>
-                    <div id="metricCoursesCount" class="text-2xl font-bold text-white">0</div>
-                    <p class="text-xs text-slate-400 mt-0.5">مادة مسجلة</p>
-                </div>
-
-                <div class="p-3.5 rounded-2xl glass hover:border-slate-600 transition-all">
-                    <div class="flex items-center justify-between text-rose-400 mb-1">
-                        <i class="fa-solid fa-clock text-base"></i>
-                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-rose-500/10 text-rose-400">قيد الانتظار</span>
-                    </div>
-                    <div id="metricPendingCount" class="text-2xl font-bold text-white">0</div>
-                    <p class="text-xs text-slate-400 mt-0.5">واجبات غير مسلّمة</p>
-                </div>
-
-                <div class="p-3.5 rounded-2xl glass hover:border-slate-600 transition-all">
-                    <div class="flex items-center justify-between text-emerald-400 mb-1">
-                        <i class="fa-solid fa-circle-check text-base"></i>
-                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400">تم الإنجاز</span>
-                    </div>
-                    <div id="metricSubmittedCount" class="text-2xl font-bold text-white">0</div>
-                    <p class="text-xs text-slate-400 mt-0.5">واجبات مسلّمة</p>
-                </div>
-
-                <div class="p-3.5 rounded-2xl glass hover:border-slate-600 transition-all">
-                    <div class="flex items-center justify-between text-amber-400 mb-1">
-                        <i class="fa-solid fa-bolt text-base"></i>
-                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-400">الفحص</span>
-                    </div>
-                    <div id="metricInterval" class="text-xl font-bold text-white mt-0.5">10د</div>
-                    <p class="text-xs text-slate-400 mt-0.5">فترة الفحص الدوري</p>
-                </div>
-            </div>
-
-            <!-- Quick Action Buttons -->
-            <div class="flex gap-2">
-                <button onclick="triggerToggleMonitor()" id="btnToggleMonitor" class="flex-1 py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 active:scale-95 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20 transition-all">
-                    <i class="fa-solid fa-power-off"></i>
-                    <span id="btnToggleMonitorText">إيقاف المراقبة</span>
+            <!-- Quick Operational Actions -->
+            <div class="hairline-top pt-3 mt-3 flex items-center justify-between gap-2">
+                <button onclick="triggerForceCheck()" id="btnForceCheck" class="flex-1 py-2 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 active:scale-95 text-zinc-200 hairline-border text-xs font-semibold flex items-center justify-center gap-1.5 transition-all">
+                    <svg class="w-3.5 h-3.5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                    </svg>
+                    <span>فحص فوري</span>
                 </button>
-                <button onclick="switchTab('tab-deadlines')" class="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 border border-slate-700 font-bold text-xs flex items-center justify-center gap-2 transition-all">
-                    <i class="fa-solid fa-calendar-check text-indigo-400"></i>
-                    <span>جدول المواعيد</span>
+
+                <button onclick="triggerToggleMonitor()" id="btnToggleMonitor" class="flex-1 py-2 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 active:scale-95 text-zinc-200 hairline-border text-xs font-semibold flex items-center justify-center gap-1.5 transition-all">
+                    <svg class="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 5.636a9 9 0 010 12.728m0 0l-2.829-2.829m2.829 2.829L21 21M15.536 8.464a5 5 0 010 7.072m0 0l-2.829-2.829m-4.243 2.829a4.978 4.978 0 01-1.414-2.83m-1.414 5.658a9 9 0 01-2.167-9.238m7.824-2.167a1 1 0 111.414 1.414"></path>
+                    </svg>
+                    <span id="btnToggleMonitorText">المراقبة: نشطة</span>
                 </button>
             </div>
+        </div>
 
-            <!-- Urgent Deadlines Preview -->
-            <div class="space-y-2 pt-2">
-                <div class="flex items-center justify-between">
-                    <h3 class="text-sm font-bold text-slate-200 flex items-center gap-2">
-                        <i class="fa-solid fa-triangle-exclamation text-rose-400 text-xs"></i>
-                        <span>أقرب المواعيد النهائية</span>
-                    </h3>
-                    <button onclick="switchTab('tab-deadlines')" class="text-xs text-blue-400 hover:underline">عرض الكل</button>
-                </div>
-                <div id="urgentDeadlinesList" class="space-y-2">
-                    <div class="p-4 text-center text-xs text-slate-500 glass rounded-2xl">جاري فحص المواعيد...</div>
-                </div>
-            </div>
+        <!-- Section Navigation Tabs -->
+        <div class="flex items-center gap-1.5 bg-zinc-950 p-1 rounded-xl hairline-border text-xs">
+            <button onclick="switchTab('tab-courses')" id="tabBtn-courses" class="flex-1 py-2 rounded-lg font-bold bg-zinc-800 text-zinc-100 shadow-sm transition-all">
+                المقررات الدراسية (<span id="coursesBadge">0</span>)
+            </button>
+            <button onclick="switchTab('tab-deadlines')" id="tabBtn-deadlines" class="flex-1 py-2 rounded-lg font-medium text-zinc-400 hover:text-zinc-200 transition-all">
+                المهام والواجبات (<span id="deadlinesBadge">0</span>)
+            </button>
+            <button onclick="switchTab('tab-settings')" id="tabBtn-settings" class="flex-1 py-2 rounded-lg font-medium text-zinc-400 hover:text-zinc-200 transition-all">
+                التفضيلات
+            </button>
+        </div>
 
-        </section>
-
-        <!-- TAB 2: COURSES -->
-        <section id="tab-courses" class="space-y-3 hidden">
-            <div class="flex items-center justify-between mb-2">
-                <h2 class="text-base font-bold text-white">موادي المسجلة في LMS</h2>
-                <span id="coursesBadgeTotal" class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">0 مواد</span>
-            </div>
-
+        <!-- ==================== TAB 1: COURSES ==================== -->
+        <section id="tab-courses" class="space-y-3">
+            <!-- Search bar -->
             <div class="relative">
-                <i class="fa-solid fa-magnifying-glass absolute right-3.5 top-3.5 text-xs text-slate-400"></i>
-                <input type="text" id="courseSearchInput" oninput="filterCourses()" placeholder="ابحث عن اسم المادة أو رقمها..." class="w-full bg-slate-800/80 border border-slate-700 rounded-xl pr-9 pl-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors">
+                <input type="text" id="courseSearchInput" oninput="filterCourses()" placeholder="بحث في المقررات أو المحتويات..." class="w-full bg-[#11131B] hairline-border rounded-xl px-4 py-2.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-500 transition-all">
             </div>
 
-            <div id="coursesListContainer" class="space-y-3 pt-1">
-                <!-- Courses injected here -->
+            <!-- Real Courses List -->
+            <div id="coursesListContainer" class="space-y-3">
+                <div class="p-8 text-center text-xs text-zinc-500 card-surface rounded-2xl">
+                    جاري تحميل بيانات المقررات المسجلة...
+                </div>
             </div>
         </section>
 
-        <!-- TAB 3: DEADLINES & SCHEDULE -->
+        <!-- ==================== TAB 2: DEADLINES ==================== -->
         <section id="tab-deadlines" class="space-y-3 hidden">
-            <div class="flex items-center justify-between mb-2">
-                <h2 class="text-base font-bold text-white">جدول الواجبات والكويزات</h2>
-                <div class="flex items-center gap-1 bg-slate-800/80 p-1 rounded-xl border border-slate-700/60 text-[11px]">
-                    <button onclick="setDeadlinesFilter('all')" id="btnFilterAll" class="px-2.5 py-1 rounded-lg bg-blue-600 text-white font-semibold transition-all">الكل</button>
-                    <button onclick="setDeadlinesFilter('pending')" id="btnFilterPending" class="px-2.5 py-1 rounded-lg text-slate-400 font-semibold hover:text-white transition-all">بانتظار الحل</button>
-                    <button onclick="setDeadlinesFilter('submitted')" id="btnFilterSubmitted" class="px-2.5 py-1 rounded-lg text-slate-400 font-semibold hover:text-white transition-all">مسلّمة</button>
+            <!-- Filter Pills -->
+            <div class="flex items-center justify-between text-xs">
+                <span class="text-zinc-400 font-medium">جدول التكاليف والامتحانات</span>
+                <div class="flex items-center gap-1 bg-zinc-950 p-1 rounded-lg hairline-border text-[11px]">
+                    <button onclick="setDeadlinesFilter('all')" id="btnFilterAll" class="px-2 py-0.5 rounded font-semibold bg-zinc-800 text-zinc-200">الكل</button>
+                    <button onclick="setDeadlinesFilter('pending')" id="btnFilterPending" class="px-2 py-0.5 rounded font-medium text-zinc-400 hover:text-white">المعلقة</button>
+                    <button onclick="setDeadlinesFilter('submitted')" id="btnFilterSubmitted" class="px-2 py-0.5 rounded font-medium text-zinc-400 hover:text-white">المسلّمة</button>
                 </div>
             </div>
 
+            <!-- Deadlines Container -->
             <div id="deadlinesListContainer" class="space-y-2.5">
-                <!-- Deadlines list injected here -->
+                <!-- Injected via JS -->
             </div>
         </section>
 
-        <!-- TAB 4: SETTINGS -->
-        <section id="tab-settings" class="space-y-4 hidden">
-            <h2 class="text-base font-bold text-white mb-2">الإعدادات والتفضيلات</h2>
-
-            <!-- Notifications Toggles -->
-            <div class="glass rounded-2xl p-4 space-y-4">
-                <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">إشعارات المحتوى</h3>
-                
-                <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-3">
-                        <div class="w-8 h-8 rounded-lg bg-blue-500/10 text-blue-400 flex items-center justify-center text-sm">
-                            <i class="fa-solid fa-book"></i>
-                        </div>
-                        <div>
-                            <p class="text-xs font-bold text-slate-200">الواجبات والتكاليف</p>
-                            <p class="text-[10px] text-slate-400">إشعار فوري عند إضافة واجب جديد</p>
-                        </div>
+        <!-- ==================== TAB 3: SETTINGS ==================== -->
+        <section id="tab-settings" class="space-y-3 hidden">
+            <div class="card-surface rounded-2xl divide-y divide-white/[0.06]">
+                <div class="p-4 flex items-center justify-between">
+                    <div>
+                        <p class="text-xs font-bold text-zinc-200">إشعارات التكاليف والواجبات</p>
+                        <p class="text-[11px] text-zinc-500 mt-0.5">تنبيه فوري بمجرد إدراج واجب جديد على Moodle</p>
                     </div>
                     <label class="relative inline-flex items-center cursor-pointer">
                         <input type="checkbox" id="toggleAssign" onchange="saveNotificationSettings()" class="sr-only peer">
-                        <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                        <div class="w-9 h-5 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-600"></div>
                     </label>
                 </div>
 
-                <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-3">
-                        <div class="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-400 flex items-center justify-center text-sm">
-                            <i class="fa-solid fa-feather-pointed"></i>
-                        </div>
-                        <div>
-                            <p class="text-xs font-bold text-slate-200">الكويزات والامتحانات</p>
-                            <p class="text-[10px] text-slate-400">إشعار عند إضافة أو فتح كويز</p>
-                        </div>
+                <div class="p-4 flex items-center justify-between">
+                    <div>
+                        <p class="text-xs font-bold text-zinc-200">إشعارات الكويزات والامتحانات</p>
+                        <p class="text-[11px] text-zinc-500 mt-0.5">تنبيه بمواعيد بدء وانتهاء الاختبارات القصيرة</p>
                     </div>
                     <label class="relative inline-flex items-center cursor-pointer">
                         <input type="checkbox" id="toggleQuiz" onchange="saveNotificationSettings()" class="sr-only peer">
-                        <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                        <div class="w-9 h-5 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-600"></div>
                     </label>
                 </div>
 
-                <div class="flex items-center justify-between">
-                    <div class="flex items-center gap-3">
-                        <div class="w-8 h-8 rounded-lg bg-purple-500/10 text-purple-400 flex items-center justify-center text-sm">
-                            <i class="fa-solid fa-paperclip"></i>
-                        </div>
-                        <div>
-                            <p class="text-xs font-bold text-slate-200">السلايدات والمستندات</p>
-                            <p class="text-[10px] text-slate-400">تحميل مباشر لملفات المحاضرات</p>
-                        </div>
+                <div class="p-4 flex items-center justify-between">
+                    <div>
+                        <p class="text-xs font-bold text-zinc-200">إشعارات السلايدات والمحاضرات</p>
+                        <p class="text-[11px] text-zinc-500 mt-0.5">إرسال ملفات PDF والمستندات مباشرة إلى المحادثة</p>
                     </div>
                     <label class="relative inline-flex items-center cursor-pointer">
                         <input type="checkbox" id="toggleResource" onchange="saveNotificationSettings()" class="sr-only peer">
-                        <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                        <div class="w-9 h-5 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-600"></div>
                     </label>
                 </div>
             </div>
 
-            <!-- Check Interval Options -->
-            <div class="glass rounded-2xl p-4 space-y-3">
-                <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider">معدل الفحص الدوري</h3>
-                <p class="text-[11px] text-slate-400">كم مرة تريد أن يفحص البوت نظام الجامعة؟</p>
-                
-                <div class="grid grid-cols-4 gap-2 pt-1">
-                    <button onclick="setCheckInterval(5)" id="btnInterval5" class="py-2 rounded-xl text-xs font-bold border border-slate-700 bg-slate-800 text-slate-300 hover:border-blue-500 transition-all">5 د</button>
-                    <button onclick="setCheckInterval(10)" id="btnInterval10" class="py-2 rounded-xl text-xs font-bold border border-slate-700 bg-slate-800 text-slate-300 hover:border-blue-500 transition-all">10 د</button>
-                    <button onclick="setCheckInterval(30)" id="btnInterval30" class="py-2 rounded-xl text-xs font-bold border border-slate-700 bg-slate-800 text-slate-300 hover:border-blue-500 transition-all">30 د</button>
-                    <button onclick="setCheckInterval(60)" id="btnInterval60" class="py-2 rounded-xl text-xs font-bold border border-slate-700 bg-slate-800 text-slate-300 hover:border-blue-500 transition-all">1 س</button>
+            <!-- Interval Selection -->
+            <div class="card-surface rounded-2xl p-4 space-y-2">
+                <p class="text-xs font-bold text-zinc-200">فترة الفحص الدوري للموقع</p>
+                <p class="text-[11px] text-zinc-500">الفترة الزمنية بين كل محاولة فحص لنظام الجامعة</p>
+                <div class="grid grid-cols-4 gap-2 pt-2">
+                    <button onclick="setCheckInterval(5)" id="btnInterval5" class="py-2 rounded-xl text-xs font-semibold hairline-border bg-zinc-900 text-zinc-300 transition-all">5 دقيقة</button>
+                    <button onclick="setCheckInterval(10)" id="btnInterval10" class="py-2 rounded-xl text-xs font-semibold hairline-border bg-zinc-900 text-zinc-300 transition-all">10 دقائق</button>
+                    <button onclick="setCheckInterval(30)" id="btnInterval30" class="py-2 rounded-xl text-xs font-semibold hairline-border bg-zinc-900 text-zinc-300 transition-all">30 دقيقة</button>
+                    <button onclick="setCheckInterval(60)" id="btnInterval60" class="py-2 rounded-xl text-xs font-semibold hairline-border bg-zinc-900 text-zinc-300 transition-all">1 ساعة</button>
                 </div>
             </div>
 
-            <!-- System Info -->
-            <div class="p-3.5 text-center text-[11px] text-slate-500 space-y-1">
-                <p>بوت مراقب LMS • نظام التعليم الإلكتروني لجامعة مؤتة</p>
-                <p>جميع بيانات الاعتماد مشفرة بأمان بتقنية AES-256</p>
+            <!-- Security Footnote -->
+            <div class="p-4 text-center text-[11px] text-zinc-500 space-y-1">
+                <p>جميع بيانات الاعتماد مشفرة وفق معيار AES-256 المتماثل</p>
+                <p class="font-mono text-zinc-600">LMS Monitor v2.1 • جامعة مؤتة</p>
             </div>
         </section>
 
     </main>
 
-    <!-- Bottom Navigation Bar -->
-    <nav class="fixed bottom-0 left-0 right-0 z-40 glass border-t border-slate-800/80 px-2 py-2">
-        <div class="max-w-md mx-auto grid grid-cols-4 gap-1">
-            <button onclick="switchTab('tab-dashboard')" id="nav-tab-dashboard" class="flex flex-col items-center justify-center py-1.5 text-blue-400 transition-all">
-                <i class="fa-solid fa-house text-base mb-1"></i>
-                <span class="text-[10px] font-bold">الرئيسية</span>
-            </button>
-            <button onclick="switchTab('tab-courses')" id="nav-tab-courses" class="flex flex-col items-center justify-center py-1.5 text-slate-400 hover:text-white transition-all">
-                <i class="fa-solid fa-book-bookmark text-base mb-1"></i>
-                <span class="text-[10px] font-bold">المواد</span>
-            </button>
-            <button onclick="switchTab('tab-deadlines')" id="nav-tab-deadlines" class="flex flex-col items-center justify-center py-1.5 text-slate-400 hover:text-white transition-all">
-                <i class="fa-solid fa-calendar-days text-base mb-1"></i>
-                <span class="text-[10px] font-bold">المواعيد</span>
-            </button>
-            <button onclick="switchTab('tab-settings')" id="nav-tab-settings" class="flex flex-col items-center justify-center py-1.5 text-slate-400 hover:text-white transition-all">
-                <i class="fa-solid fa-sliders text-base mb-1"></i>
-                <span class="text-[10px] font-bold">الإعدادات</span>
-            </button>
-        </div>
-    </nav>
-
-    <!-- App Logic Script -->
+    <!-- Client-side Logic Script -->
     <script>
         const tg = window.Telegram?.WebApp;
         if (tg) {
             tg.ready();
             tg.expand();
             try {
-                tg.setHeaderColor('#0f172a');
-                tg.setBackgroundColor('#0f172a');
+                tg.setHeaderColor('#090A0F');
+                tg.setBackgroundColor('#090A0F');
             } catch(e) {}
         }
 
-        // Global State
         let appData = null;
-        let activeTab = 'tab-dashboard';
+        let activeTab = 'tab-courses';
         let deadlinesFilter = 'all';
 
-        // Extract Telegram ID
         function getTelegramId() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const qTid = urlParams.get('tid');
+            if (qTid && qTid.trim()) return qTid.trim();
+
             if (tg?.initDataUnsafe?.user?.id) {
                 return tg.initDataUnsafe.user.id;
             }
-            const params = new URLSearchParams(window.location.search);
-            return params.get('tid') || null;
+            return null;
         }
 
         function haptic(type = 'light') {
@@ -359,7 +294,7 @@
             const tid = getTelegramId();
             const initData = tg?.initData || '';
             const refreshIcon = document.getElementById('refreshIcon');
-            if (refreshIcon) refreshIcon.classList.add('fa-spin');
+            if (refreshIcon) refreshIcon.classList.add('animate-spin');
 
             try {
                 const url = `/api/user-data?tid=${tid || ''}&initData=${encodeURIComponent(initData)}`;
@@ -375,146 +310,168 @@
                 }
             } catch (err) {
                 console.error('Fetch error:', err);
+                document.getElementById('userFullName').innerText = 'تعذر الاتصال بالخادم';
             } finally {
-                if (refreshIcon) refreshIcon.classList.remove('fa-spin');
+                if (refreshIcon) refreshIcon.classList.remove('animate-spin');
             }
         }
 
         function renderApp() {
             if (!appData) return;
             const u = appData.user;
+            
+            // Header
             document.getElementById('userFullName').innerText = u.full_name || 'طالب';
             document.getElementById('userStdId').innerText = u.lms_username || '';
 
+            // Initials avatar
+            const initials = (u.full_name || 'طالب').trim().split(/\s+/);
+            const avatarTxt = initials.length >= 2 ? (initials[0][0] + initials[1][0]) : initials[0][0];
+            document.getElementById('userAvatar').innerText = avatarTxt;
+
             // Monitoring Badge & Button
             const badge = document.getElementById('monitoringBadge');
-            const btnToggle = document.getElementById('btnToggleMonitor');
             const btnText = document.getElementById('btnToggleMonitorText');
             if (u.is_monitoring) {
-                badge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
-                badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span><span>نشط</span>';
-                btnToggle.className = 'flex-1 py-2.5 px-3 rounded-xl bg-rose-600/90 hover:bg-rose-500 active:scale-95 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-rose-600/20 transition-all';
-                btnText.innerText = 'إيقاف المراقبة';
+                badge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
+                badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span><span>نشط</span>';
+                btnText.innerText = 'المراقبة: نشطة';
             } else {
-                badge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-700/50 text-slate-400 border border-slate-600/40';
-                badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-slate-500"></span><span>متوقفة</span>';
-                btnToggle.className = 'flex-1 py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition-all';
+                badge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-zinc-800 text-zinc-400 border border-zinc-700';
+                badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-zinc-500"></span><span>متوقفة</span>';
                 btnText.innerText = 'تشغيل المراقبة';
             }
 
             // Metrics
             document.getElementById('metricCoursesCount').innerText = appData.courses.length;
-            const pendingDeadlines = appData.deadlines.filter(d => !d.is_submitted);
-            const submittedDeadlines = appData.deadlines.filter(d => d.is_submitted);
-            document.getElementById('metricPendingCount').innerText = pendingDeadlines.length;
-            document.getElementById('metricSubmittedCount').innerText = submittedDeadlines.length;
+            document.getElementById('coursesBadge').innerText = appData.courses.length;
+            
+            let totalItems = 0;
+            appData.courses.forEach(c => {
+                totalItems += (c.items ? c.items.length : 0);
+            });
+            document.getElementById('metricItemsCount').innerText = totalItems;
             document.getElementById('metricInterval').innerText = `${u.check_interval}د`;
+            document.getElementById('deadlinesBadge').innerText = appData.deadlines.length;
 
-            // Progress Bar
-            const prog = appData.progress;
-            document.getElementById('progressPercent').innerText = `${prog.percentage}%`;
-            document.getElementById('progressBar').style.width = `${prog.percentage}%`;
-            document.getElementById('progressRatio').innerText = `${prog.submitted} من ${prog.total} مسلّمة`;
-
-            // Render Urgent Deadlines Preview (Top 3)
-            renderUrgentDeadlines(pendingDeadlines.slice(0, 3));
-
-            // Render Courses Tab
+            // Render Courses
             renderCoursesList(appData.courses);
 
-            // Render Deadlines Tab
+            // Render Deadlines
             renderDeadlinesList(appData.deadlines);
 
-            // Sync Settings Tab
+            // Sync Settings
             document.getElementById('toggleAssign').checked = u.notify_assign;
             document.getElementById('toggleQuiz').checked = u.notify_quiz;
             document.getElementById('toggleResource').checked = u.notify_resource;
             highlightIntervalButton(u.check_interval);
         }
 
-        function renderUrgentDeadlines(items) {
-            const container = document.getElementById('urgentDeadlinesList');
-            if (!items.length) {
-                container.innerHTML = `
-                    <div class="p-4 text-center glass rounded-2xl">
-                        <i class="fa-solid fa-circle-check text-emerald-400 text-xl mb-1"></i>
-                        <p class="text-xs font-bold text-slate-300">أنت في السليم!</p>
-                        <p class="text-[10px] text-slate-500 mt-0.5">لا توجد واجبات متأخرة أو قريبة حالياً</p>
-                    </div>`;
-                return;
-            }
-
-            container.innerHTML = items.map(d => `
-                <div class="p-3.5 rounded-2xl glass hover:border-slate-600 transition-all flex items-center justify-between">
-                    <div class="space-y-1">
-                        <div class="flex items-center gap-1.5">
-                            <span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
-                            <span class="text-[10px] text-slate-400 font-semibold">${escapeHtml(d.course_name)}</span>
-                        </div>
-                        <h4 class="text-xs font-bold text-slate-100">${escapeHtml(d.content_name)}</h4>
-                        <p class="text-[10px] text-rose-400 font-bold flex items-center gap-1">
-                            <i class="fa-solid fa-hourglass-half text-[9px]"></i>
-                            <span>متبقي: ${d.time_remaining}</span>
-                        </p>
-                    </div>
-                    <a href="${d.content_url}" target="_blank" onclick="haptic('light')" class="px-3 py-1.5 rounded-xl bg-blue-600/20 text-blue-400 border border-blue-500/30 text-xs font-bold hover:bg-blue-600 hover:text-white transition-all">
-                        تسليم
-                    </a>
-                </div>
-            `).join('');
-        }
-
         function renderCoursesList(courses) {
             const container = document.getElementById('coursesListContainer');
-            document.getElementById('coursesBadgeTotal').innerText = `${courses.length} مواد`;
             if (!courses.length) {
                 container.innerHTML = `
-                    <div class="p-6 text-center glass rounded-2xl">
-                        <i class="fa-solid fa-folder-open text-slate-500 text-2xl mb-2"></i>
-                        <p class="text-xs text-slate-400">لا توجد مواد مضافة بعد</p>
+                    <div class="p-8 text-center card-surface rounded-2xl space-y-2">
+                        <p class="text-xs font-semibold text-zinc-300">لم يتم إدراج أي مقررات دراسية بعد</p>
+                        <p class="text-[11px] text-zinc-500">استخدم خيار "استيراد موادي تلقائياً" في البوت لسحب المواد مباشرة من LMS</p>
                     </div>`;
                 return;
             }
 
-            container.innerHTML = courses.map(c => `
-                <div class="p-4 rounded-2xl glass hover:border-slate-600 transition-all space-y-3">
-                    <div class="flex items-start justify-between gap-2">
-                        <div class="space-y-0.5">
-                            <div class="flex items-center gap-1.5 text-[10px] text-slate-400">
-                                <span>ID: ${c.id}</span>
-                                <span>•</span>
-                                <span class="${c.is_monitored ? 'text-emerald-400' : 'text-slate-500'} font-semibold">
-                                    ${c.is_monitored ? '🟢 قيد المراقبة' : '🔴 متوقفة'}
-                                </span>
+            container.innerHTML = courses.map((c, idx) => {
+                const assigns = c.stats.assignments || 0;
+                const quizzes = c.stats.quizzes || 0;
+                const resources = c.stats.resources || 0;
+                const items = c.items || [];
+
+                return `
+                <div class="card-surface rounded-2xl overflow-hidden transition-all">
+                    <!-- Course Header Row -->
+                    <div class="p-4 space-y-2.5">
+                        <div class="flex items-start justify-between gap-3">
+                            <div>
+                                <span class="font-mono text-[10px] text-zinc-400 bg-zinc-900 px-2 py-0.5 rounded hairline-border">كود: ${c.id}</span>
+                                <h3 class="text-xs font-bold text-zinc-100 mt-1 leading-snug">${escapeHtml(c.name)}</h3>
                             </div>
-                            <h3 class="text-sm font-bold text-slate-100 leading-tight">${escapeHtml(c.name)}</h3>
+                            <button onclick="toggleCourseMonitoring(${c.id})" class="text-[11px] font-semibold px-2.5 py-1 rounded-lg hairline-border ${c.is_monitored ? 'bg-zinc-900 text-zinc-400 hover:text-rose-400' : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'} transition-all shrink-0">
+                                ${c.is_monitored ? 'إيقاف' : 'تفعيل'}
+                            </button>
                         </div>
-                        <button onclick="toggleCourseMonitoring(${c.id})" class="px-2.5 py-1 rounded-xl text-xs font-bold ${c.is_monitored ? 'bg-slate-800 text-slate-400 hover:text-rose-400' : 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30'} transition-all">
-                            ${c.is_monitored ? 'إيقاف' : 'تفعيل'}
+
+                        <!-- Statistics Badges -->
+                        <div class="flex items-center gap-2 text-[11px] text-zinc-400 font-medium">
+                            <span class="bg-zinc-900/80 px-2 py-1 rounded-lg hairline-border">📚 ${assigns} واجبات</span>
+                            <span class="bg-zinc-900/80 px-2 py-1 rounded-lg hairline-border">📝 ${quizzes} كويزات</span>
+                            <span class="bg-zinc-900/80 px-2 py-1 rounded-lg hairline-border">📎 ${resources} ملفات</span>
+                        </div>
+                    </div>
+
+                    <!-- Expandable Course Material Accordion -->
+                    <div class="hairline-top bg-zinc-950/40 px-4 py-2 flex items-center justify-between text-[11px]">
+                        <button onclick="toggleAccordion('acc-${c.id}')" class="text-zinc-400 hover:text-zinc-200 flex items-center gap-1.5 font-medium transition-all">
+                            <span>استعراض المحتويات (${items.length})</span>
+                            <svg id="acc-icon-${c.id}" class="w-3 h-3 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                            </svg>
                         </button>
-                    </div>
-
-                    <!-- Course Items Metrics Badges -->
-                    <div class="flex gap-2 text-[11px] pt-1">
-                        <span class="flex-1 py-1 px-2 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20 text-center font-semibold">
-                            📚 ${c.stats.assignments} واجبات
-                        </span>
-                        <span class="flex-1 py-1 px-2 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20 text-center font-semibold">
-                            📝 ${c.stats.quizzes} كويزات
-                        </span>
-                        <span class="flex-1 py-1 px-2 rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/20 text-center font-semibold">
-                            📎 ${c.stats.resources} ملفات
-                        </span>
-                    </div>
-
-                    <div class="pt-1 flex justify-end">
-                        <a href="${c.url}" target="_blank" onclick="haptic('light')" class="text-xs text-blue-400 hover:underline flex items-center gap-1">
-                            <span>فتح المادة في موودل LMS</span>
-                            <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
+                        <a href="${c.url}" target="_blank" onclick="haptic('light')" class="text-sky-400 hover:underline flex items-center gap-1 font-medium">
+                            <span>فتح في LMS</span>
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                            </svg>
                         </a>
                     </div>
+
+                    <!-- Accordion Dropdown Content -->
+                    <div id="acc-${c.id}" class="hidden hairline-top divide-y divide-white/[0.04] bg-[#0c0e14] px-4 py-1 text-xs">
+                        ${renderCourseItems(items)}
+                    </div>
                 </div>
-            `).join('');
+                `;
+            }).join('');
+        }
+
+        function renderCourseItems(items) {
+            if (!items.length) {
+                return '<div class="py-3 text-center text-zinc-500 text-[11px]">لا توجد ملفات أو تكاليف مسجلة داخل هذا المقرر</div>';
+            }
+            return items.map(item => {
+                let icon = '📎';
+                let typeColor = 'text-purple-400';
+                if (item.content_type === 'assign') { icon = '📚'; typeColor = 'text-sky-400'; }
+                if (item.content_type === 'quiz') { icon = '📝'; typeColor = 'text-amber-400'; }
+
+                return `
+                <div class="py-2.5 flex items-center justify-between gap-3">
+                    <div class="flex items-center gap-2 overflow-hidden">
+                        <span class="text-sm shrink-0">${icon}</span>
+                        <div class="truncate">
+                            <p class="font-medium text-zinc-200 truncate text-[11px]">${escapeHtml(item.content_name || 'عنصر مقرر')}</p>
+                            ${item.due_date ? `<p class="text-[10px] text-zinc-500 font-mono mt-0.5">الموعد: ${escapeHtml(item.due_date)}</p>` : ''}
+                        </div>
+                    </div>
+                    <a href="${item.content_url || '#'}" target="_blank" class="text-zinc-400 hover:text-white p-1 shrink-0" title="تحميل أو فتح">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                        </svg>
+                    </a>
+                </div>
+                `;
+            }).join('');
+        }
+
+        function toggleAccordion(id) {
+            haptic('light');
+            const el = document.getElementById(id);
+            const iconId = id.replace('acc-', 'acc-icon-');
+            const icon = document.getElementById(iconId);
+            if (el.classList.contains('hidden')) {
+                el.classList.remove('hidden');
+                if (icon) icon.classList.add('rotate-180');
+            } else {
+                el.classList.add('hidden');
+                if (icon) icon.classList.remove('rotate-180');
+            }
         }
 
         function filterCourses() {
@@ -534,38 +491,35 @@
 
             if (!filtered.length) {
                 container.innerHTML = `
-                    <div class="p-6 text-center glass rounded-2xl">
-                        <i class="fa-solid fa-calendar-xmark text-slate-500 text-2xl mb-2"></i>
-                        <p class="text-xs text-slate-400">لا توجد مواعيد في هذا التصنيف</p>
+                    <div class="p-8 text-center card-surface rounded-2xl space-y-1">
+                        <p class="text-xs font-semibold text-zinc-300">لا توجد واجبات أو تكاليف مستحقة حالياً</p>
+                        <p class="text-[11px] text-zinc-500">أنت على اطلاع دائم بجميع المهام الأكاديمية</p>
                     </div>`;
                 return;
             }
 
             container.innerHTML = filtered.map(d => `
-                <div class="p-3.5 rounded-2xl glass hover:border-slate-600 transition-all space-y-2">
+                <div class="card-surface rounded-2xl p-3.5 space-y-2">
                     <div class="flex items-start justify-between gap-2">
-                        <div class="space-y-0.5">
-                            <span class="text-[10px] text-slate-400 font-semibold">${escapeHtml(d.course_name)}</span>
-                            <h4 class="text-xs font-bold text-slate-100">${escapeHtml(d.content_name)}</h4>
+                        <div>
+                            <span class="text-[10px] font-medium text-zinc-400">${escapeHtml(d.course_name)}</span>
+                            <h4 class="text-xs font-bold text-zinc-100 mt-0.5">${escapeHtml(d.content_name)}</h4>
                         </div>
-                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${d.is_submitted ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/10 text-rose-400 border border-rose-500/30'}">
-                            ${d.is_submitted ? '✅ مسلّم' : '⏳ قيد الانتظار'}
+                        <span class="text-[10px] font-semibold px-2 py-0.5 rounded ${d.is_submitted ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'} shrink-0">
+                            ${d.is_submitted ? '✓ تم التسليم' : 'بانتظار الحل'}
                         </span>
                     </div>
 
-                    <div class="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-slate-700/50">
-                        <div class="flex items-center gap-1.5">
-                            <i class="fa-regular fa-clock text-slate-400"></i>
-                            <span>${d.due_str || 'موعد محدد'}</span>
-                        </div>
+                    <div class="hairline-top pt-2 flex items-center justify-between text-[11px] text-zinc-400">
+                        <span class="font-mono text-[10px] text-zinc-400">${d.due_str || 'موعد نهائي محدد'}</span>
                         <div class="flex items-center gap-2">
                             ${!d.is_submitted ? `
-                                <button onclick="markAsSubmitted('${d.content_id}')" class="px-2 py-1 rounded-lg bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600 hover:text-white text-[10px] font-bold transition-all">
-                                    تحديد كمسلّم
+                                <button onclick="markAsSubmitted('${d.content_id}')" class="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[10px] font-semibold hairline-border transition-all">
+                                    تحديد كمنجز
                                 </button>
                             ` : ''}
-                            <a href="${d.content_url}" target="_blank" onclick="haptic('light')" class="text-blue-400 hover:underline">
-                                <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                            <a href="${d.content_url}" target="_blank" onclick="haptic('light')" class="text-sky-400 hover:underline">
+                                تسليم الواجب ↗
                             </a>
                         </div>
                     </div>
@@ -578,16 +532,34 @@
             deadlinesFilter = f;
             ['all', 'pending', 'submitted'].forEach(name => {
                 const btn = document.getElementById('btnFilter' + name.charAt(0).toUpperCase() + name.slice(1));
-                if (name === f) {
-                    btn.className = 'px-2.5 py-1 rounded-lg bg-blue-600 text-white font-semibold transition-all';
-                } else {
-                    btn.className = 'px-2.5 py-1 rounded-lg text-slate-400 font-semibold hover:text-white transition-all';
+                if (btn) {
+                    if (name === f) {
+                        btn.className = 'px-2 py-0.5 rounded font-semibold bg-zinc-800 text-zinc-200';
+                    } else {
+                        btn.className = 'px-2 py-0.5 rounded font-medium text-zinc-400 hover:text-white';
+                    }
                 }
             });
             if (appData) renderDeadlinesList(appData.deadlines);
         }
 
-        // Actions
+        function switchTab(tabId) {
+            haptic('light');
+            activeTab = tabId;
+            ['tab-courses', 'tab-deadlines', 'tab-settings'].forEach(id => {
+                const section = document.getElementById(id);
+                const btn = document.getElementById('tabBtn-' + id.replace('tab-', ''));
+                if (id === tabId) {
+                    section.classList.remove('hidden');
+                    btn.className = 'flex-1 py-2 rounded-lg font-bold bg-zinc-800 text-zinc-100 shadow-sm transition-all';
+                } else {
+                    section.classList.add('hidden');
+                    btn.className = 'flex-1 py-2 rounded-lg font-medium text-zinc-400 hover:text-zinc-200 transition-all';
+                }
+            });
+        }
+
+        // Action Handlers
         async function triggerToggleMonitor() {
             haptic('medium');
             const tid = getTelegramId();
@@ -598,11 +570,23 @@
                     body: JSON.stringify({ tid: tid, initData: tg?.initData || '' })
                 });
                 const d = await res.json();
-                if (d.success) {
-                    if (appData) appData.user.is_monitoring = d.is_monitoring;
+                if (d.success && appData) {
+                    appData.user.is_monitoring = d.is_monitoring;
                     renderApp();
                 }
             } catch(e) { console.error(e); }
+        }
+
+        async function triggerForceCheck() {
+            haptic('medium');
+            const btn = document.getElementById('btnForceCheck');
+            btn.innerHTML = '<span class="animate-spin text-sky-400">↻</span> <span>جاري الفحص...</span>';
+            try {
+                await fetch('/api/user-data?tid=' + (getTelegramId() || ''));
+                await refreshData();
+            } finally {
+                btn.innerHTML = '<svg class="w-3.5 h-3.5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg><span>فحص فوري</span>';
+            }
         }
 
         async function toggleCourseMonitoring(cid) {
@@ -682,25 +666,9 @@
                 const btn = document.getElementById('btnInterval' + m);
                 if (!btn) return;
                 if (m === min) {
-                    btn.className = 'py-2 rounded-xl text-xs font-bold border border-blue-500 bg-blue-600 text-white shadow-lg shadow-blue-500/20 transition-all';
+                    btn.className = 'py-2 rounded-xl text-xs font-bold bg-zinc-800 text-sky-400 border border-sky-500/40 transition-all';
                 } else {
-                    btn.className = 'py-2 rounded-xl text-xs font-bold border border-slate-700 bg-slate-800 text-slate-300 hover:border-blue-500 transition-all';
-                }
-            });
-        }
-
-        function switchTab(tabId) {
-            haptic('light');
-            activeTab = tabId;
-            ['tab-dashboard', 'tab-courses', 'tab-deadlines', 'tab-settings'].forEach(id => {
-                const section = document.getElementById(id);
-                const navBtn = document.getElementById('nav-' + id);
-                if (id === tabId) {
-                    section.classList.remove('hidden');
-                    navBtn.className = 'flex flex-col items-center justify-center py-1.5 text-blue-400 transition-all';
-                } else {
-                    section.classList.add('hidden');
-                    navBtn.className = 'flex flex-col items-center justify-center py-1.5 text-slate-400 hover:text-white transition-all';
+                    btn.className = 'py-2 rounded-xl text-xs font-semibold hairline-border bg-zinc-900 text-zinc-300 transition-all';
                 }
             });
         }
@@ -715,11 +683,9 @@
             return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
         }
 
-        // Initialize on load
         window.addEventListener('DOMContentLoaded', () => {
             fetchUserData();
         });
     </script>
 </body>
 </html>
-

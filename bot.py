@@ -128,8 +128,10 @@ def _main_kb(user=None):
     webapp_url = get_webapp_url()
     rows = []
     if webapp_url:
+        tid_param = f"?tid={user['telegram_id']}" if (isinstance(user, dict) and user.get("telegram_id")) else ""
+        target_url = f"{webapp_url}{tid_param}"
         rows.append([
-            InlineKeyboardButton("📱 فتح لوحة التحكم الذكية (Mini App)", web_app=WebAppInfo(url=webapp_url))
+            InlineKeyboardButton("📱 فتح لوحة التحكم الأكاديمية (Mini App)", web_app=WebAppInfo(url=target_url))
         ])
     else:
         rows.append([
