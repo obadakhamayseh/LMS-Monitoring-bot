@@ -205,6 +205,7 @@ class ReminderEngine:
             if due_ts <= int(time.time()):
                 db.delete_reminder(telegram_id, a["id"])
                 continue
+            is_sub = 1 if a.get("is_submitted") else 0
             db.upsert_reminder(
                 telegram_id  = telegram_id,
                 course_id    = course_id,
@@ -213,5 +214,6 @@ class ReminderEngine:
                 content_url  = a["url"],
                 due_ts       = due_ts,
                 due_str      = due_str,
+                is_submitted = is_sub,
             )
-            logger.debug(f"Reminder registered: {a['name']} @ {due_str}")
+            logger.debug(f"Reminder registered: {a['name']} @ {due_str} (submitted: {is_sub})")

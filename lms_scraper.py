@@ -265,6 +265,14 @@ class LMSScraper:
             except Exception as e:
                 logger.error(f"خطأ في Dashboard: {e}")
 
+        if not courses and self.user_id:
+            try:
+                resp = self.authenticated_get(f"{LMS_BASE_URL}/user/profile.php?id={self.user_id}", timeout=30)
+                soup = BeautifulSoup(resp.text, "lxml")
+                self._extract_courses_from_soup(soup, courses, seen_ids)
+            except Exception as e:
+                logger.error(f"خطأ في صفحة User Profile Courses: {e}")
+
         logger.info(f"✅ تم جلب {len(courses)} مادة")
         return courses
 
@@ -276,11 +284,14 @@ class LMSScraper:
             if not match:
                 continue
             cid = int(match.group(1))
-            if cid in seen_ids:
+            if cid <= 1 or cid in seen_ids:
                 continue
-            seen_ids.add(cid)
 
             name = self._extract_course_name(a)
+            if not name or name in ("الصفحة الرئيسية", "Home", "الموقع الرئيسي", "المقررات"):
+                continue
+
+            seen_ids.add(cid)
 
             if not href.startswith("http"):
                 href = LMS_BASE_URL + href
@@ -371,7 +382,25 @@ class LMSScraper:
                     name = re.sub(r"\s+", " ", name).strip()
 
                     due_date = ""
-                    if len(cells) >= 2:
+                    is_submitted = False
+                    submission_text = ""
+
+                    for cell in cells[1:]:
+                        cell_txt = cell.get_text(strip=True)
+                        if not cell_txt or cell_txt == "-":
+                            continue
+                        # Check for submission status keywords
+                        if re.search(r"submitted for grading|تم تسليمها للتقييم|تم التسليم|submitted|مسلّمة", cell_txt, re.I):
+                            is_submitted = True
+                            submission_text = cell_txt
+                        elif re.search(r"no attempt|لا توجد محاولة|لم تسلم|not submitted|draft|مسودة", cell_txt, re.I):
+                            is_submitted = False
+                            submission_text = cell_txt
+                        elif any(char.isdigit() for char in cell_txt) and (":" in cell_txt or "/" in cell_txt or "-" in cell_txt or any(m in cell_txt.lower() for m in ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec", "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"])):
+                            if not due_date:
+                                due_date = cell_txt
+
+                    if not due_date and len(cells) >= 2:
                         due_text = cells[-1].get_text(strip=True)
                         if due_text and due_text != "-":
                             due_date = due_text
@@ -383,6 +412,8 @@ class LMSScraper:
                         "type": mod_type,
                         "course_id": course_id,
                         "due_date": due_date,
+                        "is_submitted": is_submitted,
+                        "submission_text": submission_text,
                     })
 
             if not activities:
@@ -526,3 +557,140 @@ class LMSScraper:
         except Exception:
             pass
         return "غير محدد"
+
+    def get_assignment_status(self, url: str) -> Dict[str, Any]:
+        """Fetch detailed submission status for an individual assignment."""
+        result = {
+            "is_submitted": False,
+            "status_text": "غير معروف",
+            "due_date": "",
+            "grading_status": "",
+            "time_remaining": "",
+        }
+        try:
+            resp = self.authenticated_get(url, timeout=20)
+            if resp.status_code != 200:
+                return result
+            soup = BeautifulSoup(resp.text, "lxml")
+
+            for tr in soup.find_all("tr"):
+                th = tr.find(["th", "td"])
+                cells = tr.find_all("td")
+                if not th or not cells:
+                    continue
+                header = th.get_text(strip=True).lower()
+                val = cells[-1].get_text(strip=True)
+                val_lower = val.lower()
+
+                if any(k in header for k in ["submission status", "حالة التسليم", "حالة المحاولة"]):
+                    result["status_text"] = val
+                    if any(k in val_lower for k in ["submitted for grading", "تم تسليمها للتقييم", "تم التسليم", "submitted", "مسلّمة"]):
+                        result["is_submitted"] = True
+                    elif any(k in val_lower for k in ["no attempt", "لا توجد محاولة", "لم تسلم"]):
+                        result["is_submitted"] = False
+
+                elif any(k in header for k in ["due date", "تاريخ الاستحقاق", "موعد التسليم"]):
+                    result["due_date"] = val
+
+                elif any(k in header for k in ["grading status", "حالة التقييم"]):
+                    result["grading_status"] = val
+
+                elif any(k in header for k in ["time remaining", "الوقت المتبقي"]):
+                    result["time_remaining"] = val
+
+            badge = soup.find(class_=re.compile(r"submissionstatussubmitted|badge-success|status-submitted"))
+            if badge and any(k in badge.get_text().lower() for k in ["submitted", "تسليم"]):
+                result["is_submitted"] = True
+
+        except Exception as e:
+            logger.warning(f"Error checking assignment status at {url}: {e}")
+        return result
+
+    def download_resource(self, url: str, max_mb: int = 40) -> Optional[tuple]:
+        """Download a resource file from Moodle safely.
+        
+        Returns:
+            Tuple[str, bytes] -> (filename, file_content_bytes) if successful, None otherwise.
+        """
+        try:
+            resp = self.authenticated_get(url, timeout=30, stream=True, allow_redirects=True)
+            if resp.status_code != 200:
+                logger.warning(f"Resource download returned {resp.status_code} for {url}")
+                return None
+
+            content_type = resp.headers.get("Content-Type", "").lower()
+            content_disp = resp.headers.get("Content-Disposition", "")
+
+            # If Moodle returned an HTML page instead of direct file, find the embedded file link
+            if "text/html" in content_type and not content_disp:
+                soup = BeautifulSoup(resp.text, "lxml")
+                file_link = (
+                    soup.find("a", href=re.compile(r"/pluginfile\.php/|/mod_resource/content/")) or
+                    soup.find("object", data=re.compile(r"/pluginfile\.php/|/mod_resource/content/")) or
+                    soup.find("iframe", src=re.compile(r"/pluginfile\.php/|/mod_resource/content/"))
+                )
+                if not file_link:
+                    return None
+
+                target_href = file_link.get("href") or file_link.get("data") or file_link.get("src")
+                if not target_href:
+                    return None
+
+                if not target_href.startswith("http"):
+                    target_href = LMS_BASE_URL + target_href
+
+                resp = self.authenticated_get(target_href, timeout=30, stream=True, allow_redirects=True)
+                content_type = resp.headers.get("Content-Type", "").lower()
+                content_disp = resp.headers.get("Content-Disposition", "")
+
+            filename = ""
+            if content_disp and "filename=" in content_disp:
+                fn_match = re.search(r'filename\*?=(?:UTF-8\'\')?["\']?([^"\';\r\n]+)', content_disp, re.I)
+                if fn_match:
+                    from urllib.parse import unquote
+                    filename = unquote(fn_match.group(1).strip('"\''))
+
+            if not filename:
+                clean_path = resp.url.split("?")[0].rstrip("/")
+                candidate = clean_path.split("/")[-1]
+                if "." in candidate and len(candidate) < 120:
+                    filename = candidate
+                else:
+                    filename = "document"
+
+            cl = resp.headers.get("Content-Length")
+            max_bytes = max_mb * 1024 * 1024
+            if cl and int(cl) > max_bytes:
+                logger.info(f"Resource {filename} exceeds size limit: {cl} bytes")
+                return None
+
+            chunks = []
+            total = 0
+            for chunk in resp.iter_content(chunk_size=65536):
+                if chunk:
+                    chunks.append(chunk)
+                    total += len(chunk)
+                    if total > max_bytes:
+                        logger.info(f"Resource {filename} exceeded {max_mb}MB while downloading")
+                        return None
+
+            file_bytes = b"".join(chunks)
+
+            if "." not in filename:
+                if "pdf" in content_type:
+                    filename += ".pdf"
+                elif "presentation" in content_type or "powerpoint" in content_type:
+                    filename += ".pptx"
+                elif "word" in content_type or "document" in content_type:
+                    filename += ".docx"
+                elif "zip" in content_type:
+                    filename += ".zip"
+                elif "image/jpeg" in content_type:
+                    filename += ".jpg"
+                elif "image/png" in content_type:
+                    filename += ".png"
+
+            return filename, file_bytes
+        except Exception as e:
+            logger.warning(f"Error downloading resource {url}: {e}")
+            return None

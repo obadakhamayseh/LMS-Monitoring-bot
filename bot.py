@@ -8,7 +8,7 @@ from datetime import datetime
 
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
-    BotCommand, ReplyKeyboardRemove
+    BotCommand, ReplyKeyboardRemove, WebAppInfo, MenuButtonWebApp
 )
 from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
@@ -22,6 +22,7 @@ from lms_scraper import LMSScraper
 from monitor import MonitorEngine
 from reminder import ReminderEngine
 from config import TELEGRAM_BOT_TOKEN
+from webapp_server import run_web_server, init_webapp_engines
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -101,6 +102,17 @@ async def _send_sections(obj, sections: list, keyboard=None, edit_first=False):
         await _send(obj, sec, keyboard=None, edit=False)
     await _send(obj, sections[-1], keyboard=keyboard, edit=False)
 
+def get_webapp_url() -> str:
+    url = os.getenv("WEBAPP_URL", "").strip() or os.getenv("RENDER_EXTERNAL_URL", "").strip()
+    if not url:
+        return ""
+    if not url.startswith("http"):
+        url = f"https://{url}"
+    clean = url.rstrip("/")
+    if not clean.endswith("/webapp") and not clean.endswith("/app"):
+        clean = f"{clean}/webapp"
+    return clean
+
 def _main_kb(user=None):
     if not user:
         return [
@@ -112,10 +124,22 @@ def _main_kb(user=None):
         if is_mon else
         InlineKeyboardButton("🟢 تشغيل المراقبة", callback_data="start_monitor")
     )
-    return [
+
+    webapp_url = get_webapp_url()
+    rows = []
+    if webapp_url:
+        rows.append([
+            InlineKeyboardButton("📱 فتح لوحة التحكم الذكية (Mini App)", web_app=WebAppInfo(url=webapp_url))
+        ])
+    else:
+        rows.append([
+            InlineKeyboardButton("📱 لوحة التحكم التفاعلية (Mini App)", callback_data="webapp_info")
+        ])
+
+    rows.extend([
         [
             InlineKeyboardButton("📚 موادي المسجلة", callback_data="my_courses"),
-            InlineKeyboardButton("➕ إضافة مادة",     callback_data="add_course_start"),
+            InlineKeyboardButton("📥 استيراد موادي تلقائياً", callback_data="sync_courses"),
         ],
         [
             mon_btn,
@@ -123,13 +147,17 @@ def _main_kb(user=None):
         ],
         [
             InlineKeyboardButton("📅 جدول المواعيد",  callback_data="deadlines"),
-            InlineKeyboardButton("📊 الإحصائيات",     callback_data="stats"),
+            InlineKeyboardButton("➕ إضافة برقم ID", callback_data="add_course_start"),
         ],
         [
+            InlineKeyboardButton("📊 الإحصائيات",     callback_data="stats"),
             InlineKeyboardButton("⚙️ إعدادات الإشعارات", callback_data="settings"),
+        ],
+        [
             InlineKeyboardButton("🚪 تسجيل الخروج",     callback_data="logout_prompt"),
         ],
-    ]
+    ])
+    return rows
 
 def _back_kb(cb="main_menu"):
     if cb == "main_menu":
@@ -288,10 +316,10 @@ async def login_got_pass(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
             ]
         else:
-            next_step = "ابدأ الآن بإضافة المواد التي تريد مراقبتها:"
+            next_step = "اضغط على الزر أدناه لاستيراد جميع موادك المسجلة تلقائياً بنقرة واحدة:"
             actions = [
-                InlineKeyboardButton("➕ إضافة مادة", callback_data="add_course_start"),
-                InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
+                InlineKeyboardButton("📥 استيراد موادي تلقائياً", callback_data="sync_courses"),
+                InlineKeyboardButton("➕ إضافة برقم ID", callback_data="add_course_start"),
             ]
 
         try:
@@ -448,6 +476,10 @@ async def add_course_got_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     quizzes   = content.get("quizzes",    [])
     resources = content.get("resources",  [])
 
+    for a in assigns:
+        if a.get("is_submitted"):
+            db.mark_assignment_submitted(tid, a["id"], 1)
+
     for item in assigns:
         db.mark_seen(tid, course_id, item["id"], "assign",
                      item["name"], item["url"], item.get("due_date", ""))
@@ -553,7 +585,7 @@ def _build_course_sections(course_name, course_id, assigns, quizzes, resources,
     )
 
     def _section_lines(title, icon, items, key_name="name", key_url="url",
-                       key_due="due_date", show_due=True):
+                       key_due="due_date", show_due=True, is_assign=False):
         if not items:
             return [f"{icon} *{title}:* لا يوجد حالياً\n"]
         lines = [f"{icon} *{title} ({len(items)}):*"]
@@ -561,16 +593,22 @@ def _build_course_sections(course_name, course_id, assigns, quizzes, resources,
             name = _esc(str(item.get(key_name, ""))[:80])
             link = item.get(key_url, "")
             due  = ""
+            sub_st = ""
             if show_due and item.get(key_due):
                 due = f"\n      ⏰ `{item[key_due]}`"
-            lines.append(f"  • [{name}]({link}){due}")
+            if is_assign:
+                if item.get("is_submitted"):
+                    sub_st = "\n      ✅ _تم التسليم للتقييم_"
+                else:
+                    sub_st = "\n      ⏳ _لم يتم التسليم بعد_"
+            lines.append(f"  • [{name}]({link}){due}{sub_st}")
         lines.append("")
         return lines
 
     all_lines = []
-    all_lines.extend(_section_lines("الواجبات", "📚", assigns, show_due=True))
-    all_lines.extend(_section_lines("الكويزات", "📝", quizzes, show_due=True))
-    all_lines.extend(_section_lines("الملفات والموارد", "📎", resources, show_due=False))
+    all_lines.extend(_section_lines("الواجبات", "📚", assigns, show_due=True, is_assign=True))
+    all_lines.extend(_section_lines("الكويزات", "📝", quizzes, show_due=True, is_assign=False))
+    all_lines.extend(_section_lines("الملفات والموارد", "📎", resources, show_due=False, is_assign=False))
 
     footer = "━━━━━━━━━━━━━━━━━━━━━━\n🔔 سيتم إشعارك فور نزول أي محتوى جديد."
 
@@ -603,8 +641,161 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if data == "main_menu":
         await _show_main(q.message, tid, edit=True)
 
+    elif data == "webapp_info":
+        url = get_webapp_url()
+        if url:
+            await _send(q.message,
+                f"📱 *لوحة التحكم الذكية (Telegram Mini App)*\n\n"
+                f"اضغط على الرابط أدناه لفتح لوحة التحكم مباشرة:\n{url}",
+                _back_kb("main_menu"),
+                edit=True
+            )
+        else:
+            await _send(q.message,
+                "📱 *لوحة التحكم الذكية (Telegram Mini App)*\n\n"
+                "لتفعيل لوحة التحكم التفاعلية على هاتفك:\n"
+                "• عند رفع البوت على Render، تُفعّل تلقائياً.\n"
+                "• أو يمكنك ضبط رابط الدومين في ملف `.env`:\n"
+                "`WEBAPP_URL=https://your-domain.com/webapp`",
+                _back_kb("main_menu"),
+                edit=True
+            )
+
     elif data == "my_courses":
         await _render_courses(q.message, tid, edit=True)
+
+    elif data == "sync_courses":
+        if not user:
+            await q.answer("سجّل دخولك أولاً!", show_alert=True)
+            return
+
+        await _send(
+            q.message,
+            "⏳ *جارٍ الاتصال بـ LMS واستيراد موادك المسجلة...*\n\nيرجى الانتظار بضع لحظات.",
+            edit=True
+        )
+
+        reminder_eng: ReminderEngine = ctx.bot_data.get("reminder_engine")
+        loop = asyncio.get_event_loop()
+
+        def _fetch_all_courses():
+            scraper = LMSScraper(user["lms_username"], user["lms_password"])
+            if not scraper.login():
+                return None, scraper.error_message or "فشل تسجيل الدخول إلى LMS"
+            courses_list = scraper.get_courses()
+            return (courses_list, scraper), None
+
+        result, err = await loop.run_in_executor(None, _fetch_all_courses)
+        if err or result is None:
+            await _send(
+                q.message,
+                f"❌ *تعذر استيراد المواد تلقائياً!*\n\n"
+                f"📌 *السبب:* {_esc(err or 'حدث خطأ أثناء الاتصال بالجامعة')}\n\n"
+                "يمكنك إضافة المواد يدوياً باستخدام رقم المادة (Course ID).",
+                [
+                    [InlineKeyboardButton("➕ إضافة مادة برقم ID", callback_data="add_course_start")],
+                    [InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu")],
+                ],
+                edit=True
+            )
+            return
+
+        courses_list, scraper = result
+
+        if not courses_list:
+            scraper.close()
+            await _send(
+                q.message,
+                "⚠️ *لم يتم العثور على أي مواد مسجلة تلقائياً في صفحتك!*\n\n"
+                "قد لا تكون المواد مفعلة للفصل الحالي بعد في LMS، أو معروضة بنمط مختلف.\n\n"
+                "يمكنك إضافة المادة برقم الـ ID يدوياً بكل سهولة.",
+                [
+                    [InlineKeyboardButton("➕ إضافة مادة برقم ID", callback_data="add_course_start")],
+                    [InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu")],
+                ],
+                edit=True
+            )
+            return
+
+        existing_courses = {c["course_id"]: c for c in db.get_user_courses(tid)}
+        newly_added = []
+        already_present = []
+
+        def _seed_course(cid):
+            try:
+                _, content = scraper.get_course_info(cid)
+                return content
+            except Exception:
+                return {}
+
+        for c in courses_list:
+            cid = c["id"]
+            cname = c["name"]
+            curl = c["url"]
+            if cid in existing_courses:
+                already_present.append(cname)
+                continue
+
+            db.add_course(tid, cid, cname, curl)
+            newly_added.append(cname)
+
+            content = await loop.run_in_executor(None, _seed_course, cid)
+            assigns = content.get("assignments", [])
+            quizzes = content.get("quizzes", [])
+            resources = content.get("resources", [])
+
+            for item in assigns:
+                db.mark_seen(tid, cid, item["id"], "assign",
+                             item["name"], item["url"], item.get("due_date", ""))
+            for item in quizzes:
+                db.mark_seen(tid, cid, item["id"], "quiz",
+                             item["name"], item["url"], item.get("due_date", ""))
+            for item in resources:
+                db.mark_seen(tid, cid, item["id"], "resource",
+                             item["name"], item["url"])
+
+            if reminder_eng and assigns:
+                reminder_eng.register_assignments(tid, cid, assigns)
+
+        scraper.close()
+
+        lines = [
+            "✅ *اكتملت مزامنة المواد بنجاح!*",
+            "━━━━━━━━━━━━━━━━━━━━━━",
+            f"📊 إجمالي المواد في LMS: *{len(courses_list)}*",
+            f"✨ مواد جديدة أُضيفت: *{len(newly_added)}*",
+        ]
+
+        if newly_added:
+            lines.append("\n📚 *المواد التي تمت إضافتها:*")
+            for name in newly_added[:8]:
+                lines.append(f"  • {_esc(name)}")
+            if len(newly_added) > 8:
+                lines.append(f"  • ...و {len(newly_added) - 8} مواد إضافية")
+
+        if already_present and not newly_added:
+            lines.append("\nℹ️ *جميع موادك المسجلة كانت مضافة بالفعل مسبقاً!*")
+
+        lines.append("\n━━━━━━━━━━━━━━━━━━━━━━")
+        lines.append("يمكنك تصفح المحتويات أو تشغيل المراقبة لتصلك الإشعارات أولاً بأول:")
+
+        next_action_btn = (
+            InlineKeyboardButton("🟢 تشغيل المراقبة", callback_data="start_monitor")
+            if not user.get("is_monitoring")
+            else InlineKeyboardButton("⚡ فحص فوري الآن", callback_data="check_now")
+        )
+
+        buttons = [
+            [
+                InlineKeyboardButton("📚 موادي المسجلة", callback_data="my_courses"),
+                next_action_btn,
+            ],
+            [
+                InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
+            ]
+        ]
+
+        await _send(q.message, "\n".join(lines), buttons, edit=True)
 
     elif data == "start_monitor":
         if not user:
@@ -674,19 +865,26 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             diff = r["due_ts"] - now_ts
             days  = diff // 86400
             hours = (diff % 86400) // 3600
+            is_sub = bool(r.get("is_submitted"))
 
-            if diff <= 3600:
-                urgency = "💥"
-                time_str = "ساعة أو أقل!"
-            elif diff <= 10800:
-                urgency = "🟠"
-                time_str = f"{hours} ساعة"
-            elif diff <= 86400:
-                urgency = "🔴"
-                time_str = f"{hours} ساعة"
+            if is_sub:
+                urgency = "✅"
+                sub_badge = "✅ *تم التسليم بنجاح*"
+                time_str = f"مسلّم ({days} يوم متبقي)" if days > 0 else "مسلّم"
             else:
-                urgency = "🟡" if days <= 3 else "🟢"
-                time_str = f"{days} يوم {'و' + str(hours) + ' ساعة' if hours else ''}"
+                sub_badge = "⏳ *لم يتم التسليم بعد*"
+                if diff <= 3600:
+                    urgency = "💥"
+                    time_str = "ساعة أو أقل!"
+                elif diff <= 10800:
+                    urgency = "🟠"
+                    time_str = f"{hours} ساعة"
+                elif diff <= 86400:
+                    urgency = "🔴"
+                    time_str = f"{hours} ساعة"
+                else:
+                    urgency = "🟡" if days <= 3 else "🟢"
+                    time_str = f"{days} يوم {'و' + str(hours) + ' ساعة' if hours else ''}"
 
             cname = _esc(r.get("course_name", "مادة"))
             aname = _esc(r.get("content_name", "واجب"))
@@ -696,8 +894,9 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             lines.append(
                 f"{urgency} [{aname}]({url})\n"
                 f"    📖 {cname}\n"
+                f"    📌 الحالة: {sub_badge}\n"
                 f"    ⏰ `{due}`\n"
-                f"    ⏳ متبقي: *{time_str}*"
+                f"    ⏳ الوقت المتبقي: *{time_str}*"
             )
 
         await _send(q.message,
@@ -889,9 +1088,10 @@ async def _render_courses(msg_obj, tid, edit=False):
     if not courses:
         await _send(msg_obj,
             "📭 *لا توجد مواد مضافة للمراقبة بعد!*\n\n"
-            "اضغط *إضافة مادة جديدة* وأدخل رقم المادة (Course ID) من LMS.",
+            "يمكنك استيراد جميع موادك تلقائياً بنقرة واحدة من LMS، أو إضافة مادة برقم الـ ID.",
             [
-                [InlineKeyboardButton("➕ إضافة مادة جديدة", callback_data="add_course_start")],
+                [InlineKeyboardButton("📥 استيراد موادي تلقائياً", callback_data="sync_courses")],
+                [InlineKeyboardButton("➕ إضافة مادة برقم ID", callback_data="add_course_start")],
                 [InlineKeyboardButton("🏠 القائمة الرئيسية",  callback_data="main_menu")],
             ],
             edit=edit
@@ -921,7 +1121,10 @@ async def _render_courses(msg_obj, tid, edit=False):
         ])
 
     keyboard.append([
-        InlineKeyboardButton("➕ إضافة مادة جديدة", callback_data="add_course_start"),
+        InlineKeyboardButton("📥 مزامنة المواد من LMS", callback_data="sync_courses"),
+        InlineKeyboardButton("➕ إضافة برقم ID", callback_data="add_course_start"),
+    ])
+    keyboard.append([
         InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
     ])
 
@@ -950,6 +1153,10 @@ async def _fetch_show_course(msg_obj, tid, user, course_id, edit=False):
     assigns   = content.get("assignments", [])
     quizzes   = content.get("quizzes",    [])
     resources = content.get("resources",  [])
+
+    for a in assigns:
+        if a.get("is_submitted"):
+            db.mark_assignment_submitted(tid, a["id"], 1)
 
     course = db.get_course(tid, course_id)
     is_mon = course["is_monitored"] if course else True
@@ -1035,6 +1242,19 @@ async def post_init(app: Application):
     app.bot_data["engine"] = engine
     await engine.start()
     await rem_engine.start()
+
+    init_webapp_engines(engine, rem_engine)
+
+    webapp_url = get_webapp_url()
+    if webapp_url:
+        try:
+            await app.bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(text="📱 لوحة التحكم", web_app=WebAppInfo(url=webapp_url))
+            )
+            logger.info(f"Telegram MenuButtonWebApp configured: {webapp_url}")
+        except Exception as e:
+            logger.warning(f"Could not configure chat menu button: {e}")
+
     logger.info("Bot ready — button-only mode!")
 
 async def post_shutdown(app: Application):
@@ -1045,41 +1265,13 @@ async def post_shutdown(app: Application):
     if rem_engine:
         await rem_engine.stop()
 
-class HealthCheckHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path.split("?", 1)[0] not in ("/", "/health"):
-            self.send_response(404)
-            self.end_headers()
-            return
-
-        self.send_response(200)
-        self.send_header("Content-type", "text/plain; charset=utf-8")
-        self.end_headers()
-        self.wfile.write(b"OK")
-
-    def do_HEAD(self):
-        self.send_response(200)
-        self.send_header("Content-type", "text/plain; charset=utf-8")
-        self.end_headers()
-
-    def do_POST(self):
-        self.do_GET()
-
-    def log_message(self, format, *args):
-        pass
-
-def run_keep_alive():
-    port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
-    server.serve_forever()
-
 def main():
     if not TELEGRAM_BOT_TOKEN:
         print("ERROR: TELEGRAM_BOT_TOKEN not set in .env")
         return
 
-    keep_alive_thread = threading.Thread(target=run_keep_alive, daemon=True)
-    keep_alive_thread.start()
+    web_thread = threading.Thread(target=run_web_server, daemon=True)
+    web_thread.start()
 
     db.init_db()
 

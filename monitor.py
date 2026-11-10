@@ -12,6 +12,13 @@ import database as db
 
 logger = logging.getLogger(__name__)
 
+def _esc(text: str) -> str:
+    if not text:
+        return ""
+    for ch in ["_", "*", "`", "["]:
+        text = str(text).replace(ch, f"\\{ch}")
+    return text
+
 def _canonical_content_url(url: str) -> str:
     """Normalize volatile Moodle link parameters before checking for updates."""
     if not url:
@@ -47,6 +54,8 @@ class MonitorEngine:
         self._check_slots = asyncio.Semaphore(5)
         self._auth_required = set()
         self._auth_alerted = set()
+        self._course_cache = {}  # course_id -> (timestamp, content)
+        self.COURSE_CACHE_TTL = 300  # 5 minutes shared cache TTL
 
     async def start(self):
         if self._running:
@@ -200,7 +209,7 @@ class MonitorEngine:
             self._auth_alerted.add(tid)
         return sent
 
-    async def _scan_user(self, user: dict, courses: list, scraper: LMSScraper):
+    async def _scan_user(self, user: dict, courses: list, scraper: LMSScraper, bypass_cache: bool = False):
         tid = int(user["telegram_id"])
         sent_count = 0
         complete = True
@@ -210,11 +219,12 @@ class MonitorEngine:
                 complete = False
                 break
             course_events, course_complete = await self._check_course(
-                tid, user, scraper, course
+                tid, user, scraper, course, bypass_cache=bypass_cache
             )
             events.extend(course_events)
             complete = complete and course_complete
 
+        loop = asyncio.get_running_loop()
         for chunk_events, message in self._build_change_chunks(events):
             for event in chunk_events:
                 if event["is_new"]:
@@ -224,6 +234,31 @@ class MonitorEngine:
                 for event in chunk_events:
                     self._save_change(event)
                 sent_count += len(chunk_events)
+
+                # Direct document dispatch for newly added resources
+                if user.get("notify_resource", 1):
+                    new_resources = [e for e in chunk_events if e["is_new"] and e["content_type"] == "resource"]
+                    for res_ev in new_resources[:3]:
+                        try:
+                            file_info = await loop.run_in_executor(
+                                None, scraper.download_resource, res_ev["url"]
+                            )
+                            if file_info:
+                                filename, file_bytes = file_info
+                                await self.bot.send_document(
+                                    chat_id=tid,
+                                    document=file_bytes,
+                                    filename=filename,
+                                    caption=(
+                                        f"📎 *ملف جديد:* {_esc(res_ev['name'])}\n"
+                                        f"📖 *المادة:* {_esc(res_ev['course_name'])}"
+                                    ),
+                                    parse_mode=MD,
+                                )
+                                logger.info(f"Direct file delivered: {filename} to {tid}")
+                                await asyncio.sleep(0.5)
+                        except Exception as dl_err:
+                            logger.warning(f"Direct file send error for {tid}: {dl_err}")
             else:
                 for event in chunk_events:
                     if event["is_new"]:
@@ -234,22 +269,37 @@ class MonitorEngine:
                 complete = False
         return sent_count, complete
 
-    async def _check_course(self, tid, user, scraper, course):
+    async def _check_course(self, tid, user, scraper, course, bypass_cache: bool = False):
         loop = asyncio.get_running_loop()
         cid  = course["course_id"]
         cname = course["course_name"]
 
-        content = await loop.run_in_executor(
-            None, scraper.get_course_content, cid
-        )
+        now = time.monotonic()
+        content = None
 
-        if not scraper.last_fetch_ok:
-            logger.warning(f"Incomplete LMS content response for user {tid}, course {cid}")
-            return [], False
+        if not bypass_cache and cid in self._course_cache:
+            cache_ts, cached_content = self._course_cache[cid]
+            if now - cache_ts < self.COURSE_CACHE_TTL:
+                content = cached_content
+                logger.debug(f"Using shared course cache for course {cid} (user {tid})")
+
+        if content is None:
+            content = await loop.run_in_executor(
+                None, scraper.get_course_content, cid
+            )
+            if not scraper.last_fetch_ok:
+                logger.warning(f"Incomplete LMS content response for user {tid}, course {cid}")
+                return [], False
+            self._course_cache[cid] = (now, content)
 
         assignments = content.get("assignments", [])
         if self.reminder_engine:
             self.reminder_engine.register_assignments(tid, cid, assignments)
+
+        # Update assignment submission status in database
+        for a in assignments:
+            if a.get("is_submitted"):
+                db.mark_assignment_submitted(tid, a["id"], 1)
 
         events = []
 
@@ -458,7 +508,10 @@ class MonitorEngine:
                 if not ok:
                     return 0, "فشل تسجيل الدخول إلى LMS"
             self._auth_alerted.discard(tid)
-            count, complete = await self._scan_user(user, courses, scraper)
+            # Invalidate course cache for this user's courses to ensure fresh data
+            for c in courses:
+                self._course_cache.pop(c["course_id"], None)
+            count, complete = await self._scan_user(user, courses, scraper, bypass_cache=True)
             if scraper.session_expired:
                 self._auth_required.add(tid)
                 await self._notify_auth_stopped(tid)

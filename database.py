@@ -4,6 +4,7 @@ import sqlite3
 import logging
 from datetime import datetime
 from config import DATABASE_PATH, DATABASE_URL, DIRECT_URL, CHECK_INTERVAL_MINUTES
+from security import encrypt_password, decrypt_password
 
 try:
     import psycopg
@@ -121,6 +122,7 @@ def init_db():
                     reminded_24h INTEGER DEFAULT 0,
                     reminded_3h  INTEGER DEFAULT 0,
                     reminded_1h  INTEGER DEFAULT 0,
+                    is_submitted INTEGER DEFAULT 0,
                     FOREIGN KEY(telegram_id) REFERENCES users(telegram_id),
                     UNIQUE(telegram_id, content_id)
                 )
@@ -183,6 +185,7 @@ def init_db():
                     reminded_24h INTEGER DEFAULT 0,
                     reminded_3h  INTEGER DEFAULT 0,
                     reminded_1h  INTEGER DEFAULT 0,
+                    is_submitted INTEGER DEFAULT 0,
                     FOREIGN KEY(telegram_id) REFERENCES users(telegram_id),
                     UNIQUE(telegram_id, content_id)
                 )
@@ -202,10 +205,34 @@ def init_db():
             db.execute("UPDATE users SET check_interval=10 WHERE check_interval=5")
             db.execute("INSERT INTO schema_migrations (version) VALUES (?)",
                        (interval_migration,))
+
+        # Migration: add is_submitted to reminders if missing
+        try:
+            if db.is_pg:
+                db.execute("ALTER TABLE reminders ADD COLUMN IF NOT EXISTS is_submitted INTEGER DEFAULT 0")
+            else:
+                cols = [r["name"] for r in db.fetchall("PRAGMA table_info(reminders)")]
+                if "is_submitted" not in cols:
+                    db.execute("ALTER TABLE reminders ADD COLUMN is_submitted INTEGER DEFAULT 0")
+        except Exception as e:
+            logger.debug(f"Migration for reminders is_submitted: {e}")
+
+        # Encrypt existing plain-text passwords if any
+        try:
+            legacy_users = db.fetchall("SELECT telegram_id, lms_password FROM users")
+            for u in legacy_users:
+                pwd = u.get("lms_password") or ""
+                if pwd and not pwd.startswith("gAAAAA"):
+                    enc = encrypt_password(pwd)
+                    db.execute("UPDATE users SET lms_password=? WHERE telegram_id=?", (enc, u["telegram_id"]))
+        except Exception as e:
+            logger.warning(f"Password encryption migration check failed: {e}")
+
     logger.info("DB initialised")
 
 def save_user(telegram_id, lms_username, lms_password,
               lms_user_id=None, full_name=None):
+    enc_password = encrypt_password(lms_password)
     with DBContext() as db:
         db.execute("""
             INSERT INTO users (telegram_id, lms_username, lms_password,
@@ -216,16 +243,23 @@ def save_user(telegram_id, lms_username, lms_password,
                 lms_password = excluded.lms_password,
                 lms_user_id  = excluded.lms_user_id,
                 full_name    = excluded.full_name
-        """, (telegram_id, lms_username, lms_password, lms_user_id, full_name,
+        """, (telegram_id, lms_username, enc_password, lms_user_id, full_name,
               CHECK_INTERVAL_MINUTES))
 
 def get_user(telegram_id):
     with DBContext() as db:
-        return db.fetchone("SELECT * FROM users WHERE telegram_id=?", (telegram_id,))
+        user = db.fetchone("SELECT * FROM users WHERE telegram_id=?", (telegram_id,))
+        if user and "lms_password" in user:
+            user["lms_password"] = decrypt_password(user["lms_password"])
+        return user
 
 def get_all_monitoring_users():
     with DBContext() as db:
-        return db.fetchall("SELECT * FROM users WHERE is_monitoring=1")
+        users = db.fetchall("SELECT * FROM users WHERE is_monitoring=1")
+        for user in users:
+            if "lms_password" in user:
+                user["lms_password"] = decrypt_password(user["lms_password"])
+        return users
 
 def set_monitoring(telegram_id, status: bool):
     with DBContext() as db:
@@ -297,6 +331,13 @@ def get_course(telegram_id, course_id):
             (telegram_id, course_id)
         )
 
+def get_course_items(telegram_id, course_id):
+    with DBContext() as db:
+        return db.fetchall(
+            "SELECT * FROM seen_content WHERE telegram_id=? AND course_id=? ORDER BY id DESC",
+            (telegram_id, course_id)
+        )
+
 def toggle_course(telegram_id, course_id):
     with DBContext() as db:
         db.execute("""
@@ -362,13 +403,13 @@ def get_stats(telegram_id) -> dict:
         return {"total": total, "by_type": by_type}
 
 def upsert_reminder(telegram_id, course_id, content_id, content_name,
-                    content_url, due_ts, due_str):
+                    content_url, due_ts, due_str, is_submitted=0):
     with DBContext() as db:
         db.execute("""
             INSERT INTO reminders
                 (telegram_id, course_id, content_id, content_name,
-                 content_url, due_ts, due_str)
-            VALUES (?,?,?,?,?,?,?)
+                 content_url, due_ts, due_str, is_submitted)
+            VALUES (?,?,?,?,?,?,?,?)
             ON CONFLICT(telegram_id, content_id) DO UPDATE SET
                 content_name = excluded.content_name,
                 content_url  = excluded.content_url,
@@ -376,9 +417,17 @@ def upsert_reminder(telegram_id, course_id, content_id, content_name,
                 reminded_3h  = CASE WHEN reminders.due_ts IS NULL OR reminders.due_ts <> excluded.due_ts THEN 0 ELSE reminders.reminded_3h END,
                 reminded_1h  = CASE WHEN reminders.due_ts IS NULL OR reminders.due_ts <> excluded.due_ts THEN 0 ELSE reminders.reminded_1h END,
                 due_ts       = excluded.due_ts,
-                due_str      = excluded.due_str
+                due_str      = excluded.due_str,
+                is_submitted = CASE WHEN excluded.is_submitted = 1 THEN 1 ELSE reminders.is_submitted END
         """, (telegram_id, course_id, str(content_id), content_name,
-              content_url, due_ts, due_str))
+              content_url, due_ts, due_str, 1 if is_submitted else 0))
+
+def mark_assignment_submitted(telegram_id, content_id, is_submitted=1):
+    with DBContext() as db:
+        db.execute(
+            "UPDATE reminders SET is_submitted=? WHERE telegram_id=? AND content_id=?",
+            (1 if is_submitted else 0, telegram_id, str(content_id))
+        )
 
 def delete_reminder(telegram_id, content_id):
     with DBContext() as db:
@@ -395,6 +444,7 @@ def get_pending_reminders(now_ts: int) -> list:
             JOIN users u ON r.telegram_id = u.telegram_id
             WHERE u.is_monitoring = 1
               AND u.notify_assign = 1
+              AND (r.is_submitted IS NULL OR r.is_submitted = 0)
               AND r.due_ts IS NOT NULL
               AND r.due_ts > ?
               AND (

@@ -1,0 +1,725 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>LMS Monitor - لوحة التحكم الذكية</title>
+    <!-- Telegram WebApp SDK -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <!-- Google Fonts: Cairo -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    fontFamily: {
+                        cairo: ['Cairo', 'sans-serif'],
+                    },
+                    colors: {
+                        tg: {
+                            bg: 'var(--tg-theme-bg-color, #0f172a)',
+                            secondary: 'var(--tg-theme-secondary-bg-color, #1e293b)',
+                            text: 'var(--tg-theme-text-color, #f8fafc)',
+                            hint: 'var(--tg-theme-hint-color, #94a3b8)',
+                            link: 'var(--tg-theme-link-color, #38bdf8)',
+                            btn: 'var(--tg-theme-button-color, #3b82f6)',
+                            btnText: 'var(--tg-theme-button-text-color, #ffffff)',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'Cairo', sans-serif;
+            background-color: var(--tg-theme-bg-color, #0f172a);
+            color: var(--tg-theme-text-color, #f8fafc);
+            -webkit-tap-highlight-color: transparent;
+        }
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+        .glass {
+            background: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        .tab-active {
+            color: #38bdf8;
+            border-bottom: 2px solid #38bdf8;
+        }
+    </style>
+</head>
+<body class="min-h-screen pb-24 transition-colors duration-200">
+
+    <!-- Top App Bar -->
+    <header class="sticky top-0 z-30 glass px-4 py-3 flex items-center justify-between border-b border-slate-700/50">
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center shadow-lg shadow-blue-500/20 text-white text-lg font-bold">
+                <i class="fa-solid fa-graduation-cap"></i>
+            </div>
+            <div>
+                <h1 id="userFullName" class="font-bold text-sm leading-tight text-slate-100">جاري التحميل...</h1>
+                <div class="flex items-center gap-1.5 text-xs text-slate-400">
+                    <span id="userStdId">...</span>
+                    <span>•</span>
+                    <span class="text-blue-400">جامعة مؤتة</span>
+                </div>
+            </div>
+        </div>
+        <div class="flex items-center gap-2">
+            <button onclick="refreshData()" class="w-9 h-9 rounded-xl bg-slate-800/80 border border-slate-700 flex items-center justify-center text-slate-300 hover:text-white active:scale-95 transition-all">
+                <i id="refreshIcon" class="fa-solid fa-arrows-rotate text-sm"></i>
+            </button>
+            <div id="monitoringBadge" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                <span>نشط</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="max-w-md mx-auto px-4 pt-4">
+
+        <!-- TAB 1: DASHBOARD -->
+        <section id="tab-dashboard" class="space-y-4">
+            
+            <!-- Welcome & Progress Banner -->
+            <div class="p-4 rounded-3xl bg-gradient-to-br from-indigo-900/60 via-slate-900/80 to-slate-900 border border-indigo-500/20 shadow-xl relative overflow-hidden">
+                <div class="absolute -left-6 -bottom-6 w-32 h-32 bg-indigo-500/10 rounded-full blur-2xl"></div>
+                <div class="flex items-center justify-between mb-3">
+                    <div>
+                        <span class="text-xs font-semibold text-indigo-400 uppercase tracking-wider">لوحة المتابعة الذكية</span>
+                        <h2 class="text-base font-bold text-white mt-0.5">جاهز للفصل الدراسي؟ 🚀</h2>
+                    </div>
+                    <span id="progressPercent" class="text-xl font-extrabold text-blue-400">0%</span>
+                </div>
+                <!-- Progress Bar -->
+                <div class="w-full bg-slate-800/80 rounded-full h-2.5 p-0.5 border border-slate-700/50 mb-2">
+                    <div id="progressBar" class="bg-gradient-to-r from-blue-500 to-emerald-400 h-1.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+                </div>
+                <div class="flex justify-between items-center text-xs text-slate-400">
+                    <span>نسبة تسليم الواجبات المقررة</span>
+                    <span id="progressRatio" class="font-semibold text-slate-300">0 / 0 واجب</span>
+                </div>
+            </div>
+
+            <!-- 4 Quick Metric Cards -->
+            <div class="grid grid-cols-2 gap-3">
+                <div class="p-3.5 rounded-2xl glass hover:border-slate-600 transition-all">
+                    <div class="flex items-center justify-between text-blue-400 mb-1">
+                        <i class="fa-solid fa-book-open text-base"></i>
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-400">المواد</span>
+                    </div>
+                    <div id="metricCoursesCount" class="text-2xl font-bold text-white">0</div>
+                    <p class="text-xs text-slate-400 mt-0.5">مادة مسجلة</p>
+                </div>
+
+                <div class="p-3.5 rounded-2xl glass hover:border-slate-600 transition-all">
+                    <div class="flex items-center justify-between text-rose-400 mb-1">
+                        <i class="fa-solid fa-clock text-base"></i>
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-rose-500/10 text-rose-400">قيد الانتظار</span>
+                    </div>
+                    <div id="metricPendingCount" class="text-2xl font-bold text-white">0</div>
+                    <p class="text-xs text-slate-400 mt-0.5">واجبات غير مسلّمة</p>
+                </div>
+
+                <div class="p-3.5 rounded-2xl glass hover:border-slate-600 transition-all">
+                    <div class="flex items-center justify-between text-emerald-400 mb-1">
+                        <i class="fa-solid fa-circle-check text-base"></i>
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400">تم الإنجاز</span>
+                    </div>
+                    <div id="metricSubmittedCount" class="text-2xl font-bold text-white">0</div>
+                    <p class="text-xs text-slate-400 mt-0.5">واجبات مسلّمة</p>
+                </div>
+
+                <div class="p-3.5 rounded-2xl glass hover:border-slate-600 transition-all">
+                    <div class="flex items-center justify-between text-amber-400 mb-1">
+                        <i class="fa-solid fa-bolt text-base"></i>
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-500/10 text-amber-400">الفحص</span>
+                    </div>
+                    <div id="metricInterval" class="text-xl font-bold text-white mt-0.5">10د</div>
+                    <p class="text-xs text-slate-400 mt-0.5">فترة الفحص الدوري</p>
+                </div>
+            </div>
+
+            <!-- Quick Action Buttons -->
+            <div class="flex gap-2">
+                <button onclick="triggerToggleMonitor()" id="btnToggleMonitor" class="flex-1 py-2.5 px-3 rounded-xl bg-blue-600 hover:bg-blue-500 active:scale-95 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20 transition-all">
+                    <i class="fa-solid fa-power-off"></i>
+                    <span id="btnToggleMonitorText">إيقاف المراقبة</span>
+                </button>
+                <button onclick="switchTab('tab-deadlines')" class="py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-200 border border-slate-700 font-bold text-xs flex items-center justify-center gap-2 transition-all">
+                    <i class="fa-solid fa-calendar-check text-indigo-400"></i>
+                    <span>جدول المواعيد</span>
+                </button>
+            </div>
+
+            <!-- Urgent Deadlines Preview -->
+            <div class="space-y-2 pt-2">
+                <div class="flex items-center justify-between">
+                    <h3 class="text-sm font-bold text-slate-200 flex items-center gap-2">
+                        <i class="fa-solid fa-triangle-exclamation text-rose-400 text-xs"></i>
+                        <span>أقرب المواعيد النهائية</span>
+                    </h3>
+                    <button onclick="switchTab('tab-deadlines')" class="text-xs text-blue-400 hover:underline">عرض الكل</button>
+                </div>
+                <div id="urgentDeadlinesList" class="space-y-2">
+                    <div class="p-4 text-center text-xs text-slate-500 glass rounded-2xl">جاري فحص المواعيد...</div>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- TAB 2: COURSES -->
+        <section id="tab-courses" class="space-y-3 hidden">
+            <div class="flex items-center justify-between mb-2">
+                <h2 class="text-base font-bold text-white">موادي المسجلة في LMS</h2>
+                <span id="coursesBadgeTotal" class="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700">0 مواد</span>
+            </div>
+
+            <div class="relative">
+                <i class="fa-solid fa-magnifying-glass absolute right-3.5 top-3.5 text-xs text-slate-400"></i>
+                <input type="text" id="courseSearchInput" oninput="filterCourses()" placeholder="ابحث عن اسم المادة أو رقمها..." class="w-full bg-slate-800/80 border border-slate-700 rounded-xl pr-9 pl-4 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 transition-colors">
+            </div>
+
+            <div id="coursesListContainer" class="space-y-3 pt-1">
+                <!-- Courses injected here -->
+            </div>
+        </section>
+
+        <!-- TAB 3: DEADLINES & SCHEDULE -->
+        <section id="tab-deadlines" class="space-y-3 hidden">
+            <div class="flex items-center justify-between mb-2">
+                <h2 class="text-base font-bold text-white">جدول الواجبات والكويزات</h2>
+                <div class="flex items-center gap-1 bg-slate-800/80 p-1 rounded-xl border border-slate-700/60 text-[11px]">
+                    <button onclick="setDeadlinesFilter('all')" id="btnFilterAll" class="px-2.5 py-1 rounded-lg bg-blue-600 text-white font-semibold transition-all">الكل</button>
+                    <button onclick="setDeadlinesFilter('pending')" id="btnFilterPending" class="px-2.5 py-1 rounded-lg text-slate-400 font-semibold hover:text-white transition-all">بانتظار الحل</button>
+                    <button onclick="setDeadlinesFilter('submitted')" id="btnFilterSubmitted" class="px-2.5 py-1 rounded-lg text-slate-400 font-semibold hover:text-white transition-all">مسلّمة</button>
+                </div>
+            </div>
+
+            <div id="deadlinesListContainer" class="space-y-2.5">
+                <!-- Deadlines list injected here -->
+            </div>
+        </section>
+
+        <!-- TAB 4: SETTINGS -->
+        <section id="tab-settings" class="space-y-4 hidden">
+            <h2 class="text-base font-bold text-white mb-2">الإعدادات والتفضيلات</h2>
+
+            <!-- Notifications Toggles -->
+            <div class="glass rounded-2xl p-4 space-y-4">
+                <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">إشعارات المحتوى</h3>
+                
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <div class="w-8 h-8 rounded-lg bg-blue-500/10 text-blue-400 flex items-center justify-center text-sm">
+                            <i class="fa-solid fa-book"></i>
+                        </div>
+                        <div>
+                            <p class="text-xs font-bold text-slate-200">الواجبات والتكاليف</p>
+                            <p class="text-[10px] text-slate-400">إشعار فوري عند إضافة واجب جديد</p>
+                        </div>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="toggleAssign" onchange="saveNotificationSettings()" class="sr-only peer">
+                        <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                    </label>
+                </div>
+
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <div class="w-8 h-8 rounded-lg bg-amber-500/10 text-amber-400 flex items-center justify-center text-sm">
+                            <i class="fa-solid fa-feather-pointed"></i>
+                        </div>
+                        <div>
+                            <p class="text-xs font-bold text-slate-200">الكويزات والامتحانات</p>
+                            <p class="text-[10px] text-slate-400">إشعار عند إضافة أو فتح كويز</p>
+                        </div>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="toggleQuiz" onchange="saveNotificationSettings()" class="sr-only peer">
+                        <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                    </label>
+                </div>
+
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-3">
+                        <div class="w-8 h-8 rounded-lg bg-purple-500/10 text-purple-400 flex items-center justify-center text-sm">
+                            <i class="fa-solid fa-paperclip"></i>
+                        </div>
+                        <div>
+                            <p class="text-xs font-bold text-slate-200">السلايدات والمستندات</p>
+                            <p class="text-[10px] text-slate-400">تحميل مباشر لملفات المحاضرات</p>
+                        </div>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="toggleResource" onchange="saveNotificationSettings()" class="sr-only peer">
+                        <div class="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Check Interval Options -->
+            <div class="glass rounded-2xl p-4 space-y-3">
+                <h3 class="text-xs font-bold text-slate-400 uppercase tracking-wider">معدل الفحص الدوري</h3>
+                <p class="text-[11px] text-slate-400">كم مرة تريد أن يفحص البوت نظام الجامعة؟</p>
+                
+                <div class="grid grid-cols-4 gap-2 pt-1">
+                    <button onclick="setCheckInterval(5)" id="btnInterval5" class="py-2 rounded-xl text-xs font-bold border border-slate-700 bg-slate-800 text-slate-300 hover:border-blue-500 transition-all">5 د</button>
+                    <button onclick="setCheckInterval(10)" id="btnInterval10" class="py-2 rounded-xl text-xs font-bold border border-slate-700 bg-slate-800 text-slate-300 hover:border-blue-500 transition-all">10 د</button>
+                    <button onclick="setCheckInterval(30)" id="btnInterval30" class="py-2 rounded-xl text-xs font-bold border border-slate-700 bg-slate-800 text-slate-300 hover:border-blue-500 transition-all">30 د</button>
+                    <button onclick="setCheckInterval(60)" id="btnInterval60" class="py-2 rounded-xl text-xs font-bold border border-slate-700 bg-slate-800 text-slate-300 hover:border-blue-500 transition-all">1 س</button>
+                </div>
+            </div>
+
+            <!-- System Info -->
+            <div class="p-3.5 text-center text-[11px] text-slate-500 space-y-1">
+                <p>بوت مراقب LMS • نظام التعليم الإلكتروني لجامعة مؤتة</p>
+                <p>جميع بيانات الاعتماد مشفرة بأمان بتقنية AES-256</p>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Bottom Navigation Bar -->
+    <nav class="fixed bottom-0 left-0 right-0 z-40 glass border-t border-slate-800/80 px-2 py-2">
+        <div class="max-w-md mx-auto grid grid-cols-4 gap-1">
+            <button onclick="switchTab('tab-dashboard')" id="nav-tab-dashboard" class="flex flex-col items-center justify-center py-1.5 text-blue-400 transition-all">
+                <i class="fa-solid fa-house text-base mb-1"></i>
+                <span class="text-[10px] font-bold">الرئيسية</span>
+            </button>
+            <button onclick="switchTab('tab-courses')" id="nav-tab-courses" class="flex flex-col items-center justify-center py-1.5 text-slate-400 hover:text-white transition-all">
+                <i class="fa-solid fa-book-bookmark text-base mb-1"></i>
+                <span class="text-[10px] font-bold">المواد</span>
+            </button>
+            <button onclick="switchTab('tab-deadlines')" id="nav-tab-deadlines" class="flex flex-col items-center justify-center py-1.5 text-slate-400 hover:text-white transition-all">
+                <i class="fa-solid fa-calendar-days text-base mb-1"></i>
+                <span class="text-[10px] font-bold">المواعيد</span>
+            </button>
+            <button onclick="switchTab('tab-settings')" id="nav-tab-settings" class="flex flex-col items-center justify-center py-1.5 text-slate-400 hover:text-white transition-all">
+                <i class="fa-solid fa-sliders text-base mb-1"></i>
+                <span class="text-[10px] font-bold">الإعدادات</span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- App Logic Script -->
+    <script>
+        const tg = window.Telegram?.WebApp;
+        if (tg) {
+            tg.ready();
+            tg.expand();
+            try {
+                tg.setHeaderColor('#0f172a');
+                tg.setBackgroundColor('#0f172a');
+            } catch(e) {}
+        }
+
+        // Global State
+        let appData = null;
+        let activeTab = 'tab-dashboard';
+        let deadlinesFilter = 'all';
+
+        // Extract Telegram ID
+        function getTelegramId() {
+            if (tg?.initDataUnsafe?.user?.id) {
+                return tg.initDataUnsafe.user.id;
+            }
+            const params = new URLSearchParams(window.location.search);
+            return params.get('tid') || null;
+        }
+
+        function haptic(type = 'light') {
+            try {
+                if (tg?.HapticFeedback) {
+                    if (type === 'light') tg.HapticFeedback.impactOccurred('light');
+                    else if (type === 'medium') tg.HapticFeedback.impactOccurred('medium');
+                    else if (type === 'success') tg.HapticFeedback.notificationOccurred('success');
+                }
+            } catch(e) {}
+        }
+
+        async function fetchUserData() {
+            const tid = getTelegramId();
+            const initData = tg?.initData || '';
+            const refreshIcon = document.getElementById('refreshIcon');
+            if (refreshIcon) refreshIcon.classList.add('fa-spin');
+
+            try {
+                const url = `/api/user-data?tid=${tid || ''}&initData=${encodeURIComponent(initData)}`;
+                const res = await fetch(url);
+                const data = await res.json();
+                
+                if (data.success) {
+                    appData = data;
+                    renderApp();
+                } else {
+                    document.getElementById('userFullName').innerText = 'المستخدم غير مسجل';
+                    document.getElementById('userStdId').innerText = data.error || 'سجل دخولك عبر البوت أولاً';
+                }
+            } catch (err) {
+                console.error('Fetch error:', err);
+            } finally {
+                if (refreshIcon) refreshIcon.classList.remove('fa-spin');
+            }
+        }
+
+        function renderApp() {
+            if (!appData) return;
+            const u = appData.user;
+            document.getElementById('userFullName').innerText = u.full_name || 'طالب';
+            document.getElementById('userStdId').innerText = u.lms_username || '';
+
+            // Monitoring Badge & Button
+            const badge = document.getElementById('monitoringBadge');
+            const btnToggle = document.getElementById('btnToggleMonitor');
+            const btnText = document.getElementById('btnToggleMonitorText');
+            if (u.is_monitoring) {
+                badge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
+                badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span><span>نشط</span>';
+                btnToggle.className = 'flex-1 py-2.5 px-3 rounded-xl bg-rose-600/90 hover:bg-rose-500 active:scale-95 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-rose-600/20 transition-all';
+                btnText.innerText = 'إيقاف المراقبة';
+            } else {
+                badge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-700/50 text-slate-400 border border-slate-600/40';
+                badge.innerHTML = '<span class="w-2 h-2 rounded-full bg-slate-500"></span><span>متوقفة</span>';
+                btnToggle.className = 'flex-1 py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white font-bold text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition-all';
+                btnText.innerText = 'تشغيل المراقبة';
+            }
+
+            // Metrics
+            document.getElementById('metricCoursesCount').innerText = appData.courses.length;
+            const pendingDeadlines = appData.deadlines.filter(d => !d.is_submitted);
+            const submittedDeadlines = appData.deadlines.filter(d => d.is_submitted);
+            document.getElementById('metricPendingCount').innerText = pendingDeadlines.length;
+            document.getElementById('metricSubmittedCount').innerText = submittedDeadlines.length;
+            document.getElementById('metricInterval').innerText = `${u.check_interval}د`;
+
+            // Progress Bar
+            const prog = appData.progress;
+            document.getElementById('progressPercent').innerText = `${prog.percentage}%`;
+            document.getElementById('progressBar').style.width = `${prog.percentage}%`;
+            document.getElementById('progressRatio').innerText = `${prog.submitted} من ${prog.total} مسلّمة`;
+
+            // Render Urgent Deadlines Preview (Top 3)
+            renderUrgentDeadlines(pendingDeadlines.slice(0, 3));
+
+            // Render Courses Tab
+            renderCoursesList(appData.courses);
+
+            // Render Deadlines Tab
+            renderDeadlinesList(appData.deadlines);
+
+            // Sync Settings Tab
+            document.getElementById('toggleAssign').checked = u.notify_assign;
+            document.getElementById('toggleQuiz').checked = u.notify_quiz;
+            document.getElementById('toggleResource').checked = u.notify_resource;
+            highlightIntervalButton(u.check_interval);
+        }
+
+        function renderUrgentDeadlines(items) {
+            const container = document.getElementById('urgentDeadlinesList');
+            if (!items.length) {
+                container.innerHTML = `
+                    <div class="p-4 text-center glass rounded-2xl">
+                        <i class="fa-solid fa-circle-check text-emerald-400 text-xl mb-1"></i>
+                        <p class="text-xs font-bold text-slate-300">أنت في السليم!</p>
+                        <p class="text-[10px] text-slate-500 mt-0.5">لا توجد واجبات متأخرة أو قريبة حالياً</p>
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = items.map(d => `
+                <div class="p-3.5 rounded-2xl glass hover:border-slate-600 transition-all flex items-center justify-between">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-1.5">
+                            <span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                            <span class="text-[10px] text-slate-400 font-semibold">${escapeHtml(d.course_name)}</span>
+                        </div>
+                        <h4 class="text-xs font-bold text-slate-100">${escapeHtml(d.content_name)}</h4>
+                        <p class="text-[10px] text-rose-400 font-bold flex items-center gap-1">
+                            <i class="fa-solid fa-hourglass-half text-[9px]"></i>
+                            <span>متبقي: ${d.time_remaining}</span>
+                        </p>
+                    </div>
+                    <a href="${d.content_url}" target="_blank" onclick="haptic('light')" class="px-3 py-1.5 rounded-xl bg-blue-600/20 text-blue-400 border border-blue-500/30 text-xs font-bold hover:bg-blue-600 hover:text-white transition-all">
+                        تسليم
+                    </a>
+                </div>
+            `).join('');
+        }
+
+        function renderCoursesList(courses) {
+            const container = document.getElementById('coursesListContainer');
+            document.getElementById('coursesBadgeTotal').innerText = `${courses.length} مواد`;
+            if (!courses.length) {
+                container.innerHTML = `
+                    <div class="p-6 text-center glass rounded-2xl">
+                        <i class="fa-solid fa-folder-open text-slate-500 text-2xl mb-2"></i>
+                        <p class="text-xs text-slate-400">لا توجد مواد مضافة بعد</p>
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = courses.map(c => `
+                <div class="p-4 rounded-2xl glass hover:border-slate-600 transition-all space-y-3">
+                    <div class="flex items-start justify-between gap-2">
+                        <div class="space-y-0.5">
+                            <div class="flex items-center gap-1.5 text-[10px] text-slate-400">
+                                <span>ID: ${c.id}</span>
+                                <span>•</span>
+                                <span class="${c.is_monitored ? 'text-emerald-400' : 'text-slate-500'} font-semibold">
+                                    ${c.is_monitored ? '🟢 قيد المراقبة' : '🔴 متوقفة'}
+                                </span>
+                            </div>
+                            <h3 class="text-sm font-bold text-slate-100 leading-tight">${escapeHtml(c.name)}</h3>
+                        </div>
+                        <button onclick="toggleCourseMonitoring(${c.id})" class="px-2.5 py-1 rounded-xl text-xs font-bold ${c.is_monitored ? 'bg-slate-800 text-slate-400 hover:text-rose-400' : 'bg-emerald-600/20 text-emerald-400 border border-emerald-500/30'} transition-all">
+                            ${c.is_monitored ? 'إيقاف' : 'تفعيل'}
+                        </button>
+                    </div>
+
+                    <!-- Course Items Metrics Badges -->
+                    <div class="flex gap-2 text-[11px] pt-1">
+                        <span class="flex-1 py-1 px-2 rounded-lg bg-blue-500/10 text-blue-400 border border-blue-500/20 text-center font-semibold">
+                            📚 ${c.stats.assignments} واجبات
+                        </span>
+                        <span class="flex-1 py-1 px-2 rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20 text-center font-semibold">
+                            📝 ${c.stats.quizzes} كويزات
+                        </span>
+                        <span class="flex-1 py-1 px-2 rounded-lg bg-purple-500/10 text-purple-400 border border-purple-500/20 text-center font-semibold">
+                            📎 ${c.stats.resources} ملفات
+                        </span>
+                    </div>
+
+                    <div class="pt-1 flex justify-end">
+                        <a href="${c.url}" target="_blank" onclick="haptic('light')" class="text-xs text-blue-400 hover:underline flex items-center gap-1">
+                            <span>فتح المادة في موودل LMS</span>
+                            <i class="fa-solid fa-arrow-up-right-from-square text-[10px]"></i>
+                        </a>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function filterCourses() {
+            const query = document.getElementById('courseSearchInput').value.trim().toLowerCase();
+            if (!appData) return;
+            const filtered = appData.courses.filter(c => 
+                c.name.toLowerCase().includes(query) || String(c.id).includes(query)
+            );
+            renderCoursesList(filtered);
+        }
+
+        function renderDeadlinesList(deadlines) {
+            const container = document.getElementById('deadlinesListContainer');
+            let filtered = deadlines;
+            if (deadlinesFilter === 'pending') filtered = deadlines.filter(d => !d.is_submitted);
+            if (deadlinesFilter === 'submitted') filtered = deadlines.filter(d => d.is_submitted);
+
+            if (!filtered.length) {
+                container.innerHTML = `
+                    <div class="p-6 text-center glass rounded-2xl">
+                        <i class="fa-solid fa-calendar-xmark text-slate-500 text-2xl mb-2"></i>
+                        <p class="text-xs text-slate-400">لا توجد مواعيد في هذا التصنيف</p>
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = filtered.map(d => `
+                <div class="p-3.5 rounded-2xl glass hover:border-slate-600 transition-all space-y-2">
+                    <div class="flex items-start justify-between gap-2">
+                        <div class="space-y-0.5">
+                            <span class="text-[10px] text-slate-400 font-semibold">${escapeHtml(d.course_name)}</span>
+                            <h4 class="text-xs font-bold text-slate-100">${escapeHtml(d.content_name)}</h4>
+                        </div>
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded-full ${d.is_submitted ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-rose-500/10 text-rose-400 border border-rose-500/30'}">
+                            ${d.is_submitted ? '✅ مسلّم' : '⏳ قيد الانتظار'}
+                        </span>
+                    </div>
+
+                    <div class="flex items-center justify-between text-[11px] text-slate-400 pt-1 border-t border-slate-700/50">
+                        <div class="flex items-center gap-1.5">
+                            <i class="fa-regular fa-clock text-slate-400"></i>
+                            <span>${d.due_str || 'موعد محدد'}</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            ${!d.is_submitted ? `
+                                <button onclick="markAsSubmitted('${d.content_id}')" class="px-2 py-1 rounded-lg bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600 hover:text-white text-[10px] font-bold transition-all">
+                                    تحديد كمسلّم
+                                </button>
+                            ` : ''}
+                            <a href="${d.content_url}" target="_blank" onclick="haptic('light')" class="text-blue-400 hover:underline">
+                                <i class="fa-solid fa-arrow-up-right-from-square"></i>
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function setDeadlinesFilter(f) {
+            haptic('light');
+            deadlinesFilter = f;
+            ['all', 'pending', 'submitted'].forEach(name => {
+                const btn = document.getElementById('btnFilter' + name.charAt(0).toUpperCase() + name.slice(1));
+                if (name === f) {
+                    btn.className = 'px-2.5 py-1 rounded-lg bg-blue-600 text-white font-semibold transition-all';
+                } else {
+                    btn.className = 'px-2.5 py-1 rounded-lg text-slate-400 font-semibold hover:text-white transition-all';
+                }
+            });
+            if (appData) renderDeadlinesList(appData.deadlines);
+        }
+
+        // Actions
+        async function triggerToggleMonitor() {
+            haptic('medium');
+            const tid = getTelegramId();
+            try {
+                const res = await fetch('/api/toggle-monitor', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ tid: tid, initData: tg?.initData || '' })
+                });
+                const d = await res.json();
+                if (d.success) {
+                    if (appData) appData.user.is_monitoring = d.is_monitoring;
+                    renderApp();
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        async function toggleCourseMonitoring(cid) {
+            haptic('medium');
+            const tid = getTelegramId();
+            try {
+                const res = await fetch('/api/toggle-course', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ tid: tid, course_id: cid, initData: tg?.initData || '' })
+                });
+                const d = await res.json();
+                if (d.success && appData) {
+                    const c = appData.courses.find(x => x.id === cid);
+                    if (c) c.is_monitored = d.is_monitored;
+                    renderApp();
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        async function markAsSubmitted(contentId) {
+            haptic('success');
+            const tid = getTelegramId();
+            try {
+                const res = await fetch('/api/mark-submitted', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ tid: tid, content_id: contentId, is_submitted: 1, initData: tg?.initData || '' })
+                });
+                const d = await res.json();
+                if (d.success && appData) {
+                    const dl = appData.deadlines.find(x => x.content_id === contentId);
+                    if (dl) dl.is_submitted = true;
+                    renderApp();
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        async function saveNotificationSettings() {
+            haptic('light');
+            const tid = getTelegramId();
+            const assign = document.getElementById('toggleAssign').checked;
+            const quiz = document.getElementById('toggleQuiz').checked;
+            const resource = document.getElementById('toggleResource').checked;
+            try {
+                await fetch('/api/update-settings', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        tid: tid,
+                        notify_assign: assign ? 1 : 0,
+                        notify_quiz: quiz ? 1 : 0,
+                        notify_resource: resource ? 1 : 0,
+                        initData: tg?.initData || ''
+                    })
+                });
+            } catch(e) { console.error(e); }
+        }
+
+        async function setCheckInterval(minutes) {
+            haptic('medium');
+            const tid = getTelegramId();
+            highlightIntervalButton(minutes);
+            try {
+                await fetch('/api/update-settings', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ tid: tid, check_interval: minutes, initData: tg?.initData || '' })
+                });
+                if (appData) appData.user.check_interval = minutes;
+                renderApp();
+            } catch(e) { console.error(e); }
+        }
+
+        function highlightIntervalButton(min) {
+            [5, 10, 30, 60].forEach(m => {
+                const btn = document.getElementById('btnInterval' + m);
+                if (!btn) return;
+                if (m === min) {
+                    btn.className = 'py-2 rounded-xl text-xs font-bold border border-blue-500 bg-blue-600 text-white shadow-lg shadow-blue-500/20 transition-all';
+                } else {
+                    btn.className = 'py-2 rounded-xl text-xs font-bold border border-slate-700 bg-slate-800 text-slate-300 hover:border-blue-500 transition-all';
+                }
+            });
+        }
+
+        function switchTab(tabId) {
+            haptic('light');
+            activeTab = tabId;
+            ['tab-dashboard', 'tab-courses', 'tab-deadlines', 'tab-settings'].forEach(id => {
+                const section = document.getElementById(id);
+                const navBtn = document.getElementById('nav-' + id);
+                if (id === tabId) {
+                    section.classList.remove('hidden');
+                    navBtn.className = 'flex flex-col items-center justify-center py-1.5 text-blue-400 transition-all';
+                } else {
+                    section.classList.add('hidden');
+                    navBtn.className = 'flex flex-col items-center justify-center py-1.5 text-slate-400 hover:text-white transition-all';
+                }
+            });
+        }
+
+        function refreshData() {
+            haptic('light');
+            fetchUserData();
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        // Initialize on load
+        window.addEventListener('DOMContentLoaded', () => {
+            fetchUserData();
+        });
+    </script>
+</body>
+</html>
+
