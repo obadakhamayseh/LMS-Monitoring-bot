@@ -25,6 +25,7 @@ REMIND_LABEL = {
 
 def _esc(t):
     if not t: return ""
+    t = str(t)
     for ch in ["_", "*", "`", "["]:
         t = t.replace(ch, f"\\{ch}")
     return t
@@ -48,47 +49,61 @@ def _parse_due_date(due_str: str):
         "%d %b %Y, %I:%M %p",
         "%d %b %Y, %H:%M",
         "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
         "%Y-%m-%dT%H:%M:%S",
         "%d/%m/%Y %H:%M",
+        "%d/%m/%Y",
+        "%Y-%m-%d",
     ]
 
     for fmt in formats:
         try:
             dt = datetime.strptime(s, fmt)
+            if fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+                dt = dt.replace(hour=23, minute=59)
             return _timestamp(dt)
         except ValueError:
             continue
 
+    month_map = {
+        "jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,
+        "jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12,
+        "january":1,"february":2,"march":3,"april":4,
+        "june":6,"july":7,"august":8,"september":9,
+        "october":10,"november":11,"december":12,
+        "يناير":1,"فبراير":2,"مارس":3,"أبريل":4,"ابريل":4,
+        "مايو":5,"يونيو":6,"يوليو":7,"أغسطس":8,"اغسطس":8,
+        "سبتمبر":9,"أكتوبر":10,"اكتوبر":10,"نوفمبر":11,"ديسمبر":12,
+        "كانون الثاني":1,"شباط":2,"آذار":3,"اذار":3,"نيسان":4,
+        "أيار":5,"ايار":5,"حزيران":6,"تموز":7,"آب":8,"اب":8,
+        "أيلول":9,"ايلول":9,"تشرين الأول":10,"تشرين الاول":10,
+        "تشرين الثاني":11,"كانون الأول":12,"كانون الاول":12,
+    }
+
     match = re.search(
-        r"(\d{1,2})\s+(\w+)\s+(\d{4})[,،]?\s*(\d{1,2}):(\d{2})\s*(AM|PM|am|pm)?",
+        r"(\d{1,2})\s+([^\d,،:]+?)\s+(\d{4})(?:[,،\s]+(\d{1,2}):(\d{2})\s*(AM|PM|am|pm|ص|م|صباحاً|صباحا|مساءً|مساء)?)?",
         s, re.IGNORECASE
     )
     if match:
         try:
-            day, month_s, year, hour, minute = (
-                match.group(1), match.group(2), match.group(3),
-                match.group(4), match.group(5)
-            )
-            am_pm = match.group(6)
-            month_map = {
-                "jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,
-                "jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12,
-                "january":1,"february":2,"march":3,"april":4,
-                "june":6,"july":7,"august":8,"september":9,
-                "october":10,"november":11,"december":12,
-                "يناير":1,"فبراير":2,"مارس":3,"أبريل":4,"ابريل":4,
-                "مايو":5,"يونيو":6,"يوليو":7,"أغسطس":8,"اغسطس":8,
-                "سبتمبر":9,"أكتوبر":10,"اكتوبر":10,"نوفمبر":11,"ديسمبر":12,
-            }
-            m = month_map.get(month_s.lower())
+            day = int(match.group(1))
+            month_s = re.sub(r"\s+", " ", match.group(2).strip()).lower()
+            year = int(match.group(3))
+            hour = int(match.group(4)) if match.group(4) else 23
+            minute = int(match.group(5)) if match.group(5) else 59
+            am_pm = (match.group(6) or "").strip().lower()
+
+            m = month_map.get(month_s)
             if not m:
                 return None
-            h = int(hour)
-            if am_pm and am_pm.lower() == "pm" and h != 12:
+            h = hour
+            is_pm = am_pm in ("pm", "م", "مساءً", "مساء")
+            is_am = am_pm in ("am", "ص", "صباحاً", "صباحا")
+            if is_pm and h != 12:
                 h += 12
-            elif am_pm and am_pm.lower() == "am" and h == 12:
+            elif is_am and h == 12:
                 h = 0
-            dt = datetime(int(year), m, int(day), h, int(minute))
+            dt = datetime(year, m, day, h, minute)
             return _timestamp(dt)
         except Exception:
             pass
@@ -114,6 +129,10 @@ class ReminderEngine:
         self._running = False
         if self._task:
             self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
         logger.info("Reminder engine stopped")
 
     async def _loop(self):

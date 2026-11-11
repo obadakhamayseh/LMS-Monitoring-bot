@@ -164,10 +164,26 @@
 
         <!-- ==================== TAB 1: COURSES ==================== -->
         <section id="tab-courses" class="space-y-3">
-            <!-- Search bar -->
-            <div class="relative">
-                <input type="text" id="courseSearchInput" oninput="filterCourses()" placeholder="بحث في المقررات أو المحتويات..." class="w-full bg-[#11131B] hairline-border rounded-xl px-4 py-2.5 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-500 transition-all">
+            <!-- Search & Sync Toolbar -->
+            <div class="flex items-center gap-2">
+                <div class="relative flex-1">
+                    <input type="text" id="courseSearchInput" oninput="filterCourses()" placeholder="بحث في المقررات أو المحتويات..." class="w-full bg-[#11131B] hairline-border rounded-xl px-3.5 py-2 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-500 transition-all">
+                </div>
+                <button onclick="triggerSyncCourses()" id="btnSyncCourses" class="px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 active:scale-95 text-zinc-200 hairline-border text-[11px] font-semibold shrink-0 flex items-center gap-1.5 transition-all">
+                    <span>📥 مزامنة LMS</span>
+                </button>
             </div>
+
+            <!-- Add Course by ID / URL Bar -->
+            <div class="flex items-center gap-2">
+                <input type="text" id="addCourseInput" placeholder="إضافة مقرر برقم ID أو رابط المادة..." class="flex-1 bg-[#11131B] hairline-border rounded-xl px-3.5 py-2 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-500 transition-all">
+                <button onclick="triggerAddCourse()" id="btnAddCourse" class="px-3.5 py-2 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 text-sky-400 border border-sky-500/30 text-[11px] font-bold shrink-0 transition-all">
+                    + إضافة
+                </button>
+            </div>
+
+            <!--Status Banner -->
+            <div id="statusToast" class="hidden rounded-xl px-3.5 py-2.5 text-xs font-medium hairline-border bg-zinc-900 text-zinc-200"></div>
 
             <!-- Real Courses List -->
             <div id="coursesListContainer" class="space-y-3">
@@ -290,6 +306,17 @@
             } catch(e) {}
         }
 
+        function showToast(msg, isError = false) {
+            const el = document.getElementById('statusToast');
+            if (!el) return;
+            el.className = isError
+                ? 'rounded-xl px-3.5 py-2.5 text-xs font-medium border border-rose-500/30 bg-rose-500/10 text-rose-300'
+                : 'rounded-xl px-3.5 py-2.5 text-xs font-medium border border-emerald-500/30 bg-emerald-500/10 text-emerald-300';
+            el.innerText = msg;
+            el.classList.remove('hidden');
+            setTimeout(() => { el.classList.add('hidden'); }, 4500);
+        }
+
         async function fetchUserData() {
             const tid = getTelegramId();
             const initData = tg?.initData || '';
@@ -305,14 +332,95 @@
                     appData = data;
                     renderApp();
                 } else {
-                    document.getElementById('userFullName').innerText = 'المستخدم غير مسجل';
-                    document.getElementById('userStdId').innerText = data.error || 'سجل دخولك عبر البوت أولاً';
+                    document.getElementById('userFullName').innerText = 'تسجيل الدخول مطلوب';
+                    document.getElementById('userStdId').innerText = 'حساب جامعة مؤتة (LMS)';
+                    renderLoginView(data.error);
                 }
             } catch (err) {
                 console.error('Fetch error:', err);
                 document.getElementById('userFullName').innerText = 'تعذر الاتصال بالخادم';
             } finally {
                 if (refreshIcon) refreshIcon.classList.remove('animate-spin');
+            }
+        }
+
+        function renderLoginView(errMsg) {
+            const container = document.getElementById('coursesListContainer');
+            if (!container) return;
+            container.innerHTML = `
+                <div class="card-surface rounded-2xl p-5 space-y-4">
+                    <div>
+                        <h3 class="text-sm font-bold text-zinc-100">ربط الحساب الأكاديمي (LMS)</h3>
+                        <p class="text-[11px] text-zinc-400 mt-1">${escapeHtml(errMsg || 'أدخل الرقم الجامعي وكلمة المرور لمزامنة المقررات وتفعيل الرصد التلقائي.')}</p>
+                    </div>
+                    <div class="space-y-2.5">
+                        <div>
+                            <label class="block text-[11px] text-zinc-400 mb-1">الرقم الجامعي (Student ID)</label>
+                            <input type="text" id="loginUsername" placeholder="مثال: 120242222083" class="w-full bg-zinc-950 hairline-border rounded-xl px-3.5 py-2.5 text-xs text-zinc-100 focus:outline-none focus:border-sky-500">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] text-zinc-400 mb-1">كلمة المرور (Password)</label>
+                            <input type="password" id="loginPassword" placeholder="••••••••" class="w-full bg-zinc-950 hairline-border rounded-xl px-3.5 py-2.5 text-xs text-zinc-100 focus:outline-none focus:border-sky-500">
+                        </div>
+                    </div>
+                    <div id="loginErrorBox" class="hidden text-[11px] text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-xl px-3 py-2"></div>
+                    <button onclick="submitMiniAppLogin()" id="btnSubmitLogin" class="w-full py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-zinc-950 font-bold text-xs transition-all">
+                        تسجيل الدخول واستيراد المقررات
+                    </button>
+                </div>
+            `;
+        }
+
+        async function submitMiniAppLogin() {
+            haptic('medium');
+            const uInput = document.getElementById('loginUsername')?.value?.trim();
+            const pInput = document.getElementById('loginPassword')?.value?.trim();
+            const errBox = document.getElementById('loginErrorBox');
+            const btn = document.getElementById('btnSubmitLogin');
+            if (!uInput || !pInput) {
+                if (errBox) {
+                    errBox.innerText = 'يرجى إدخال الرقم الجامعي وكلمة المرور';
+                    errBox.classList.remove('hidden');
+                }
+                return;
+            }
+            if (errBox) errBox.classList.add('hidden');
+            if (btn) {
+                btn.disabled = true;
+                btn.innerText = 'جاري التحقق ومزامنة المواد من LMS...';
+            }
+            try {
+                const res = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        tid: getTelegramId(),
+                        initData: tg?.initData || '',
+                        username: uInput,
+                        password: pInput
+                    })
+                });
+                const d = await res.json();
+                if (d.success) {
+                    haptic('success');
+                    await fetchUserData();
+                    showToast(`تم تسجيل الدخول بنجاح ومزامنة ${d.courses_synced || 0} مقرر`);
+                } else {
+                    if (errBox) {
+                        errBox.innerText = d.error || 'تعذر تسجيل الدخول؛ تحقق من البيانات';
+                        errBox.classList.remove('hidden');
+                    }
+                }
+            } catch (e) {
+                if (errBox) {
+                    errBox.innerText = 'حدث خطأ في الاتصال بالخادم';
+                    errBox.classList.remove('hidden');
+                }
+            } finally {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerText = 'تسجيل الدخول واستيراد المقررات';
+                }
             }
         }
 
@@ -582,10 +690,77 @@
             const btn = document.getElementById('btnForceCheck');
             btn.innerHTML = '<span class="animate-spin text-sky-400">↻</span> <span>جاري الفحص...</span>';
             try {
-                await fetch('/api/user-data?tid=' + (getTelegramId() || ''));
-                await refreshData();
+                const res = await fetch('/api/force-check', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '' })
+                });
+                const d = await res.json();
+                await fetchUserData();
+                if (d.success) {
+                    showToast(d.new_items > 0 ? `تم اكتشاف ${d.new_items} محتوى جديد!` : 'اكتمل الفحص الفوري — كافة المقررات محدّثة');
+                } else {
+                    showToast(d.error || 'تعذر إكمال الفحص الفوري', true);
+                }
+            } catch(e) {
+                showToast('حدث خطأ أثناء الفحص الفوري', true);
             } finally {
                 btn.innerHTML = '<svg class="w-3.5 h-3.5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg><span>فحص فوري</span>';
+            }
+        }
+
+        async function triggerSyncCourses() {
+            haptic('medium');
+            const btn = document.getElementById('btnSyncCourses');
+            if (btn) btn.innerText = '⏳ جاري الاستيراد...';
+            try {
+                const res = await fetch('/api/sync-courses', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '' })
+                });
+                const d = await res.json();
+                await fetchUserData();
+                if (d.success) {
+                    showToast(`تمت مزامنة ${d.synced_count || 0} مقرر من نظام الجامعة بنجاح`);
+                } else {
+                    showToast(d.error || 'تعذر استيراد المقررات تلقائياً', true);
+                }
+            } catch(e) {
+                showToast('خطأ أثناء الاتصال بالخادم', true);
+            } finally {
+                if (btn) btn.innerText = '📥 مزامنة LMS';
+            }
+        }
+
+        async function triggerAddCourse() {
+            haptic('medium');
+            const input = document.getElementById('addCourseInput');
+            const val = input ? input.value.trim() : '';
+            if (!val) {
+                showToast('أدخل رقم المادة (Course ID) أو الصق رابطها أولاً', true);
+                return;
+            }
+            const btn = document.getElementById('btnAddCourse');
+            if (btn) btn.innerText = '...';
+            try {
+                const res = await fetch('/api/add-course', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ tid: getTelegramId(), course_id: val, initData: tg?.initData || '' })
+                });
+                const d = await res.json();
+                if (d.success) {
+                    if (input) input.value = '';
+                    await fetchUserData();
+                    showToast(`تمت إضافة المقرر: ${d.course_name}`);
+                } else {
+                    showToast(d.error || 'لم يتم العثور على المقرر', true);
+                }
+            } catch(e) {
+                showToast('تعذر الاتصال بالخادم', true);
+            } finally {
+                if (btn) btn.innerText = '+ إضافة';
             }
         }
 

@@ -1,14 +1,16 @@
 import os
+import re
 import json
 import time
 import logging
 import urllib.parse
 import hmac
 import hashlib
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from typing import Optional
 
 import database as db
+from lms_scraper import LMSScraper
 from config import TELEGRAM_BOT_TOKEN
 
 logger = logging.getLogger(__name__)
@@ -108,7 +110,7 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
 
         # API: user data
         if path == "/api/user-data":
-            tid_str = query.get("tid", "")
+            tid_str = str(query.get("tid", "")).strip()
             init_data = query.get("initData", "")
 
             tid = None
@@ -128,27 +130,25 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                     except Exception:
                         pass
 
-            # Fallback if only 1 user exists in DB
+            # Only fallback to single DB user if no tid could be extracted from query/initData AND only 1 user exists
             if not tid:
                 with db.DBContext() as ctx:
-                    first_u = ctx.fetchone("SELECT telegram_id FROM users ORDER BY created_at DESC LIMIT 1")
-                    if first_u:
-                        tid = first_u["telegram_id"]
+                    all_u = ctx.fetchall("SELECT telegram_id FROM users LIMIT 2")
+                    if len(all_u) == 1:
+                        tid = all_u[0]["telegram_id"]
 
             if not tid:
-                self._send_json({"success": False, "error": "المستخدم غير مسجل أو تعذر التحقق"}, 401)
+                self._send_json({"success": False, "not_registered": True, "error": "يرجى تسجيل الدخول بحساب الجامعة"}, 200)
                 return
 
             user = db.get_user(tid)
             if not user:
-                with db.DBContext() as ctx:
-                    fallback_u = ctx.fetchone("SELECT telegram_id FROM users LIMIT 1")
-                    if fallback_u:
-                        tid = fallback_u["telegram_id"]
-                        user = db.get_user(tid)
-
-            if not user:
-                self._send_json({"success": False, "error": "لم يتم العثور على حساب مرتبط بهذا المستخدم"}, 404)
+                self._send_json({
+                    "success": False,
+                    "not_registered": True,
+                    "tid": tid,
+                    "error": "لم يتم العثور على حساب مرتبط؛ سجل دخولك أدناه"
+                }, 200)
                 return
 
             # Sanitize user info (omit password)
@@ -165,13 +165,19 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
             }
 
             courses = db.get_user_courses(tid)
+            course_map = {c["course_id"]: c["course_name"] for c in courses}
             detailed_courses = []
+            all_assigns_and_quizzes = []
+
             for c in courses:
                 cid = c["course_id"]
                 items = db.get_course_items(tid, cid)
                 assigns = [i for i in items if i.get("content_type") == "assign"]
                 quizzes = [i for i in items if i.get("content_type") == "quiz"]
                 resources = [i for i in items if i.get("content_type") == "resource"]
+
+                for aq in assigns + quizzes:
+                    all_assigns_and_quizzes.append((c["course_name"], aq))
 
                 detailed_courses.append({
                     "id": cid,
@@ -186,9 +192,11 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                     "items": items,
                 })
 
-            deadlines_raw = db.get_upcoming_deadlines(tid, limit=25)
+            deadlines_raw = db.get_upcoming_deadlines(tid, limit=50)
             now_ts = int(time.time())
             deadlines = []
+            seen_deadline_ids = set()
+
             for r in deadlines_raw:
                 diff = r["due_ts"] - now_ts
                 days = diff // 86400
@@ -197,25 +205,51 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                 if diff <= 3600:
                     time_remaining = "ساعة أو أقل!"
 
+                seen_deadline_ids.add(str(r["content_id"]))
                 deadlines.append({
                     "id": r["id"],
                     "content_id": r["content_id"],
+                    "content_type": "assign",
                     "content_name": r.get("content_name", "واجب"),
                     "content_url": r.get("content_url", ""),
                     "course_id": r["course_id"],
-                    "course_name": r.get("course_name", "مادة"),
+                    "course_name": r.get("course_name") or course_map.get(r["course_id"], "مادة"),
                     "due_str": r.get("due_str", ""),
                     "due_ts": r["due_ts"],
                     "time_remaining": time_remaining,
                     "is_submitted": bool(r.get("is_submitted", 0)),
+                    "is_upcoming": True,
+                })
+
+            # Also include all other assignments and quizzes from seen_content so the tasks tab is always populated
+            with db.DBContext() as ctx:
+                rem_rows = ctx.fetchall("SELECT content_id, is_submitted FROM reminders WHERE telegram_id=?", (tid,))
+                sub_map = {str(r["content_id"]): bool(r.get("is_submitted", 0)) for r in rem_rows}
+
+            for cname, aq in all_assigns_and_quizzes:
+                cid_key = str(aq.get("content_id", ""))
+                if not cid_key or cid_key in seen_deadline_ids:
+                    continue
+                seen_deadline_ids.add(cid_key)
+                deadlines.append({
+                    "id": aq.get("id", 0),
+                    "content_id": cid_key,
+                    "content_type": aq.get("content_type", "assign"),
+                    "content_name": aq.get("content_name", "واجب"),
+                    "content_url": aq.get("content_url", ""),
+                    "course_id": aq.get("course_id", 0),
+                    "course_name": cname,
+                    "due_str": aq.get("due_date") or "متاح في المقرر",
+                    "due_ts": 0,
+                    "time_remaining": "",
+                    "is_submitted": sub_map.get(cid_key, False),
+                    "is_upcoming": False,
                 })
 
             stats = db.get_stats(tid)
 
-            # Calculate submission progress
-            all_deadlines = db.get_upcoming_deadlines(tid, limit=100)
-            total_deadlines = len(all_deadlines)
-            submitted_deadlines = len([d for d in all_deadlines if d.get("is_submitted")])
+            total_deadlines = len(deadlines)
+            submitted_deadlines = len([d for d in deadlines if d.get("is_submitted")])
             progress_pct = int((submitted_deadlines / total_deadlines) * 100) if total_deadlines > 0 else 100
 
             self._send_json({
@@ -246,7 +280,8 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
         except Exception:
             payload = {}
 
-        tid = payload.get("tid")
+        tid_raw = str(payload.get("tid") or "").strip()
+        tid = int(tid_raw) if tid_raw.isdigit() else None
         if not tid and payload.get("initData"):
             tid = _validate_telegram_init_data(payload["initData"], TELEGRAM_BOT_TOKEN)
             if not tid:
@@ -261,24 +296,57 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
 
         if not tid:
             with db.DBContext() as ctx:
-                f_u = ctx.fetchone("SELECT telegram_id FROM users LIMIT 1")
-                if f_u:
-                    tid = f_u["telegram_id"]
+                all_u = ctx.fetchall("SELECT telegram_id FROM users LIMIT 2")
+                if len(all_u) == 1:
+                    tid = all_u[0]["telegram_id"]
 
         if not tid:
-            self._send_json({"success": False, "error": "المستخدم غير معتمد"}, 401)
+            self._send_json({"success": False, "error": "تعذر تحديد معرف تيليجرام؛ افتح اللوحة من داخل البوت"}, 401)
+            return
+
+        # 0. Direct Login from Mini App
+        if path == "/api/login":
+            raw_user = str(payload.get("username") or "").strip().translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789"))
+            raw_pass = str(payload.get("password") or "").strip().translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789"))
+            if not raw_user or not raw_pass:
+                self._send_json({"success": False, "error": "يرجى إدخال الرقم الجامعي وكلمة المرور"}, 400)
+                return
+
+            scraper = LMSScraper(raw_user, raw_pass)
+            try:
+                if not scraper.login():
+                    self._send_json({"success": False, "error": scraper.error_message or "فشل تسجيل الدخول إلى LMS"}, 401)
+                    return
+
+                db.save_user(tid, raw_user, raw_pass, scraper.user_id, scraper.full_name)
+                # Auto-fetch courses on login
+                courses_list = scraper.get_courses()
+                for c in courses_list:
+                    cid = c["id"]
+                    db.add_course(tid, cid, c["name"], c["url"])
+                    content = scraper.get_course_content(cid)
+                    for item in content.get("assignments", []):
+                        db.mark_seen(tid, cid, item["id"], "assign", item["name"], item["url"], item.get("due_date", ""))
+                    for item in content.get("quizzes", []):
+                        db.mark_seen(tid, cid, item["id"], "quiz", item["name"], item["url"], item.get("due_date", ""))
+                    for item in content.get("resources", []):
+                        db.mark_seen(tid, cid, item["id"], "resource", item["name"], item["url"])
+                    if _REMINDER_ENGINE and content.get("assignments"):
+                        _REMINDER_ENGINE.register_assignments(tid, cid, content["assignments"])
+                    for a in content.get("assignments", []):
+                        if a.get("is_submitted"):
+                            db.mark_assignment_submitted(tid, a["id"], 1)
+                if courses_list:
+                    db.set_monitoring(tid, True)
+                    db.update_last_check(tid)
+                self._send_json({"success": True, "courses_synced": len(courses_list)})
+            finally:
+                scraper.close()
             return
 
         user = db.get_user(tid)
         if not user:
-            with db.DBContext() as ctx:
-                f_u = ctx.fetchone("SELECT telegram_id FROM users LIMIT 1")
-                if f_u:
-                    tid = f_u["telegram_id"]
-                    user = db.get_user(tid)
-
-        if not user:
-            self._send_json({"success": False, "error": "المستخدم غير موجود"}, 404)
+            self._send_json({"success": False, "not_registered": True, "error": "المستخدم غير مسجل"}, 404)
             return
 
         # 1. Toggle overall monitoring
@@ -307,7 +375,19 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
             if not content_id:
                 self._send_json({"success": False, "error": "content_id مطلوب"}, 400)
                 return
-            db.mark_assignment_submitted(tid, content_id, is_sub)
+            # Ensure reminder row exists or update it
+            with db.DBContext() as ctx:
+                existing_rem = ctx.fetchone("SELECT id FROM reminders WHERE telegram_id=? AND content_id=?", (tid, str(content_id)))
+                if existing_rem:
+                    db.mark_assignment_submitted(tid, content_id, is_sub)
+                else:
+                    sc = ctx.fetchone("SELECT * FROM seen_content WHERE telegram_id=? AND content_id=?", (tid, str(content_id)))
+                    if sc:
+                        db.upsert_reminder(
+                            tid, sc["course_id"], str(content_id),
+                            sc.get("content_name", ""), sc.get("content_url", ""),
+                            None, sc.get("due_date", ""), is_submitted=1 if is_sub else 0
+                        )
             self._send_json({"success": True, "content_id": content_id, "is_submitted": bool(is_sub)})
             return
 
@@ -325,6 +405,111 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"success": True, "message": "تم حفظ الإعدادات"})
             return
 
+        # 5. Sync courses from LMS directly via Mini App
+        if path == "/api/sync-courses":
+            scraper = LMSScraper(user["lms_username"], user["lms_password"])
+            try:
+                if not scraper.login():
+                    self._send_json({"success": False, "error": scraper.error_message or "فشل تسجيل الدخول إلى LMS"}, 400)
+                    return
+                courses_list = scraper.get_courses()
+                added = 0
+                for c in courses_list:
+                    cid = c["id"]
+                    db.add_course(tid, cid, c["name"], c["url"])
+                    added += 1
+                    content = scraper.get_course_content(cid)
+                    for item in content.get("assignments", []):
+                        db.mark_seen(tid, cid, item["id"], "assign", item["name"], item["url"], item.get("due_date", ""))
+                    for item in content.get("quizzes", []):
+                        db.mark_seen(tid, cid, item["id"], "quiz", item["name"], item["url"], item.get("due_date", ""))
+                    for item in content.get("resources", []):
+                        db.mark_seen(tid, cid, item["id"], "resource", item["name"], item["url"])
+                    if _REMINDER_ENGINE and content.get("assignments"):
+                        _REMINDER_ENGINE.register_assignments(tid, cid, content["assignments"])
+                    for a in content.get("assignments", []):
+                        if a.get("is_submitted"):
+                            db.mark_assignment_submitted(tid, a["id"], 1)
+                db.update_last_check(tid)
+                self._send_json({"success": True, "synced_count": added})
+            finally:
+                scraper.close()
+            return
+
+        # 6. Add course by ID or URL directly via Mini App
+        if path == "/api/add-course":
+            raw_input = str(payload.get("course_id") or "").strip().translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789"))
+            m = re.search(r"(?:id=|course=)(\d+)", raw_input)
+            cid_str = m.group(1) if m else raw_input
+            if not cid_str.isdigit():
+                self._send_json({"success": False, "error": "يرجى إدخال رقم مادة صحيح أو رابط المقرر"}, 400)
+                return
+            cid = int(cid_str)
+            scraper = LMSScraper(user["lms_username"], user["lms_password"])
+            try:
+                if not scraper.login():
+                    self._send_json({"success": False, "error": scraper.error_message or "فشل تسجيل الدخول إلى LMS"}, 400)
+                    return
+                cname, content = scraper.get_course_info(cid)
+                if not cname:
+                    self._send_json({"success": False, "error": f"لم يتم العثور على مادة بالرقم {cid}"}, 404)
+                    return
+                curl = f"https://mulms.mutah.edu.jo/course/view.php?id={cid}"
+                db.add_course(tid, cid, cname, curl)
+                for item in content.get("assignments", []):
+                    db.mark_seen(tid, cid, item["id"], "assign", item["name"], item["url"], item.get("due_date", ""))
+                for item in content.get("quizzes", []):
+                    db.mark_seen(tid, cid, item["id"], "quiz", item["name"], item["url"], item.get("due_date", ""))
+                for item in content.get("resources", []):
+                    db.mark_seen(tid, cid, item["id"], "resource", item["name"], item["url"])
+                if _REMINDER_ENGINE and content.get("assignments"):
+                    _REMINDER_ENGINE.register_assignments(tid, cid, content["assignments"])
+                for a in content.get("assignments", []):
+                    if a.get("is_submitted"):
+                        db.mark_assignment_submitted(tid, a["id"], 1)
+                self._send_json({"success": True, "course_name": cname, "course_id": cid})
+            finally:
+                scraper.close()
+            return
+
+        # 7. Real Force Check across monitored courses
+        if path == "/api/force-check":
+            courses = db.get_user_courses(tid, monitored_only=True)
+            if not courses:
+                self._send_json({"success": False, "error": "لا توجد مقررات مفعلة للمراقبة"}, 400)
+                return
+            scraper = LMSScraper(user["lms_username"], user["lms_password"])
+            try:
+                if not scraper.login():
+                    self._send_json({"success": False, "error": scraper.error_message or "فشل تسجيل الدخول إلى LMS"}, 400)
+                    return
+                new_items = 0
+                for c in courses:
+                    cid = c["course_id"]
+                    content = scraper.get_course_content(cid)
+                    for item in content.get("assignments", []):
+                        if not db.is_seen(tid, item["id"], "assign"):
+                            new_items += 1
+                        db.mark_seen(tid, cid, item["id"], "assign", item["name"], item["url"], item.get("due_date", ""))
+                    for item in content.get("quizzes", []):
+                        if not db.is_seen(tid, item["id"], "quiz"):
+                            new_items += 1
+                        db.mark_seen(tid, cid, item["id"], "quiz", item["name"], item["url"], item.get("due_date", ""))
+                    for item in content.get("resources", []):
+                        if not db.is_seen(tid, item["id"], "resource"):
+                            new_items += 1
+                        db.mark_seen(tid, cid, item["id"], "resource", item["name"], item["url"])
+                    if _REMINDER_ENGINE and content.get("assignments"):
+                        _REMINDER_ENGINE.register_assignments(tid, cid, content["assignments"])
+                    for a in content.get("assignments", []):
+                        if a.get("is_submitted"):
+                            db.mark_assignment_submitted(tid, a["id"], 1)
+                db.update_last_check(tid)
+                self._send_json({"success": True, "new_items": new_items})
+            finally:
+                scraper.close()
+            return
+
         self.send_response(404)
         self.end_headers()
 
@@ -334,7 +519,7 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
 
 def run_web_server():
     port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", port), WebAppRequestHandler)
+    server = ThreadingHTTPServer(("0.0.0.0", port), WebAppRequestHandler)
     logger.info(f"WebApp server running on port {port}")
     server.serve_forever()
 

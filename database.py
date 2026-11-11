@@ -28,9 +28,9 @@ class DBContext:
 
     def __enter__(self):
         if self.is_pg:
-            self.conn = psycopg.connect(self.pg_url, autocommit=True, row_factory=dict_row)
+            self.conn = psycopg.connect(self.pg_url, autocommit=True, row_factory=dict_row, connect_timeout=10)
         else:
-            self.conn = sqlite3.connect(DATABASE_PATH)
+            self.conn = sqlite3.connect(DATABASE_PATH, timeout=10)
             self.conn.row_factory = sqlite3.Row
         return self
 

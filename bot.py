@@ -1,4 +1,5 @@
 import os
+import re
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import logging
@@ -46,6 +47,7 @@ MD = ParseMode.MARKDOWN
 def _esc(text: str) -> str:
     if not text:
         return ""
+    text = str(text)
     for ch in ["_", "*", "`", "["]:
         text = text.replace(ch, f"\\{ch}")
     return text
@@ -173,8 +175,28 @@ def _back_kb(cb="main_menu"):
         ]
     return [[InlineKeyboardButton("🔙 رجوع", callback_data=cb)]]
 
+async def _ensure_user_menu_button(bot, tid: int):
+    webapp_url = get_webapp_url()
+    if not webapp_url or not tid:
+        return
+    try:
+        await bot.set_chat_menu_button(
+            chat_id=tid,
+            menu_button=MenuButtonWebApp(
+                text="📱 لوحة التحكم",
+                web_app=WebAppInfo(url=f"{webapp_url}?tid={tid}")
+            )
+        )
+    except Exception:
+        pass
+
 async def _show_main(msg_obj, tid, edit=False):
     user = db.get_user(tid)
+    try:
+        bot = msg_obj.get_bot()
+        asyncio.create_task(_ensure_user_menu_button(bot, tid))
+    except Exception:
+        pass
     if user:
         courses = db.get_user_courses(tid)
         mon     = db.get_user_courses(tid, monitored_only=True)
@@ -205,7 +227,9 @@ async def _show_main(msg_obj, tid, edit=False):
     await _send(msg_obj, text, _main_kb(user), edit=edit)
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    ctx.user_data.clear()
     await _show_main(update.message, update.effective_user.id)
+    return ConversationHandler.END
 
 async def login_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -292,11 +316,12 @@ async def login_got_pass(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         pass
 
     scraper = LMSScraper(username, password)
-    loop    = asyncio.get_event_loop()
+    loop    = asyncio.get_running_loop()
     ok      = await loop.run_in_executor(None, scraper.login)
 
     if ok:
         db.save_user(tid, username, password, scraper.user_id, scraper.full_name)
+        asyncio.create_task(_ensure_user_menu_button(bot, tid))
         engine: MonitorEngine = ctx.bot_data.get("engine")
         if engine:
             await engine.resume_user(tid, scraper)
@@ -343,6 +368,7 @@ async def login_got_pass(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             pass
     else:
         err_detail = scraper.error_message or "تحقق من رقم الطالب وكلمة المرور وحاول مجدداً."
+        scraper.close()
         try:
             await bot.edit_message_text(
                 chat_id=update.effective_chat.id,
@@ -390,7 +416,7 @@ async def add_course_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def add_course_got_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tid = update.effective_user.id
-    raw = update.message.text.strip()
+    raw = update.message.text.strip().translate(str.maketrans('٠١٢٣٤٥٦٧٨٩', '0123456789'))
 
     try:
         await update.message.delete()
@@ -400,8 +426,12 @@ async def add_course_got_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     bot = update.get_bot()
     mid = ctx.user_data.get("add_course_msg_id")
 
+    # Support either plain Course ID or full Moodle course URL
+    url_match = re.search(r"(?:id=|course=)(\d+)", raw)
+    cid_str = url_match.group(1) if url_match else raw
+
     try:
-        course_id = int(raw)
+        course_id = int(cid_str)
     except ValueError:
         try:
             await bot.edit_message_text(
@@ -409,8 +439,9 @@ async def add_course_got_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 message_id=mid,
                 text=(
                     "❌ *الرقم غير صحيح!*\n\n"
-                    "يجب أن يكون رقماً مثل: `12345`\n\n"
-                    "أرسل رقم المادة مجدداً:"
+                    "أرسل رقم المادة مثل `12345` أو الصق رابط المادة مباشرة من LMS:\n"
+                    "`https://mulms.mutah.edu.jo/course/view.php?id=12345`\n\n"
+                    "أرسل رقم المادة أو الرابط مجدداً:"
                 ),
                 parse_mode=MD,
                 reply_markup=InlineKeyboardMarkup([[
@@ -431,27 +462,34 @@ async def add_course_got_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     except Exception:
         pass
 
-    user     = db.get_user(tid)
-    scraper  = LMSScraper(user["lms_username"], user["lms_password"])
-    loop     = asyncio.get_event_loop()
-    ok       = await loop.run_in_executor(None, scraper.login)
-
-    if not ok:
-        try:
-            await bot.edit_message_text(
-                chat_id=update.effective_chat.id, message_id=mid,
-                text="❌ *فشل تسجيل الدخول.* حاول لاحقاً.",
-                parse_mode=MD,
-                reply_markup=InlineKeyboardMarkup(_back_kb("main_menu"))
-            )
-        except Exception:
-            pass
+    user = db.get_user(tid)
+    if not user:
         ctx.user_data.clear()
         return ConversationHandler.END
 
-    course_name, content = await loop.run_in_executor(
-        None, scraper.get_course_info, course_id
-    )
+    scraper = LMSScraper(user["lms_username"], user["lms_password"])
+    loop    = asyncio.get_running_loop()
+    try:
+        ok = await loop.run_in_executor(None, scraper.login)
+
+        if not ok:
+            try:
+                await bot.edit_message_text(
+                    chat_id=update.effective_chat.id, message_id=mid,
+                    text="❌ *فشل تسجيل الدخول.* حاول لاحقاً.",
+                    parse_mode=MD,
+                    reply_markup=InlineKeyboardMarkup(_back_kb("main_menu"))
+                )
+            except Exception:
+                pass
+            ctx.user_data.clear()
+            return ConversationHandler.END
+
+        course_name, content = await loop.run_in_executor(
+            None, scraper.get_course_info, course_id
+        )
+    finally:
+        scraper.close()
 
     if not course_name:
         try:
@@ -478,10 +516,6 @@ async def add_course_got_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     quizzes   = content.get("quizzes",    [])
     resources = content.get("resources",  [])
 
-    for a in assigns:
-        if a.get("is_submitted"):
-            db.mark_assignment_submitted(tid, a["id"], 1)
-
     for item in assigns:
         db.mark_seen(tid, course_id, item["id"], "assign",
                      item["name"], item["url"], item.get("due_date", ""))
@@ -495,6 +529,10 @@ async def add_course_got_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     reminder_eng: ReminderEngine = ctx.bot_data.get("reminder_engine")
     if reminder_eng:
         reminder_eng.register_assignments(tid, course_id, assigns)
+
+    for a in assigns:
+        if a.get("is_submitted"):
+            db.mark_assignment_submitted(tid, a["id"], 1)
 
     sections = _build_course_sections(course_name, course_id, assigns, quizzes, resources, new_add=True)
     kb = [
@@ -678,12 +716,14 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
 
         reminder_eng: ReminderEngine = ctx.bot_data.get("reminder_engine")
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         def _fetch_all_courses():
             scraper = LMSScraper(user["lms_username"], user["lms_password"])
             if not scraper.login():
-                return None, scraper.error_message or "فشل تسجيل الدخول إلى LMS"
+                err_msg = scraper.error_message or "فشل تسجيل الدخول إلى LMS"
+                scraper.close()
+                return None, err_msg
             courses_list = scraper.get_courses()
             return (courses_list, scraper), None
 
@@ -704,62 +744,68 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
         courses_list, scraper = result
 
-        if not courses_list:
+        try:
+            if not courses_list:
+                await _send(
+                    q.message,
+                    "⚠️ *لم يتم العثور على أي مواد مسجلة تلقائياً في صفحتك!*\n\n"
+                    "قد لا تكون المواد مفعلة للفصل الحالي بعد في LMS، أو معروضة بنمط مختلف.\n\n"
+                    "يمكنك إضافة المادة برقم الـ ID يدوياً بكل سهولة.",
+                    [
+                        [InlineKeyboardButton("➕ إضافة مادة برقم ID", callback_data="add_course_start")],
+                        [InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu")],
+                    ],
+                    edit=True
+                )
+                return
+
+            existing_courses = {c["course_id"]: c for c in db.get_user_courses(tid)}
+            newly_added = []
+            already_present = []
+
+            def _seed_course(cid):
+                try:
+                    return scraper.get_course_content(cid)
+                except Exception:
+                    return {}
+
+            for c in courses_list:
+                cid = c["id"]
+                cname = c["name"]
+                curl = c["url"]
+                is_existing = cid in existing_courses
+                if is_existing:
+                    already_present.append(cname)
+                    # Only re-seed if course has 0 seen items
+                    if db.get_course_items(tid, cid):
+                        continue
+                else:
+                    db.add_course(tid, cid, cname, curl)
+                    newly_added.append(cname)
+
+                content = await loop.run_in_executor(None, _seed_course, cid)
+                assigns = content.get("assignments", [])
+                quizzes = content.get("quizzes", [])
+                resources = content.get("resources", [])
+
+                for item in assigns:
+                    db.mark_seen(tid, cid, item["id"], "assign",
+                                 item["name"], item["url"], item.get("due_date", ""))
+                for item in quizzes:
+                    db.mark_seen(tid, cid, item["id"], "quiz",
+                                 item["name"], item["url"], item.get("due_date", ""))
+                for item in resources:
+                    db.mark_seen(tid, cid, item["id"], "resource",
+                                 item["name"], item["url"])
+
+                if reminder_eng and assigns:
+                    reminder_eng.register_assignments(tid, cid, assigns)
+
+                for a in assigns:
+                    if a.get("is_submitted"):
+                        db.mark_assignment_submitted(tid, a["id"], 1)
+        finally:
             scraper.close()
-            await _send(
-                q.message,
-                "⚠️ *لم يتم العثور على أي مواد مسجلة تلقائياً في صفحتك!*\n\n"
-                "قد لا تكون المواد مفعلة للفصل الحالي بعد في LMS، أو معروضة بنمط مختلف.\n\n"
-                "يمكنك إضافة المادة برقم الـ ID يدوياً بكل سهولة.",
-                [
-                    [InlineKeyboardButton("➕ إضافة مادة برقم ID", callback_data="add_course_start")],
-                    [InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu")],
-                ],
-                edit=True
-            )
-            return
-
-        existing_courses = {c["course_id"]: c for c in db.get_user_courses(tid)}
-        newly_added = []
-        already_present = []
-
-        def _seed_course(cid):
-            try:
-                _, content = scraper.get_course_info(cid)
-                return content
-            except Exception:
-                return {}
-
-        for c in courses_list:
-            cid = c["id"]
-            cname = c["name"]
-            curl = c["url"]
-            if cid in existing_courses:
-                already_present.append(cname)
-                continue
-
-            db.add_course(tid, cid, cname, curl)
-            newly_added.append(cname)
-
-            content = await loop.run_in_executor(None, _seed_course, cid)
-            assigns = content.get("assignments", [])
-            quizzes = content.get("quizzes", [])
-            resources = content.get("resources", [])
-
-            for item in assigns:
-                db.mark_seen(tid, cid, item["id"], "assign",
-                             item["name"], item["url"], item.get("due_date", ""))
-            for item in quizzes:
-                db.mark_seen(tid, cid, item["id"], "quiz",
-                             item["name"], item["url"], item.get("due_date", ""))
-            for item in resources:
-                db.mark_seen(tid, cid, item["id"], "resource",
-                             item["name"], item["url"])
-
-            if reminder_eng and assigns:
-                reminder_eng.register_assignments(tid, cid, assigns)
-
-        scraper.close()
 
         lines = [
             "✅ *اكتملت مزامنة المواد بنجاح!*",
@@ -1029,6 +1075,9 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
 
     elif data == "confirm_logout":
+        engine: MonitorEngine = ctx.bot_data.get("engine")
+        if engine:
+            await engine.stop_user(tid)
         db.delete_user(tid)
         await _send(q.message,
             "✅ *تم تسجيل الخروج بنجاح.*\n\nاضغط الزر أدناه للبدء من جديد:",
@@ -1136,16 +1185,19 @@ async def _fetch_show_course(msg_obj, tid, user, course_id, edit=False):
     await _send(msg_obj, f"⏳ *جارٍ تحميل محتوى المادة `{course_id}`...*", edit=edit)
 
     scraper = LMSScraper(user["lms_username"], user["lms_password"])
-    loop    = asyncio.get_event_loop()
-    ok      = await loop.run_in_executor(None, scraper.login)
+    loop    = asyncio.get_running_loop()
+    try:
+        ok = await loop.run_in_executor(None, scraper.login)
 
-    if not ok:
-        await _send(msg_obj, "❌ *فشل تسجيل الدخول.*", _back_kb("my_courses"), edit=True)
-        return
+        if not ok:
+            await _send(msg_obj, "❌ *فشل تسجيل الدخول.*", _back_kb("my_courses"), edit=True)
+            return
 
-    course_name, content = await loop.run_in_executor(
-        None, scraper.get_course_info, course_id
-    )
+        course_name, content = await loop.run_in_executor(
+            None, scraper.get_course_info, course_id
+        )
+    finally:
+        scraper.close()
 
     if not course_name:
         await _send(msg_obj, f"❌ *المادة `{course_id}` غير موجودة.*",
@@ -1155,6 +1207,16 @@ async def _fetch_show_course(msg_obj, tid, user, course_id, edit=False):
     assigns   = content.get("assignments", [])
     quizzes   = content.get("quizzes",    [])
     resources = content.get("resources",  [])
+
+    for item in assigns:
+        db.mark_seen(tid, course_id, item["id"], "assign",
+                     item["name"], item["url"], item.get("due_date", ""))
+    for item in quizzes:
+        db.mark_seen(tid, course_id, item["id"], "quiz",
+                     item["name"], item["url"], item.get("due_date", ""))
+    for item in resources:
+        db.mark_seen(tid, course_id, item["id"], "resource",
+                     item["name"], item["url"])
 
     for a in assigns:
         if a.get("is_submitted"):
@@ -1285,8 +1347,16 @@ def main():
         .build()
     )
 
-    login_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(login_start, pattern="^login_start$")],
+    async def fallback_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+        ctx.user_data.clear()
+        await handle_callback(update, ctx)
+        return ConversationHandler.END
+
+    conv_handler = ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(login_start, pattern="^login_start$"),
+            CallbackQueryHandler(add_course_start, pattern="^add_course_start$"),
+        ],
         states={
             STATE_LOGIN_USER: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, login_got_user)
@@ -1294,28 +1364,23 @@ def main():
             STATE_LOGIN_PASS: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, login_got_pass)
             ],
-        },
-        fallbacks=[
-            CallbackQueryHandler(login_start, pattern="^login_start$"),
-            CallbackQueryHandler(cancel_conv, pattern="^cancel_conv$"),
-        ],
-        per_message=False,
-    )
-
-    add_course_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(add_course_start, pattern="^add_course_start$")],
-        states={
             STATE_ADD_COURSE: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, add_course_got_id)
             ],
         },
-        fallbacks=[CallbackQueryHandler(cancel_conv, pattern="^cancel_conv$")],
+        fallbacks=[
+            CommandHandler("start", cmd_start),
+            CallbackQueryHandler(login_start, pattern="^login_start$"),
+            CallbackQueryHandler(add_course_start, pattern="^add_course_start$"),
+            CallbackQueryHandler(cancel_conv, pattern="^cancel_conv$"),
+            CallbackQueryHandler(fallback_callback),
+        ],
+        allow_reentry=True,
         per_message=False,
     )
 
+    app.add_handler(conv_handler)
     app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(login_conv)
-    app.add_handler(add_course_conv)
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 

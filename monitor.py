@@ -1,3 +1,4 @@
+import io
 import logging
 import asyncio
 import time
@@ -192,6 +193,17 @@ class MonitorEngine:
             if scraper:
                 self._sessions[tid] = (scraper.username, scraper.password, scraper)
 
+    async def stop_user(self, telegram_id: int):
+        """Clean up active scraper session and cache when a user logs out."""
+        tid = int(telegram_id)
+        lock = self._user_locks.setdefault(tid, asyncio.Lock())
+        async with lock:
+            self._discard_session(tid)
+            self._auth_required.discard(tid)
+            self._auth_alerted.discard(tid)
+            for key in [k for k in self._course_cache if isinstance(k, tuple) and k[0] == tid]:
+                self._course_cache.pop(key, None)
+
     async def _notify_auth_stopped(self, telegram_id: int, message: str = None):
         tid = int(telegram_id)
         if tid in self._auth_alerted:
@@ -245,16 +257,28 @@ class MonitorEngine:
                             )
                             if file_info:
                                 filename, file_bytes = file_info
-                                await self.bot.send_document(
-                                    chat_id=tid,
-                                    document=file_bytes,
-                                    filename=filename,
-                                    caption=(
-                                        f"📎 *ملف جديد:* {_esc(res_ev['name'])}\n"
-                                        f"📖 *المادة:* {_esc(res_ev['course_name'])}"
-                                    ),
-                                    parse_mode=MD,
-                                )
+                                try:
+                                    await self.bot.send_document(
+                                        chat_id=tid,
+                                        document=io.BytesIO(file_bytes),
+                                        filename=filename,
+                                        caption=(
+                                            f"📎 *ملف جديد:* {_esc(res_ev['name'])}\n"
+                                            f"📖 *المادة:* {_esc(res_ev['course_name'])}"
+                                        ),
+                                        parse_mode=MD,
+                                    )
+                                except TelegramError:
+                                    await self.bot.send_document(
+                                        chat_id=tid,
+                                        document=io.BytesIO(file_bytes),
+                                        filename=filename,
+                                        caption=(
+                                            f"📎 ملف جديد: {res_ev['name']}\n"
+                                            f"📖 المادة: {res_ev['course_name']}"
+                                        ),
+                                        parse_mode=None,
+                                    )
                                 logger.info(f"Direct file delivered: {filename} to {tid}")
                                 await asyncio.sleep(0.5)
                         except Exception as dl_err:
@@ -276,12 +300,13 @@ class MonitorEngine:
 
         now = time.monotonic()
         content = None
+        cache_key = (tid, cid)
 
-        if not bypass_cache and cid in self._course_cache:
-            cache_ts, cached_content = self._course_cache[cid]
+        if not bypass_cache and cache_key in self._course_cache:
+            cache_ts, cached_content = self._course_cache[cache_key]
             if now - cache_ts < self.COURSE_CACHE_TTL:
                 content = cached_content
-                logger.debug(f"Using shared course cache for course {cid} (user {tid})")
+                logger.debug(f"Using course cache for course {cid} (user {tid})")
 
         if content is None:
             content = await loop.run_in_executor(
@@ -290,7 +315,7 @@ class MonitorEngine:
             if not scraper.last_fetch_ok:
                 logger.warning(f"Incomplete LMS content response for user {tid}, course {cid}")
                 return [], False
-            self._course_cache[cid] = (now, content)
+            self._course_cache[cache_key] = (now, content)
 
         assignments = content.get("assignments", [])
         if self.reminder_engine:
@@ -510,7 +535,7 @@ class MonitorEngine:
             self._auth_alerted.discard(tid)
             # Invalidate course cache for this user's courses to ensure fresh data
             for c in courses:
-                self._course_cache.pop(c["course_id"], None)
+                self._course_cache.pop((tid, c["course_id"]), None)
             count, complete = await self._scan_user(user, courses, scraper, bypass_cache=True)
             if scraper.session_expired:
                 self._auth_required.add(tid)

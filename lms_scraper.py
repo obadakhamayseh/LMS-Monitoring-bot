@@ -37,6 +37,7 @@ class LMSScraper:
         self.logged_in = False
         self.user_id: Optional[str] = None
         self.full_name: Optional[str] = None
+        self.sesskey: Optional[str] = None
         self.error_message: Optional[str] = None
         self.last_request_at = 0.0
         self.last_fetch_ok = True
@@ -189,58 +190,105 @@ class LMSScraper:
             return True
         return False
 
+    def _extract_sesskey(self, html_or_soup) -> Optional[str]:
+        if isinstance(html_or_soup, BeautifulSoup):
+            inp = html_or_soup.find("input", {"name": "sesskey"})
+            if inp and inp.get("value"):
+                self.sesskey = inp["value"]
+                return self.sesskey
+            logout_a = html_or_soup.find("a", href=re.compile(r"sesskey=([A-Za-z0-9]+)"))
+            if logout_a:
+                m = re.search(r"sesskey=([A-Za-z0-9]+)", logout_a.get("href", ""))
+                if m:
+                    self.sesskey = m.group(1)
+                    return self.sesskey
+            text = str(html_or_soup)
+        else:
+            text = str(html_or_soup or "")
+
+        m = re.search(r'"sesskey"\s*:\s*"([A-Za-z0-9]+)"', text)
+        if m:
+            self.sesskey = m.group(1)
+            return self.sesskey
+        return self.sesskey
+
     def _extract_user_info(self, soup: BeautifulSoup):
+        self._extract_sesskey(soup)
         body = soup.find("body")
         if body:
             self.user_id = body.get("data-userid")
 
+        excluded_labels = {
+            "user menu", "language selector", "قائمة المستخدم",
+            "الملف الشخصي", "profile", "dashboard", "لوحة التحكم",
+            "الصفحة الرئيسية", "home",
+        }
         raw_name = None
 
-        initials_el = soup.find(class_="userinitials")
-        if initials_el:
-            raw_name = initials_el.get("aria-label") or initials_el.get("title")
+        # 1. Explicit usertext or logininfo profile link
+        for selector in [
+            {"class": "usertext"},
+            {"class": "username"},
+            {"data-region": "user-name"},
+        ]:
+            el = soup.find(attrs=selector)
+            if el:
+                val = el.get_text(strip=True)
+                if len(val) > 3 and val.lower() not in excluded_labels:
+                    raw_name = val
+                    break
 
+        if not raw_name:
+            login_info = soup.find(class_="logininfo")
+            if login_info:
+                prof_a = login_info.find("a", href=re.compile(r"/user/profile\.php"))
+                if prof_a:
+                    val = prof_a.get_text(strip=True)
+                    if len(val) > 3 and val.lower() not in excluded_labels:
+                        raw_name = val
+
+        # 2. User button aria-label/title (excluding generic menu titles and short 2-char initials)
         if not raw_name:
             user_btn = soup.find(class_="userbutton") or soup.find(class_="usermenu")
             if user_btn:
                 for attr_el in user_btn.find_all(attrs={"aria-label": True}):
                     val = attr_el.get("aria-label", "").strip()
-                    if len(val) > 4 and val not in ("User menu", "Language selector"):
+                    if len(val) > 4 and val.lower() not in excluded_labels:
                         raw_name = val
                         break
                 if not raw_name:
                     for attr_el in user_btn.find_all(attrs={"title": True}):
                         val = attr_el.get("title", "").strip()
-                        if len(val) > 4:
+                        if len(val) > 4 and val.lower() not in excluded_labels:
                             raw_name = val
                             break
 
-        if not raw_name:
-            for selector in [
-                {"class": "usertext"},
-                {"class": "username"},
-                {"data-region": "user-name"},
-            ]:
-                el = soup.find(attrs=selector)
-                if el and len(el.get_text(strip=True)) > 3:
-                    raw_name = el.get_text(strip=True)
-                    break
-
+        # 3. Fetch /user/profile.php for authoritative full name
         if not raw_name or len(raw_name.strip()) <= 3:
             try:
                 resp = self.session.get(f"{LMS_BASE_URL}/user/profile.php", timeout=15)
                 if resp.status_code == 200:
                     prof_soup = BeautifulSoup(resp.text, "lxml")
+                    self._extract_sesskey(prof_soup)
+                    if not self.user_id:
+                        prof_body = prof_soup.find("body")
+                        if prof_body:
+                            self.user_id = prof_body.get("data-userid")
                     header_el = prof_soup.find(class_="page-header-headings") or prof_soup.find("h1")
                     if header_el:
-                        raw_name = header_el.get_text(strip=True)
+                        val = header_el.get_text(strip=True)
+                        if len(val) > 3 and val.lower() not in excluded_labels:
+                            raw_name = val
             except Exception as e:
                 logger.debug(f"فشل جلب الملف الشخصي للاسم: {e}")
 
         if raw_name:
-            cleaned = re.sub(r'\s*\d+\s*$', '', raw_name).strip()
-            cleaned = re.sub(r'^\s*\d+\s*', '', cleaned).strip()
-            self.full_name = cleaned if cleaned else raw_name.strip()
+            cleaned = re.sub(r'\s*\d{5,}\s*$', '', raw_name).strip()
+            cleaned = re.sub(r'^\s*\d{5,}\s*', '', cleaned).strip()
+            if len(cleaned) > 2:
+                self.full_name = cleaned
+            else:
+                self.full_name = raw_name.strip()
 
     def get_courses(self) -> List[Dict[str, Any]]:
         if not self.logged_in:
@@ -250,24 +298,76 @@ class LMSScraper:
         courses = []
         seen_ids: set = set()
 
+        # 1. Try /my/courses.php and extract sesskey
         try:
             resp = self.authenticated_get(f"{LMS_BASE_URL}/my/courses.php", timeout=30)
             soup = BeautifulSoup(resp.text, "lxml")
+            self._extract_sesskey(soup)
             self._extract_courses_from_soup(soup, courses, seen_ids)
         except Exception as e:
             logger.error(f"خطأ في صفحة My Courses: {e}")
 
+        # 2. Moodle 4.x AJAX WebService (loads courses rendered dynamically by block_myoverview)
+        if self.sesskey:
+            for classification in ("all", "inprogress", "All"):
+                try:
+                    ajax_url = (
+                        f"{LMS_BASE_URL}/lib/ajax/service.php"
+                        f"?sesskey={self.sesskey}&info=core_course_get_enrolled_courses_by_timeline_classification"
+                    )
+                    payload = [{
+                        "index": 0,
+                        "methodname": "core_course_get_enrolled_courses_by_timeline_classification",
+                        "args": {
+                            "offset": 0,
+                            "limit": 0,
+                            "classification": classification,
+                            "sort": "fullname",
+                            "customfieldname": "",
+                            "customfieldvalue": "",
+                        },
+                    }]
+                    ajax_resp = self.session.post(ajax_url, json=payload, timeout=20)
+                    self.last_request_at = time.monotonic()
+                    if ajax_resp.status_code == 200:
+                        data = ajax_resp.json()
+                        if isinstance(data, list) and data and not data[0].get("error"):
+                            course_list = data[0].get("data", {}).get("courses", [])
+                            for c_item in course_list:
+                                cid = int(c_item.get("id", 0))
+                                if cid <= 1 or cid in seen_ids:
+                                    continue
+                                cname = (c_item.get("fullname") or c_item.get("shortname") or f"مادة {cid}").strip()
+                                view_url = c_item.get("viewurl") or f"{LMS_BASE_URL}/course/view.php?id={cid}"
+                                seen_ids.add(cid)
+                                courses.append({
+                                    "id": cid,
+                                    "name": cname,
+                                    "url": view_url,
+                                })
+                            if courses:
+                                break
+                except Exception as e:
+                    logger.debug(f"AJAX course fetch ({classification}) failed: {e}")
+
+        # 3. Fallback to /my/ Dashboard
         if not courses:
             try:
                 resp = self.authenticated_get(f"{LMS_BASE_URL}/my/", timeout=30)
                 soup = BeautifulSoup(resp.text, "lxml")
+                self._extract_sesskey(soup)
                 self._extract_courses_from_soup(soup, courses, seen_ids)
             except Exception as e:
                 logger.error(f"خطأ في Dashboard: {e}")
 
-        if not courses and self.user_id:
+        # 4. Fallback to User Profile page (supports both /course/view.php?id= and /user/view.php?course=)
+        if not courses:
             try:
-                resp = self.authenticated_get(f"{LMS_BASE_URL}/user/profile.php?id={self.user_id}", timeout=30)
+                prof_url = (
+                    f"{LMS_BASE_URL}/user/profile.php?id={self.user_id}&showallcourses=1"
+                    if self.user_id else f"{LMS_BASE_URL}/user/profile.php?showallcourses=1"
+                )
+                resp = self.authenticated_get(prof_url, timeout=30)
                 soup = BeautifulSoup(resp.text, "lxml")
                 self._extract_courses_from_soup(soup, courses, seen_ids)
             except Exception as e:
@@ -278,9 +378,10 @@ class LMSScraper:
 
     def _extract_courses_from_soup(self, soup: BeautifulSoup,
                                    courses: list, seen_ids: set):
-        for a in soup.find_all("a", href=re.compile(r"/course/view\.php\?id=\d+")):
+        # Match both standard course view links and profile course links
+        for a in soup.find_all("a", href=re.compile(r"(?:/course/view\.php\?id=\d+|/user/view\.php\?[^\"']*course=\d+)")):
             href = a.get("href", "")
-            match = re.search(r"id=(\d+)", href)
+            match = re.search(r"(?:course/view\.php\?id=|course=)(\d+)", href)
             if not match:
                 continue
             cid = int(match.group(1))
@@ -288,19 +389,37 @@ class LMSScraper:
                 continue
 
             name = self._extract_course_name(a)
-            if not name or name in ("الصفحة الرئيسية", "Home", "الموقع الرئيسي", "المقررات"):
+            if not name or name in ("الصفحة الرئيسية", "Home", "الموقع الرئيسي", "المقررات", "عرض المزيد", "View more"):
                 continue
 
             seen_ids.add(cid)
-
-            if not href.startswith("http"):
-                href = LMS_BASE_URL + href
+            course_url = f"{LMS_BASE_URL}/course/view.php?id={cid}"
 
             courses.append({
                 "id": cid,
                 "name": name or f"مادة {cid}",
-                "url": href,
+                "url": course_url,
             })
+
+    @staticmethod
+    def _clean_link_text(el) -> str:
+        """Extract activity/course link name without Moodle hidden accessibility labels."""
+        if el is None:
+            return ""
+        inst = el.find(class_="instancename")
+        target = inst if inst else el
+        parts = []
+        for child in target.descendants:
+            if getattr(child, "name", None) and "accesshide" in (child.get("class") or []):
+                continue
+            if isinstance(child, str):
+                parent_classes = getattr(child.parent, "get", lambda k, d=None: [])("class", []) or []
+                if "accesshide" not in parent_classes:
+                    parts.append(child)
+        text = re.sub(r"\s+", " ", "".join(parts)).strip()
+        if not text:
+            text = re.sub(r"\s+", " ", el.get_text(" ", strip=True)).strip()
+        return text
 
     def _extract_course_name(self, link_el) -> str:
         parent = link_el.parent
@@ -308,20 +427,19 @@ class LMSScraper:
             if parent is None:
                 break
             title = (
-                parent.find(class_=re.compile(r"course-title|coursename|title|fullname")) or
+                parent.find(class_=re.compile(r"course-title|coursename|fullname")) or
                 parent.find("h3") or parent.find("h4")
             )
             if title:
-                txt = title.get_text(strip=True)
+                txt = self._clean_link_text(title)
                 if len(txt) > 3:
                     return txt
             parent = parent.parent
 
-        name = link_el.get_text(strip=True)
-        name = re.sub(r"\s+", " ", name).strip()
+        name = self._clean_link_text(link_el)
         return name if len(name) > 2 else ""
 
-    def get_course_content(self, course_id: int) -> Dict[str, List[Dict]]:
+    def get_course_content(self, course_id: int, course_soup: Optional[BeautifulSoup] = None) -> Dict[str, List[Dict]]:
         self.last_fetch_ok = True
         result = {
             "assignments": [],
@@ -332,18 +450,92 @@ class LMSScraper:
         result["assignments"] = self._get_activities_from_index(
             course_id, "assign"
         )
-        if not self.last_fetch_ok:
-            return result
+        assign_ok = self.last_fetch_ok
 
+        self.last_fetch_ok = True
         result["quizzes"] = self._get_activities_from_index(
             course_id, "quiz"
         )
-        if not self.last_fetch_ok:
-            return result
+        quiz_ok = self.last_fetch_ok
 
-        result["resources"] = self._get_resources_from_course_page(course_id)
+        self.last_fetch_ok = True
+        resources, page_soup = self._get_resources_from_course_page(
+            course_id, soup=course_soup, return_soup=True
+        )
+        res_ok = self.last_fetch_ok
+        result["resources"] = resources
 
+        # Supplement assignments & quizzes from the main course page if any were missed by index.php
+        if page_soup is not None:
+            seen_assigns = {a["id"] for a in result["assignments"]}
+            for a in page_soup.find_all("a", href=re.compile(r"/mod/assign/view\.php\?id=\d+")):
+                href = a.get("href", "")
+                if not href.startswith("http"):
+                    href = LMS_BASE_URL + href
+                id_m = re.search(r"id=(\d+)", href)
+                if not id_m:
+                    continue
+                act_id = f"assign_{id_m.group(1)}"
+                if act_id in seen_assigns:
+                    continue
+                seen_assigns.add(act_id)
+                name = self._clean_link_text(a)
+                result["assignments"].append({
+                    "id": act_id,
+                    "name": name or f"assign #{id_m.group(1)}",
+                    "url": href,
+                    "type": "assign",
+                    "course_id": course_id,
+                    "due_date": "",
+                    "is_submitted": False,
+                    "submission_text": "",
+                })
+
+            seen_quizzes = {q["id"] for q in result["quizzes"]}
+            for a in page_soup.find_all("a", href=re.compile(r"/mod/quiz/view\.php\?id=\d+")):
+                href = a.get("href", "")
+                if not href.startswith("http"):
+                    href = LMS_BASE_URL + href
+                id_m = re.search(r"id=(\d+)", href)
+                if not id_m:
+                    continue
+                act_id = f"quiz_{id_m.group(1)}"
+                if act_id in seen_quizzes:
+                    continue
+                seen_quizzes.add(act_id)
+                name = self._clean_link_text(a)
+                result["quizzes"].append({
+                    "id": act_id,
+                    "name": name or f"quiz #{id_m.group(1)}",
+                    "url": href,
+                    "type": "quiz",
+                    "course_id": course_id,
+                    "due_date": "",
+                    "is_submitted": False,
+                    "submission_text": "",
+                })
+
+        self.last_fetch_ok = (assign_ok and quiz_ok and res_ok) or (res_ok and page_soup is not None)
         return result
+
+    @staticmethod
+    def _looks_like_date(text: str) -> bool:
+        if not text or len(text) < 6 or len(text) > 90:
+            return False
+        t = text.lower()
+        months = [
+            "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+            "يناير", "فبراير", "مارس", "أبريل", "ابريل", "مايو", "يونيو", "يوليو", "أغسطس", "اغسطس",
+            "سبتمبر", "أكتوبر", "اكتوبر", "نوفمبر", "ديسمبر",
+            "كانون", "شباط", "آذار", "نيسان", "أيار", "حزيران", "تموز", "آب", "أيلول", "تشرين",
+        ]
+        if any(m in t for m in months) and any(ch.isdigit() for ch in t):
+            return True
+        if re.search(r"\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b", t):
+            return True
+        if re.search(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b", t):
+            return True
+        return False
 
     def _get_activities_from_index(self, course_id: int,
                                    mod_type: str) -> List[Dict]:
@@ -359,7 +551,23 @@ class LMSScraper:
 
             table = soup.find("table", class_=re.compile(r"generaltable"))
             if table:
-                rows = table.find_all("tr")[1:]
+                all_rows = table.find_all("tr")
+                due_col_idx = None
+                sub_col_idx = None
+                grade_col_idx = None
+
+                if all_rows:
+                    header_cells = all_rows[0].find_all(["th", "td"])
+                    for idx, hc in enumerate(header_cells):
+                        htxt = hc.get_text(strip=True).lower()
+                        if any(k in htxt for k in ["due", "استحقاق", "موعد", "تاريخ", "close", "إغلاق", "انتهاء"]):
+                            due_col_idx = idx
+                        elif any(k in htxt for k in ["status", "submission", "تسليم", "محاولة"]):
+                            sub_col_idx = idx
+                        elif any(k in htxt for k in ["grade", "درجة", "علامة", "تقييم"]):
+                            grade_col_idx = idx
+
+                rows = all_rows[1:]
                 for row in rows:
                     cells = row.find_all(["td", "th"])
                     if not cells:
@@ -378,32 +586,44 @@ class LMSScraper:
                     id_match = re.search(r"id=(\d+)", href)
                     activity_id = id_match.group(1) if id_match else href
 
-                    name = link.get_text(strip=True)
-                    name = re.sub(r"\s+", " ", name).strip()
+                    name = self._clean_link_text(link)
 
                     due_date = ""
                     is_submitted = False
                     submission_text = ""
 
-                    for cell in cells[1:]:
-                        cell_txt = cell.get_text(strip=True)
-                        if not cell_txt or cell_txt == "-":
+                    # Extract from mapped columns first if headers were detected
+                    if due_col_idx is not None and due_col_idx < len(cells):
+                        d_txt = cells[due_col_idx].get_text(strip=True)
+                        if d_txt and d_txt not in ("-", "—"):
+                            due_date = d_txt
+
+                    if sub_col_idx is not None and sub_col_idx < len(cells):
+                        s_txt = cells[sub_col_idx].get_text(strip=True)
+                        if s_txt and s_txt not in ("-", "—"):
+                            submission_text = s_txt
+                            if re.search(r"submitted for grading|تم تسليمها للتقييم|تم التسليم|submitted|مسلّمة", s_txt, re.I):
+                                is_submitted = True
+
+                    for idx, cell in enumerate(cells):
+                        # Never mistake the activity name cell or the grade cell for due_date
+                        if link in cell.descendants or cell == link.parent:
                             continue
-                        # Check for submission status keywords
+                        if grade_col_idx is not None and idx == grade_col_idx:
+                            continue
+
+                        cell_txt = cell.get_text(strip=True)
+                        if not cell_txt or cell_txt in ("-", "—"):
+                            continue
+
                         if re.search(r"submitted for grading|تم تسليمها للتقييم|تم التسليم|submitted|مسلّمة", cell_txt, re.I):
                             is_submitted = True
                             submission_text = cell_txt
                         elif re.search(r"no attempt|لا توجد محاولة|لم تسلم|not submitted|draft|مسودة", cell_txt, re.I):
                             is_submitted = False
                             submission_text = cell_txt
-                        elif any(char.isdigit() for char in cell_txt) and (":" in cell_txt or "/" in cell_txt or "-" in cell_txt or any(m in cell_txt.lower() for m in ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec", "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"])):
-                            if not due_date:
-                                due_date = cell_txt
-
-                    if not due_date and len(cells) >= 2:
-                        due_text = cells[-1].get_text(strip=True)
-                        if due_text and due_text != "-":
-                            due_date = due_text
+                        elif not due_date and self._looks_like_date(cell_txt):
+                            due_date = cell_txt
 
                     activities.append({
                         "id": f"{mod_type}_{activity_id}",
@@ -417,6 +637,7 @@ class LMSScraper:
                     })
 
             if not activities:
+                seen_ids = set()
                 for a in soup.find_all("a", href=re.compile(
                     rf"/mod/{mod_type}/view\.php\?id=\d+"
                 )):
@@ -425,15 +646,21 @@ class LMSScraper:
                         href = LMS_BASE_URL + href
                     id_match = re.search(r"id=(\d+)", href)
                     activity_id = id_match.group(1) if id_match else href
-                    name = a.get_text(strip=True)
+                    full_id = f"{mod_type}_{activity_id}"
+                    if full_id in seen_ids:
+                        continue
+                    seen_ids.add(full_id)
+                    name = self._clean_link_text(a)
 
                     activities.append({
-                        "id": f"{mod_type}_{activity_id}",
+                        "id": full_id,
                         "name": name or f"{mod_type} #{activity_id}",
                         "url": href,
                         "type": mod_type,
                         "course_id": course_id,
                         "due_date": "",
+                        "is_submitted": False,
+                        "submission_text": "",
                     })
 
             logger.debug(f"المادة {course_id} | {mod_type}: {len(activities)} نشاط")
@@ -444,14 +671,17 @@ class LMSScraper:
 
         return activities
 
-    def _get_resources_from_course_page(self, course_id: int) -> List[Dict]:
+    def _get_resources_from_course_page(self, course_id: int,
+                                        soup: Optional[BeautifulSoup] = None,
+                                        return_soup: bool = False):
         resources = []
         url = f"{LMS_BASE_URL}/course/view.php?id={course_id}"
 
         try:
-            resp = self.authenticated_get(url, timeout=30)
-            resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, "lxml")
+            if soup is None:
+                resp = self.authenticated_get(url, timeout=30)
+                resp.raise_for_status()
+                soup = BeautifulSoup(resp.text, "lxml")
 
             resource_patterns = [
                 r"/mod/resource/view\.php\?id=\d+",
@@ -460,6 +690,7 @@ class LMSScraper:
                 r"/mod/page/view\.php\?id=\d+",
                 r"/mod/forum/view\.php\?id=\d+",
                 r"/mod/scorm/view\.php\?id=\d+",
+                r"/mod/book/view\.php\?id=\d+",
             ]
             combined = "|".join(resource_patterns)
 
@@ -481,8 +712,7 @@ class LMSScraper:
                     continue
                 seen.add(activity_id)
 
-                name = a.get_text(strip=True)
-                name = re.sub(r"\s+", " ", name).strip()
+                name = self._clean_link_text(a)
 
                 resources.append({
                     "id": activity_id,
@@ -499,6 +729,8 @@ class LMSScraper:
             self.last_fetch_ok = False
             logger.error(f"خطأ في جلب موارد المادة {course_id}: {e}")
 
+        if return_soup:
+            return resources, soup
         return resources
 
     def get_course_info(self, course_id: int):
@@ -521,7 +753,9 @@ class LMSScraper:
             )
             if title_el:
                 course_name = title_el.get_text(strip=True)
-                course_name = course_name.split("|")[0].strip()
+                course_name = course_name.split("|")[0].split(":")[0 if course_name.lower().startswith("course") else 0].strip()
+                if ":" in title_el.get_text(strip=True) and len(course_name) < 4:
+                    course_name = title_el.get_text(strip=True).split("|")[0].strip()
 
             if not course_name:
                 crumb = soup.find(class_=re.compile(r"breadcrumb"))
@@ -533,7 +767,7 @@ class LMSScraper:
             if not course_name:
                 return None, content
 
-            content = self.get_course_content(course_id)
+            content = self.get_course_content(course_id, course_soup=soup)
 
         except Exception as e:
             self.last_fetch_ok = False
