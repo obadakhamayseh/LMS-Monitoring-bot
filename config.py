@@ -14,7 +14,6 @@ LMS_API_URL = f"{LMS_BASE_URL}/webservice/rest/server.php"
 DATABASE_PATH = "lms_monitor.db"
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 DIRECT_URL = os.getenv("DIRECT_URL", "")
-LMS_PROXY = os.getenv("LMS_PROXY", "http://kbrzsnfi:i2ufxztgc9tl@45.38.107.97:6014/").strip().strip('"').strip("'")
 CHECK_INTERVAL_MINUTES = 10
 
 MESSAGES = {
