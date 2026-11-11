@@ -2,6 +2,7 @@ import os
 import time
 import sqlite3
 import logging
+import threading
 from datetime import datetime
 from config import DATABASE_PATH, DATABASE_URL, DIRECT_URL, CHECK_INTERVAL_MINUTES
 from security import encrypt_password, decrypt_password
@@ -13,12 +14,29 @@ except ImportError:
     psycopg = None
 
 logger = logging.getLogger(__name__)
+_pg_local = threading.local()
 
 def _get_pg_url():
     url = DIRECT_URL or DATABASE_URL or os.getenv("DIRECT_URL", "") or os.getenv("DATABASE_URL", "")
     if url:
         return url.replace("?pgbouncer=true", "").replace("&pgbouncer=true", "")
     return None
+
+def _get_pg_conn(pg_url: str):
+    conn = getattr(_pg_local, "conn", None)
+    if conn is not None:
+        try:
+            if not conn.closed and not conn.broken:
+                return conn
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+    conn = psycopg.connect(pg_url, autocommit=True, row_factory=dict_row, connect_timeout=15)
+    _pg_local.conn = conn
+    return conn
 
 class DBContext:
     def __init__(self):
@@ -28,7 +46,7 @@ class DBContext:
 
     def __enter__(self):
         if self.is_pg:
-            self.conn = psycopg.connect(self.pg_url, autocommit=True, row_factory=dict_row, connect_timeout=10)
+            self.conn = _get_pg_conn(self.pg_url)
         else:
             self.conn = sqlite3.connect(DATABASE_PATH, timeout=10)
             self.conn.row_factory = sqlite3.Row
@@ -39,14 +57,31 @@ class DBContext:
             if not self.is_pg:
                 if exc_type is None:
                     self.conn.commit()
-            self.conn.close()
+                self.conn.close()
+            elif exc_type is not None:
+                try:
+                    self.conn.close()
+                except Exception:
+                    pass
+                _pg_local.conn = None
 
     def execute(self, sql, params=()):
         if self.is_pg:
             sql = sql.replace("?", "%s")
-            cur = self.conn.cursor()
-            cur.execute(sql, params)
-            return cur
+            try:
+                cur = self.conn.cursor()
+                cur.execute(sql, params)
+                return cur
+            except Exception:
+                try:
+                    self.conn.close()
+                except Exception:
+                    pass
+                _pg_local.conn = None
+                self.conn = _get_pg_conn(self.pg_url)
+                cur = self.conn.cursor()
+                cur.execute(sql, params)
+                return cur
         else:
             return self.conn.execute(sql, params)
 
@@ -489,7 +524,7 @@ def mark_seen(telegram_id, course_id, content_id, content_type,
             VALUES (?,?,?,?,?,?,?,?)
             ON CONFLICT(telegram_id, content_id, content_type) DO UPDATE SET
                 due_date = CASE WHEN excluded.due_date <> '' THEN excluded.due_date ELSE seen_content.due_date END,
-                is_submitted = CASE WHEN excluded.is_submitted = 1 THEN 1 ELSE seen_content.is_submitted END
+                is_submitted = excluded.is_submitted
         """, (telegram_id, course_id, str(content_id), content_type,
               name, url, due, 1 if is_submitted else 0))
 
@@ -540,7 +575,7 @@ def upsert_reminder(telegram_id, course_id, content_id, content_name,
                 reminded_1h  = CASE WHEN reminders.due_ts IS NULL OR reminders.due_ts <> excluded.due_ts THEN 0 ELSE reminders.reminded_1h END,
                 due_ts       = excluded.due_ts,
                 due_str      = excluded.due_str,
-                is_submitted = CASE WHEN excluded.is_submitted = 1 THEN 1 ELSE reminders.is_submitted END
+                is_submitted = excluded.is_submitted
         """, (telegram_id, course_id, str(content_id), content_name,
               content_url, due_ts, due_str, 1 if is_submitted else 0))
 

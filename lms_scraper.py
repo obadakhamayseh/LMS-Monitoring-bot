@@ -560,7 +560,7 @@ class LMSScraper:
                 q["is_submitted"] = True
 
         # Deep-check individual assignment & quiz pages when submission or due_date is not yet known
-        for a in result["assignments"][:10]:
+        for a in result["assignments"]:
             if (not a.get("is_submitted") or not a.get("due_date")) and a.get("url"):
                 st = self.get_assignment_status(a["url"])
                 if st.get("is_submitted"):
@@ -569,7 +569,7 @@ class LMSScraper:
                 if not a.get("due_date") and st.get("due_date"):
                     a["due_date"] = st["due_date"]
 
-        for q in result["quizzes"][:10]:
+        for q in result["quizzes"]:
             if (not q.get("is_submitted") or not q.get("due_date")) and q.get("url"):
                 qst = self.get_quiz_status(q["url"])
                 if qst.get("is_submitted"):
@@ -968,13 +968,14 @@ class LMSScraper:
             if not result["due_date"]:
                 act_dates = soup.find(attrs={"data-region": "activity-dates"}) or soup.find(class_=re.compile(r"activity-dates"))
                 if act_dates:
-                    for div in act_dates.find_all(["div", "span", "p"]):
-                        txt = div.get_text(" ", strip=True)
-                        if any(k in txt.lower() for k in ["due:", "تاريخ الاستحقاق:", "موعد التسليم:", "يغلق:"]):
-                            cleaned_due = re.sub(r"^(?:due|تاريخ الاستحقاق|موعد التسليم|يغلق)\s*:?\s*", "", txt, flags=re.I).strip()
-                            if cleaned_due:
-                                result["due_date"] = cleaned_due
-                                break
+                    dates_txt = act_dates.get_text(" ", strip=True)
+                    m_due = re.search(
+                        r"(?:Due|Closes|Closed|تاريخ الاستحقاق|موعد التسليم|يغلق|أغلق)\s*:\s*(.+?)(?=\s*(?:Opened|Opens|Due|Closes|Closed|تاريخ الفتح|يفتح|$))",
+                        dates_txt,
+                        re.I,
+                    )
+                    if m_due:
+                        result["due_date"] = m_due.group(1).strip()
 
             badge = soup.find(class_=re.compile(r"submissionstatussubmitted|earlysubmission|gradingstatusgraded|badge-success|status-submitted"))
             if badge:
@@ -999,19 +1000,33 @@ class LMSScraper:
                 return result
             soup = BeautifulSoup(resp.text, "lxml")
 
-            # 1. Check quiz attempt summary table
-            attempt_table = soup.find("table", class_=re.compile(r"quizattemptsummary"))
-            if attempt_table:
-                for tr in attempt_table.find_all("tr")[1:]:
-                    row_txt = tr.get_text(" ", strip=True).lower()
-                    if any(k in row_txt for k in ["finished", "منتهي", "منتهية", "تم التسليم", "submitted"]):
+            # 1. Check all tables on the quiz page (handles both quizreviewsummary cards and quizattemptsummary tables, including row 0)
+            for tr in soup.find_all("tr"):
+                cells = [c.get_text(" ", strip=True) for c in tr.find_all(["th", "td"])]
+                if not cells:
+                    continue
+                if len(cells) >= 2:
+                    hdr = cells[0].lower()
+                    val = cells[-1].lower()
+                    if any(k in hdr for k in ["status", "state", "الحالة", "حالة"]) and any(
+                        k in val for k in ["finished", "منتهي", "منتهية", "تم التسليم", "submitted", "completed", "مكتمل"]
+                    ):
                         result["is_submitted"] = True
-                        result["status_text"] = "تم تقديم الاختبار"
+                        result["status_text"] = "تم الحل (Finished)"
                         break
+                    if any(k in hdr for k in ["completed", "اكتمل", "تاريخ الإكتمال"]) and len(val) > 4 and val not in ("-", "—"):
+                        result["is_submitted"] = True
+                        result["status_text"] = "تم الحل (Finished)"
+                        break
+                row_txt = " ".join(cells).lower()
+                if any(k in row_txt for k in ["status finished", "الحالة منتهية", "الحالة منتهي"]):
+                    result["is_submitted"] = True
+                    result["status_text"] = "تم الحل (Finished)"
+                    break
 
             # 2. Check final grade heading or feedback
             if not result["is_submitted"]:
-                grade_info = soup.find(id="feedback") or soup.find(class_=re.compile(r"quizgradefeedback|grade"))
+                grade_info = soup.find(id="feedback") or soup.find(class_=re.compile(r"quizgradefeedback|quizattemptcounts|grade"))
                 if grade_info:
                     gtxt = grade_info.get_text(" ", strip=True).lower()
                     if any(k in gtxt for k in ["final grade", "علامتك النهائية", "الدرجة النهائية", "أعلى درجة", "highest grade"]):
@@ -1025,19 +1040,28 @@ class LMSScraper:
                     result["is_submitted"] = True
                     result["status_text"] = "مكتمل"
 
-            # 4. Extract quiz close / due date
+            # 4. Extract quiz close / due date from activity-dates or quizinfo
             act_dates = soup.find(attrs={"data-region": "activity-dates"}) or soup.find(class_=re.compile(r"activity-dates|quizinfo"))
             if act_dates:
-                for el in act_dates.find_all(["div", "p", "span"]):
-                    txt = el.get_text(" ", strip=True)
-                    if any(k in txt.lower() for k in ["close", "closes", "closed", "يغلق", "إغلاق", "انتهاء", "due"]):
-                        cleaned = re.sub(
-                            r"^(?:this quiz (?:will close|closed|closes) (?:at|on)|closes|due|هذا الاختبار (?:يغلق|أغلق) في|تاريخ الإغلاق|يغلق)\s*:?\s*",
-                            "", txt, flags=re.I
-                        ).strip()
-                        if cleaned and len(cleaned) < 90:
-                            result["due_date"] = cleaned
-                            break
+                dates_txt = act_dates.get_text(" ", strip=True)
+                m_close = re.search(
+                    r"(?:Closes|Closed|Due|تاريخ الإغلاق|يغلق في|أغلق في|يغلق|أغلق|انتهاء)\s*:\s*(.+?)(?=\s*(?:Opened|Opens|Closes|Closed|Due|Attempts|Time limit|$))",
+                    dates_txt,
+                    re.I,
+                )
+                if m_close:
+                    result["due_date"] = m_close.group(1).strip()
+                else:
+                    for el in act_dates.find_all(["div", "p", "span"]):
+                        txt = el.get_text(" ", strip=True)
+                        if any(k in txt.lower() for k in ["close", "closes", "closed", "يغلق", "إغلاق", "انتهاء", "due"]):
+                            cleaned = re.sub(
+                                r"^(?:this quiz (?:will close|closed|closes) (?:at|on)|closes|closed|due|هذا الاختبار (?:يغلق|أغلق) في|تاريخ الإغلاق|يغلق)\s*:?\s*",
+                                "", txt, flags=re.I
+                            ).strip()
+                            if cleaned and len(cleaned) < 90:
+                                result["due_date"] = cleaned
+                                break
 
         except Exception as e:
             logger.debug(f"Error checking quiz status at {url}: {e}")
@@ -1225,13 +1249,23 @@ class LMSScraper:
                 if not raw_name or len(raw_name) < 2:
                     continue
 
+                for menu_el in grade_cell.find_all(class_=re.compile(r"action-menu|dropdown")):
+                    menu_el.decompose()
                 grade_val = grade_cell.get_text(" ", strip=True)
+                grade_val = re.sub(
+                    r"\b(?:Actions|Grade analysis|الإجراءات|تحليل الدرجة)\b",
+                    "",
+                    grade_val,
+                    flags=re.I,
+                )
                 grade_val = re.sub(r"\s+", " ", grade_val).strip()
-                if grade_val in ("-", "—", "Empty", "فارغ"):
+                if grade_val in ("-", "—", "Empty", "فارغ") or not any(ch.isalnum() for ch in grade_val):
                     grade_val = ""
 
                 grade_max = range_cell.get_text(" ", strip=True) if range_cell else ""
                 percentage = pct_cell.get_text(" ", strip=True) if pct_cell else ""
+                if percentage in ("-", "—"):
+                    percentage = ""
                 feedback = fb_cell.get_text(" ", strip=True) if fb_cell else ""
                 if feedback in ("-", "—"):
                     feedback = ""

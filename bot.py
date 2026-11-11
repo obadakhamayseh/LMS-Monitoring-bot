@@ -678,10 +678,11 @@ def _build_course_sections(course_name, course_id, assigns, quizzes, resources,
             if show_due and item.get(key_due):
                 due = f"\n      ⏰ `{item[key_due]}`"
             if is_assign:
+                is_quiz_type = item.get("type") == "quiz" or str(item.get("id", "")).startswith("quiz_")
                 if item.get("is_submitted"):
-                    sub_st = "\n      ✅ _تم التسليم للتقييم_"
+                    sub_st = "\n      ✅ _منجز (تم الحل في LMS)_" if is_quiz_type else "\n      ✅ _منجز (تم التسليم في LMS)_"
                 else:
-                    sub_st = "\n      ⏳ _لم يتم التسليم بعد_"
+                    sub_st = "\n      ⏳ _لم يتم الحل بعد_" if is_quiz_type else "\n      ⏳ _لم يتم التسليم بعد_"
             lines.append(f"  • [{name}]({link}){due}{sub_st}")
         lines.append("")
         return lines
@@ -963,15 +964,25 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data == "deadlines":
         if not user:
             await q.answer("سجّل دخولك أولاً!", show_alert=True); return
-        upcoming = db.get_upcoming_deadlines(tid, limit=15)
-        if not upcoming:
+        upcoming = db.get_upcoming_deadlines(tid, limit=20)
+        courses = db.get_user_courses(tid)
+        all_tasks = []
+        seen_task_ids = {str(r["content_id"]) for r in upcoming}
+        for c in courses:
+            c_items = db.get_course_items(tid, c["course_id"])
+            for it in c_items:
+                if it.get("content_type") in ("assign", "quiz") and str(it.get("content_id")) not in seen_task_ids:
+                    it["course_name"] = c["course_name"]
+                    all_tasks.append(it)
+
+        if not upcoming and not all_tasks:
             await _send(q.message,
-                "📅 *جدول المواعيد*\n\n"
-                "😌 لا توجد واجبات قادمة مسجّلة بمواعيد حالياً.\n\n"
-                "_سيتم تحديث الجدول تلقائياً عند اكتشاف واجبات جديدة._",
+                "📅 *جدول المواعيد والمهام*\n\n"
+                "😌 لا توجد واجبات أو كويزات مسجّلة حالياً.\n\n"
+                "_سيتم تحديث الجدول تلقائياً عند فحص المواد._",
                 [
                     [
-                        InlineKeyboardButton("📚 موادي المسجلة", callback_data="my_courses"),
+                        InlineKeyboardButton("📚 موادي المراقَبة", callback_data="my_courses"),
                         InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
                     ]
                 ],
@@ -979,52 +990,71 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        lines = ["📅 *جدول المواعيد القادمة:*\n"]
+        lines = ["📅 *جدول المواعيد وحالة إنجاز المهام:*\n━━━━━━━━━━━━━━━━━━━━━━"]
         now_ts = int(time.time())
-        for r in upcoming:
-            diff = r["due_ts"] - now_ts
-            days  = diff // 86400
-            hours = (diff % 86400) // 3600
-            is_sub = bool(r.get("is_submitted"))
+        if upcoming:
+            lines.append("\n⏰ *المهام ذات المواعيد القادمة:*")
+            for r in upcoming:
+                diff = r["due_ts"] - now_ts
+                days  = diff // 86400
+                hours = (diff % 86400) // 3600
+                is_sub = bool(r.get("is_submitted"))
 
-            if is_sub:
-                urgency = "✅"
-                sub_badge = "✅ *تم التسليم بنجاح*"
-                time_str = f"مسلّم ({days} يوم متبقي)" if days > 0 else "مسلّم"
-            else:
-                sub_badge = "⏳ *لم يتم التسليم بعد*"
-                if diff <= 3600:
-                    urgency = "💥"
-                    time_str = "ساعة أو أقل!"
-                elif diff <= 10800:
-                    urgency = "🟠"
-                    time_str = f"{hours} ساعة"
-                elif diff <= 86400:
-                    urgency = "🔴"
-                    time_str = f"{hours} ساعة"
+                if is_sub:
+                    urgency = "✅"
+                    sub_badge = "✅ *منجز في LMS*"
+                    time_str = f"مكتمل ({days} يوم متبقي)" if days > 0 else "مكتمل"
                 else:
-                    urgency = "🟡" if days <= 3 else "🟢"
-                    time_str = f"{days} يوم {'و' + str(hours) + ' ساعة' if hours else ''}"
+                    sub_badge = "⏳ *قيد الحل (غير منجز)*"
+                    if diff <= 3600:
+                        urgency = "💥"
+                        time_str = "ساعة أو أقل!"
+                    elif diff <= 10800:
+                        urgency = "🟠"
+                        time_str = f"{hours} ساعة"
+                    elif diff <= 86400:
+                        urgency = "🔴"
+                        time_str = f"{hours} ساعة"
+                    else:
+                        urgency = "🟡" if days <= 3 else "🟢"
+                        time_str = f"{days} يوم {'و' + str(hours) + ' ساعة' if hours else ''}"
 
-            cname = _esc(r.get("course_name", "مادة"))
-            aname = _esc(r.get("content_name", "واجب"))
-            url   = r.get("content_url", "")
-            due   = _esc(r.get("due_str", ""))
+                cname = _esc(r.get("course_name", "مادة"))
+                aname = _esc(r.get("content_name", "مهمة"))
+                url   = r.get("content_url", "")
+                due   = _esc(r.get("due_str", ""))
 
-            lines.append(
-                f"{urgency} [{aname}]({url})\n"
-                f"    📖 {cname}\n"
-                f"    📌 الحالة: {sub_badge}\n"
-                f"    ⏰ `{due}`\n"
-                f"    ⏳ الوقت المتبقي: *{time_str}*"
-            )
+                lines.append(
+                    f"{urgency} [{aname}]({url})\n"
+                    f"    📖 {cname}\n"
+                    f"    📌 الحالة: {sub_badge}\n"
+                    f"    ⏰ `{due}`\n"
+                    f"    ⏳ الوقت المتبقي: *{time_str}*"
+                )
+
+        if all_tasks:
+            lines.append("\n📋 *بقية الكويزات والواجبات في موادك:*")
+            for t in all_tasks[:15]:
+                is_sub = bool(t.get("is_submitted"))
+                icon = "✅" if is_sub else "⏳"
+                st_txt = "✅ *منجز في LMS*" if is_sub else "⏳ *غير منجز*"
+                t_label = "كويز" if t.get("content_type") == "quiz" else "واجب"
+                cname = _esc(t.get("course_name", "مادة"))
+                tname = _esc(t.get("content_name", "مهمة"))
+                turl = t.get("content_url", "")
+                tdue = f"\n    ⏰ `{_esc(t['due_date'])}`" if t.get("due_date") else ""
+                lines.append(
+                    f"{icon} [{tname}]({turl}) _({t_label})_\n"
+                    f"    📖 {cname}\n"
+                    f"    📌 الحالة: {st_txt}{tdue}"
+                )
 
         await _send(q.message,
-            "\n\n".join(lines),
+            "\n\n".join(lines)[:3900],
             [
-                [InlineKeyboardButton("🔄 تحديث المواعيد", callback_data="deadlines")],
+                [InlineKeyboardButton("⚡ فحص وتحديث حالة الإنجاز من LMS", callback_data="check_now")],
                 [
-                    InlineKeyboardButton("📚 موادي المسجلة", callback_data="my_courses"),
+                    InlineKeyboardButton("📚 موادي المراقَبة", callback_data="my_courses"),
                     InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
                 ],
             ],

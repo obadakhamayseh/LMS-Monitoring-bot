@@ -625,9 +625,10 @@
             }
             return items.map(item => {
                 let icon = '📎';
-                let typeColor = 'text-purple-400';
-                if (item.content_type === 'assign') { icon = '📚'; typeColor = 'text-sky-400'; }
-                if (item.content_type === 'quiz') { icon = '📝'; typeColor = 'text-amber-400'; }
+                const isTask = item.content_type === 'assign' || item.content_type === 'quiz';
+                if (item.content_type === 'assign') { icon = '📚'; }
+                if (item.content_type === 'quiz') { icon = '📝'; }
+                const isDone = Boolean(item.is_submitted);
 
                 return `
                 <div class="py-2.5 flex items-center justify-between gap-3">
@@ -638,11 +639,18 @@
                             ${item.due_date ? `<p class="text-[10px] text-zinc-500 font-mono mt-0.5">الموعد: ${escapeHtml(item.due_date)}</p>` : ''}
                         </div>
                     </div>
-                    <a href="${item.content_url || '#'}" target="_blank" class="text-zinc-400 hover:text-white p-1 shrink-0" title="تحميل أو فتح">
-                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
-                        </svg>
-                    </a>
+                    <div class="flex items-center gap-2 shrink-0">
+                        ${isTask ? `
+                            <span class="text-[10px] font-semibold px-2 py-0.5 rounded ${isDone ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}">
+                                ${isDone ? '✓ منجز' : '⏳ غير منجز'}
+                            </span>
+                        ` : ''}
+                        <a href="${item.content_url || '#'}" target="_blank" class="text-zinc-400 hover:text-white p-1" title="تحميل أو فتح">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                            </svg>
+                        </a>
+                    </div>
                 </div>
                 `;
             }).join('');
