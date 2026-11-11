@@ -127,21 +127,57 @@ def init_db():
                     UNIQUE(telegram_id, content_id)
                 )
             """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS course_grades (
+                    id           BIGSERIAL PRIMARY KEY,
+                    telegram_id  BIGINT NOT NULL,
+                    course_id    BIGINT NOT NULL,
+                    item_id      TEXT    NOT NULL,
+                    item_name    TEXT,
+                    grade_val    TEXT,
+                    grade_max    TEXT,
+                    percentage   TEXT,
+                    feedback     TEXT,
+                    item_url     TEXT,
+                    updated_at   TIMESTAMPTZ DEFAULT NOW(),
+                    FOREIGN KEY(telegram_id) REFERENCES users(telegram_id),
+                    UNIQUE(telegram_id, course_id, item_id)
+                )
+            """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS course_announcements (
+                    id           BIGSERIAL PRIMARY KEY,
+                    telegram_id  BIGINT NOT NULL,
+                    course_id    BIGINT NOT NULL,
+                    discuss_id   TEXT    NOT NULL,
+                    forum_name   TEXT,
+                    title        TEXT,
+                    author       TEXT,
+                    posted_date  TEXT,
+                    body_text    TEXT,
+                    url          TEXT,
+                    first_seen   TIMESTAMPTZ DEFAULT NOW(),
+                    FOREIGN KEY(telegram_id) REFERENCES users(telegram_id),
+                    UNIQUE(telegram_id, discuss_id)
+                )
+            """)
         else:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS users (
-                    telegram_id     INTEGER PRIMARY KEY,
-                    lms_username    TEXT    NOT NULL,
-                    lms_password    TEXT    NOT NULL,
-                    lms_user_id     TEXT,
-                    full_name       TEXT,
-                    is_monitoring   INTEGER DEFAULT 0,
-                    notify_assign   INTEGER DEFAULT 1,
-                    notify_quiz     INTEGER DEFAULT 1,
-                    notify_resource INTEGER DEFAULT 1,
-                    check_interval  INTEGER DEFAULT 10,
-                    created_at      TEXT    DEFAULT (datetime('now','localtime')),
-                    last_check      TEXT
+                    telegram_id         INTEGER PRIMARY KEY,
+                    lms_username        TEXT    NOT NULL,
+                    lms_password        TEXT    NOT NULL,
+                    lms_user_id         TEXT,
+                    full_name           TEXT,
+                    is_monitoring       INTEGER DEFAULT 0,
+                    notify_assign       INTEGER DEFAULT 1,
+                    notify_quiz         INTEGER DEFAULT 1,
+                    notify_resource     INTEGER DEFAULT 1,
+                    notify_grade        INTEGER DEFAULT 1,
+                    notify_announcement INTEGER DEFAULT 1,
+                    check_interval      INTEGER DEFAULT 10,
+                    created_at          TEXT    DEFAULT (datetime('now','localtime')),
+                    last_check          TEXT
                 )
             """)
             db.execute("""
@@ -190,6 +226,40 @@ def init_db():
                     UNIQUE(telegram_id, content_id)
                 )
             """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS course_grades (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    telegram_id  INTEGER NOT NULL,
+                    course_id    INTEGER NOT NULL,
+                    item_id      TEXT    NOT NULL,
+                    item_name    TEXT,
+                    grade_val    TEXT,
+                    grade_max    TEXT,
+                    percentage   TEXT,
+                    feedback     TEXT,
+                    item_url     TEXT,
+                    updated_at   TEXT    DEFAULT (datetime('now','localtime')),
+                    FOREIGN KEY(telegram_id) REFERENCES users(telegram_id),
+                    UNIQUE(telegram_id, course_id, item_id)
+                )
+            """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS course_announcements (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    telegram_id  INTEGER NOT NULL,
+                    course_id    INTEGER NOT NULL,
+                    discuss_id   TEXT    NOT NULL,
+                    forum_name   TEXT,
+                    title        TEXT,
+                    author       TEXT,
+                    posted_date  TEXT,
+                    body_text    TEXT,
+                    url          TEXT,
+                    first_seen   TEXT    DEFAULT (datetime('now','localtime')),
+                    FOREIGN KEY(telegram_id) REFERENCES users(telegram_id),
+                    UNIQUE(telegram_id, discuss_id)
+                )
+            """)
         # Migrate users from the old 10-hour default to the new 1-hour default
         # once, without overwriting later per-user interval choices.
         db.execute("CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY)")
@@ -206,16 +276,23 @@ def init_db():
             db.execute("INSERT INTO schema_migrations (version) VALUES (?)",
                        (interval_migration,))
 
-        # Migration: add is_submitted to reminders if missing
+        # Migration: add is_submitted to reminders and notify_grade/notify_announcement to users
         try:
             if db.is_pg:
                 db.execute("ALTER TABLE reminders ADD COLUMN IF NOT EXISTS is_submitted INTEGER DEFAULT 0")
+                db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_grade INTEGER DEFAULT 1")
+                db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_announcement INTEGER DEFAULT 1")
             else:
                 cols = [r["name"] for r in db.fetchall("PRAGMA table_info(reminders)")]
                 if "is_submitted" not in cols:
                     db.execute("ALTER TABLE reminders ADD COLUMN is_submitted INTEGER DEFAULT 0")
+                ucols = [r["name"] for r in db.fetchall("PRAGMA table_info(users)")]
+                if "notify_grade" not in ucols:
+                    db.execute("ALTER TABLE users ADD COLUMN notify_grade INTEGER DEFAULT 1")
+                if "notify_announcement" not in ucols:
+                    db.execute("ALTER TABLE users ADD COLUMN notify_announcement INTEGER DEFAULT 1")
         except Exception as e:
-            logger.debug(f"Migration for reminders is_submitted: {e}")
+            logger.debug(f"Migration for new columns: {e}")
 
         # Encrypt existing plain-text passwords if any
         try:
@@ -266,7 +343,8 @@ def set_monitoring(telegram_id, status: bool):
         db.execute("UPDATE users SET is_monitoring=? WHERE telegram_id=?",
                      (1 if status else 0, telegram_id))
 
-def update_notify_settings(telegram_id, assign=None, quiz=None, resource=None):
+def update_notify_settings(telegram_id, assign=None, quiz=None, resource=None,
+                           grade=None, announcement=None):
     with DBContext() as db:
         if assign is not None:
             db.execute("UPDATE users SET notify_assign=? WHERE telegram_id=?", (int(assign), telegram_id))
@@ -274,6 +352,10 @@ def update_notify_settings(telegram_id, assign=None, quiz=None, resource=None):
             db.execute("UPDATE users SET notify_quiz=? WHERE telegram_id=?", (int(quiz), telegram_id))
         if resource is not None:
             db.execute("UPDATE users SET notify_resource=? WHERE telegram_id=?", (int(resource), telegram_id))
+        if grade is not None:
+            db.execute("UPDATE users SET notify_grade=? WHERE telegram_id=?", (int(grade), telegram_id))
+        if announcement is not None:
+            db.execute("UPDATE users SET notify_announcement=? WHERE telegram_id=?", (int(announcement), telegram_id))
 
 def update_check_interval(telegram_id, minutes: int):
     with DBContext() as db:
@@ -290,10 +372,12 @@ def update_last_check(telegram_id):
 
 def delete_user(telegram_id):
     with DBContext() as db:
-        db.execute("DELETE FROM seen_content WHERE telegram_id=?", (telegram_id,))
-        db.execute("DELETE FROM reminders    WHERE telegram_id=?", (telegram_id,))
-        db.execute("DELETE FROM user_courses WHERE telegram_id=?", (telegram_id,))
-        db.execute("DELETE FROM users        WHERE telegram_id=?", (telegram_id,))
+        db.execute("DELETE FROM course_grades        WHERE telegram_id=?", (telegram_id,))
+        db.execute("DELETE FROM course_announcements WHERE telegram_id=?", (telegram_id,))
+        db.execute("DELETE FROM seen_content         WHERE telegram_id=?", (telegram_id,))
+        db.execute("DELETE FROM reminders            WHERE telegram_id=?", (telegram_id,))
+        db.execute("DELETE FROM user_courses         WHERE telegram_id=?", (telegram_id,))
+        db.execute("DELETE FROM users                WHERE telegram_id=?", (telegram_id,))
 
 def add_course(telegram_id, course_id, course_name, course_url=""):
     with DBContext() as db:
@@ -307,9 +391,11 @@ def add_course(telegram_id, course_id, course_name, course_url=""):
 
 def remove_course(telegram_id, course_id):
     with DBContext() as db:
-        db.execute("DELETE FROM user_courses WHERE telegram_id=? AND course_id=?", (telegram_id, course_id))
-        db.execute("DELETE FROM seen_content WHERE telegram_id=? AND course_id=?", (telegram_id, course_id))
-        db.execute("DELETE FROM reminders    WHERE telegram_id=? AND course_id=?", (telegram_id, course_id))
+        db.execute("DELETE FROM course_grades        WHERE telegram_id=? AND course_id=?", (telegram_id, course_id))
+        db.execute("DELETE FROM course_announcements WHERE telegram_id=? AND course_id=?", (telegram_id, course_id))
+        db.execute("DELETE FROM user_courses         WHERE telegram_id=? AND course_id=?", (telegram_id, course_id))
+        db.execute("DELETE FROM seen_content         WHERE telegram_id=? AND course_id=?", (telegram_id, course_id))
+        db.execute("DELETE FROM reminders            WHERE telegram_id=? AND course_id=?", (telegram_id, course_id))
 
 def get_user_courses(telegram_id, monitored_only=False):
     with DBContext() as db:
@@ -484,3 +570,98 @@ def get_upcoming_deadlines(telegram_id, limit=10) -> list:
             ORDER BY r.due_ts ASC
             LIMIT ?
         """, (telegram_id, now, limit))
+
+# ==================== GRADES & ANNOUNCEMENTS ====================
+
+def get_grade(telegram_id, course_id, item_id):
+    with DBContext() as db:
+        return db.fetchone(
+            "SELECT * FROM course_grades WHERE telegram_id=? AND course_id=? AND item_id=?",
+            (telegram_id, course_id, str(item_id))
+        )
+
+def upsert_grade(telegram_id, course_id, item_id, item_name, grade_val,
+                 grade_max="", percentage="", feedback="", item_url=""):
+    with DBContext() as db:
+        db.execute("""
+            INSERT INTO course_grades
+                (telegram_id, course_id, item_id, item_name,
+                 grade_val, grade_max, percentage, feedback, item_url)
+            VALUES (?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(telegram_id, course_id, item_id) DO UPDATE SET
+                item_name  = excluded.item_name,
+                grade_val  = excluded.grade_val,
+                grade_max  = excluded.grade_max,
+                percentage = excluded.percentage,
+                feedback   = excluded.feedback,
+                item_url   = excluded.item_url
+        """, (telegram_id, course_id, str(item_id), item_name,
+              str(grade_val), str(grade_max), str(percentage),
+              str(feedback), str(item_url)))
+
+def get_user_grades(telegram_id, course_id=None) -> list:
+    with DBContext() as db:
+        if course_id is not None:
+            return db.fetchall("""
+                SELECT g.*, uc.course_name
+                FROM course_grades g
+                JOIN user_courses uc
+                  ON g.telegram_id = uc.telegram_id AND g.course_id = uc.course_id
+                WHERE g.telegram_id = ? AND g.course_id = ?
+                ORDER BY g.id ASC
+            """, (telegram_id, course_id))
+        return db.fetchall("""
+            SELECT g.*, uc.course_name
+            FROM course_grades g
+            JOIN user_courses uc
+              ON g.telegram_id = uc.telegram_id AND g.course_id = uc.course_id
+            WHERE g.telegram_id = ?
+            ORDER BY g.course_id ASC, g.id ASC
+        """, (telegram_id,))
+
+def get_announcement(telegram_id, discuss_id):
+    with DBContext() as db:
+        return db.fetchone(
+            "SELECT * FROM course_announcements WHERE telegram_id=? AND discuss_id=?",
+            (telegram_id, str(discuss_id))
+        )
+
+def upsert_announcement(telegram_id, course_id, discuss_id, forum_name,
+                        title, author="", posted_date="", body_text="", url=""):
+    with DBContext() as db:
+        db.execute("""
+            INSERT INTO course_announcements
+                (telegram_id, course_id, discuss_id, forum_name,
+                 title, author, posted_date, body_text, url)
+            VALUES (?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(telegram_id, discuss_id) DO UPDATE SET
+                forum_name  = excluded.forum_name,
+                title       = excluded.title,
+                author      = excluded.author,
+                posted_date = excluded.posted_date,
+                body_text   = CASE WHEN excluded.body_text <> '' THEN excluded.body_text ELSE course_announcements.body_text END,
+                url         = excluded.url
+        """, (telegram_id, course_id, str(discuss_id), forum_name,
+              title, author, posted_date, body_text, url))
+
+def get_user_announcements(telegram_id, course_id=None, limit=30) -> list:
+    with DBContext() as db:
+        if course_id is not None:
+            return db.fetchall("""
+                SELECT a.*, uc.course_name
+                FROM course_announcements a
+                JOIN user_courses uc
+                  ON a.telegram_id = uc.telegram_id AND a.course_id = uc.course_id
+                WHERE a.telegram_id = ? AND a.course_id = ?
+                ORDER BY a.id DESC
+                LIMIT ?
+            """, (telegram_id, course_id, limit))
+        return db.fetchall("""
+            SELECT a.*, uc.course_name
+            FROM course_announcements a
+            JOIN user_courses uc
+              ON a.telegram_id = uc.telegram_id AND a.course_id = uc.course_id
+            WHERE a.telegram_id = ?
+            ORDER BY a.id DESC
+            LIMIT ?
+        """, (telegram_id, limit))

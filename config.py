@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+OWNER_TELEGRAM_ID = int(os.getenv("OWNER_TELEGRAM_ID", "933343496"))
 
 LMS_BASE_URL = "https://mulms.mutah.edu.jo"
 LMS_LOGIN_URL = f"{LMS_BASE_URL}/login/index.php"

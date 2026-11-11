@@ -22,7 +22,7 @@ import database as db
 from lms_scraper import LMSScraper
 from monitor import MonitorEngine
 from reminder import ReminderEngine
-from config import TELEGRAM_BOT_TOKEN
+from config import TELEGRAM_BOT_TOKEN, OWNER_TELEGRAM_ID
 from webapp_server import run_web_server, init_webapp_engines
 
 logging.basicConfig(
@@ -146,6 +146,10 @@ def _main_kb(user=None):
             InlineKeyboardButton("📥 استيراد موادي تلقائياً", callback_data="sync_courses"),
         ],
         [
+            InlineKeyboardButton("🎯 كشف العلامات", callback_data="grades_menu"),
+            InlineKeyboardButton("📢 إعلانات الدكاترة", callback_data="announcements_menu"),
+        ],
+        [
             mon_btn,
             InlineKeyboardButton("⚡ فحص فوري الآن", callback_data="check_now"),
         ],
@@ -226,12 +230,33 @@ async def _show_main(msg_obj, tid, edit=False):
         )
     await _send(msg_obj, text, _main_kb(user), edit=edit)
 
+def _is_owner(update: Update) -> bool:
+    u = update.effective_user
+    return bool(u and int(u.id) == int(OWNER_TELEGRAM_ID))
+
+async def _reject_unauthorized(update: Update):
+    if update.callback_query:
+        try:
+            await update.callback_query.answer("🔒 هذا البوت خاص بصاحبه فقط.", show_alert=True)
+        except Exception:
+            pass
+    elif update.message:
+        try:
+            await update.message.reply_text("🔒 هذا البوت خاص بصاحبه فقط وغير متاح للاستخدام العام.")
+        except Exception:
+            pass
+    return ConversationHandler.END
+
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return await _reject_unauthorized(update)
     ctx.user_data.clear()
     await _show_main(update.message, update.effective_user.id)
     return ConversationHandler.END
 
 async def login_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return await _reject_unauthorized(update)
     q = update.callback_query
     await q.answer()
     ctx.user_data["login_msg_id"] = q.message.message_id
@@ -391,6 +416,8 @@ async def login_got_pass(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def add_course_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return await _reject_unauthorized(update)
     q   = update.callback_query
     tid = update.effective_user.id
     await q.answer()
@@ -515,6 +542,8 @@ async def add_course_got_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     assigns   = content.get("assignments", [])
     quizzes   = content.get("quizzes",    [])
     resources = content.get("resources",  [])
+    grades    = content.get("grades",     [])
+    anns      = content.get("announcements", [])
 
     for item in assigns:
         db.mark_seen(tid, course_id, item["id"], "assign",
@@ -525,6 +554,14 @@ async def add_course_got_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     for item in resources:
         db.mark_seen(tid, course_id, item["id"], "resource",
                      item["name"], item["url"])
+    for g in grades:
+        db.upsert_grade(tid, course_id, g["item_id"], g.get("item_name", ""),
+                        g.get("grade_val", ""), g.get("grade_max", ""),
+                        g.get("percentage", ""), g.get("feedback", ""), g.get("url", ""))
+    for ann in anns:
+        db.upsert_announcement(tid, course_id, ann["discuss_id"], ann.get("forum_name", ""),
+                               ann.get("title", ""), ann.get("author", ""),
+                               ann.get("posted_date", ""), "", ann.get("url", ""))
 
     reminder_eng: ReminderEngine = ctx.bot_data.get("reminder_engine")
     if reminder_eng:
@@ -534,7 +571,10 @@ async def add_course_got_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if a.get("is_submitted"):
             db.mark_assignment_submitted(tid, a["id"], 1)
 
-    sections = _build_course_sections(course_name, course_id, assigns, quizzes, resources, new_add=True)
+    sections = _build_course_sections(
+        course_name, course_id, assigns, quizzes, resources,
+        grades=grades, announcements=anns, new_add=True
+    )
     kb = [
         [
             InlineKeyboardButton("➕ إضافة مادة أخرى", callback_data="add_course_start"),
@@ -611,8 +651,10 @@ async def cancel_conv(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 def _build_course_sections(course_name, course_id, assigns, quizzes, resources,
-                            new_add=False):
+                            grades=None, announcements=None, new_add=False):
     MAX = 3500
+    grades = grades or []
+    announcements = announcements or []
 
     url   = f"https://mulms.mutah.edu.jo/course/view.php?id={course_id}"
     cname = _esc(course_name)
@@ -650,6 +692,24 @@ def _build_course_sections(course_name, course_id, assigns, quizzes, resources,
     all_lines.extend(_section_lines("الكويزات", "📝", quizzes, show_due=True, is_assign=False))
     all_lines.extend(_section_lines("الملفات والموارد", "📎", resources, show_due=False, is_assign=False))
 
+    graded_items = [g for g in grades if g.get("grade_val")]
+    if graded_items:
+        all_lines.append(f"🎯 *العلامات المرصودة ({len(graded_items)}):*")
+        for g in graded_items:
+            gname = _esc(str(g.get("item_name", ""))[:70])
+            gval = _esc(g.get("grade_val", ""))
+            gmax = f" / {_esc(g['grade_max'])}" if g.get("grade_max") else ""
+            all_lines.append(f"  • *{gname}*: `{gval}{gmax}`")
+        all_lines.append("")
+
+    if announcements:
+        all_lines.append(f"📢 *إعلانات المقرر ({len(announcements)}):*")
+        for ann in announcements[:5]:
+            atitle = _esc(str(ann.get("title", ""))[:75])
+            aurl = ann.get("url", "")
+            all_lines.append(f"  • [{atitle}]({aurl})")
+        all_lines.append("")
+
     footer = "━━━━━━━━━━━━━━━━━━━━━━\n🔔 سيتم إشعارك فور نزول أي محتوى جديد."
 
     messages = []
@@ -672,6 +732,9 @@ def _build_course_sections(course_name, course_id, assigns, quizzes, resources,
     return messages
 
 async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        await _reject_unauthorized(update)
+        return
     q    = update.callback_query
     await q.answer()
     tid  = update.effective_user.id
@@ -787,6 +850,8 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 assigns = content.get("assignments", [])
                 quizzes = content.get("quizzes", [])
                 resources = content.get("resources", [])
+                grades = content.get("grades", [])
+                anns = content.get("announcements", [])
 
                 for item in assigns:
                     db.mark_seen(tid, cid, item["id"], "assign",
@@ -797,6 +862,14 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 for item in resources:
                     db.mark_seen(tid, cid, item["id"], "resource",
                                  item["name"], item["url"])
+                for g in grades:
+                    db.upsert_grade(tid, cid, g["item_id"], g.get("item_name", ""),
+                                    g.get("grade_val", ""), g.get("grade_max", ""),
+                                    g.get("percentage", ""), g.get("feedback", ""), g.get("url", ""))
+                for ann in anns:
+                    db.upsert_announcement(tid, cid, ann["discuss_id"], ann.get("forum_name", ""),
+                                           ann.get("title", ""), ann.get("author", ""),
+                                           ann.get("posted_date", ""), "", ann.get("url", ""))
 
                 if reminder_eng and assigns:
                     reminder_eng.register_assignments(tid, cid, assigns)
@@ -1029,6 +1102,84 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             edit=True
         )
 
+    elif data == "grades_menu":
+        if not user:
+            await q.answer("سجّل دخولك أولاً!", show_alert=True); return
+        await _render_grades_view(q.message, tid, edit=True)
+
+    elif data == "refresh_grades":
+        if not user:
+            await q.answer("سجّل دخولك أولاً!", show_alert=True); return
+        courses = db.get_user_courses(tid)
+        if not courses:
+            await q.answer("أضف موادك أولاً!", show_alert=True); return
+        await _send(q.message, "⏳ *جارٍ فحص وتحديث سجل العلامات من LMS...*", edit=True)
+        loop = asyncio.get_running_loop()
+
+        def _fetch_all_grades():
+            sc = LMSScraper(user["lms_username"], user["lms_password"])
+            try:
+                if not sc.login():
+                    return False
+                for c in courses:
+                    cid = c["course_id"]
+                    g_list = sc.get_course_grades(cid)
+                    for g in g_list:
+                        db.upsert_grade(
+                            tid, cid, g["item_id"], g.get("item_name", ""),
+                            g.get("grade_val", ""), g.get("grade_max", ""),
+                            g.get("percentage", ""), g.get("feedback", ""), g.get("url", "")
+                        )
+                return True
+            finally:
+                sc.close()
+
+        await loop.run_in_executor(None, _fetch_all_grades)
+        await _render_grades_view(q.message, tid, edit=True)
+
+    elif data == "announcements_menu":
+        if not user:
+            await q.answer("سجّل دخولك أولاً!", show_alert=True); return
+        await _render_announcements_view(q.message, tid, edit=True)
+
+    elif data == "refresh_announcements":
+        if not user:
+            await q.answer("سجّل دخولك أولاً!", show_alert=True); return
+        courses = db.get_user_courses(tid)
+        if not courses:
+            await q.answer("أضف موادك أولاً!", show_alert=True); return
+        await _send(q.message, "⏳ *جارٍ فحص إعلانات الدكاترة ومنتديات المقررات...*", edit=True)
+        loop = asyncio.get_running_loop()
+
+        def _fetch_all_anns():
+            sc = LMSScraper(user["lms_username"], user["lms_password"])
+            try:
+                if not sc.login():
+                    return False
+                for c in courses:
+                    cid = c["course_id"]
+                    a_list = sc.get_course_announcements(cid)
+                    for ann in a_list[:8]:
+                        existing = db.get_announcement(tid, ann["discuss_id"])
+                        body = existing.get("body_text", "") if existing else ""
+                        author = ann.get("author", "") or (existing.get("author", "") if existing else "")
+                        pdate = ann.get("posted_date", "") or (existing.get("posted_date", "") if existing else "")
+                        if not body and ann.get("url"):
+                            det = sc.get_announcement_details(ann["url"])
+                            body = det.get("body", "")
+                            author = author or det.get("author", "")
+                            pdate = pdate or det.get("date", "")
+                        db.upsert_announcement(
+                            tid, cid, ann["discuss_id"], ann.get("forum_name", "منتدى المقرر"),
+                            ann.get("title", ""), author, pdate, body, ann.get("url", "")
+                        )
+                return True
+            finally:
+                sc.close()
+
+        await loop.run_in_executor(None, _fetch_all_anns)
+        await _render_announcements_view(q.message, tid, edit=True)
+
     elif data == "settings":
         if not user:
             await q.answer("سجّل دخولك أولاً!", show_alert=True); return
@@ -1047,6 +1198,16 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data == "sett_resource":
         if user:
             db.update_notify_settings(tid, resource=not user.get("notify_resource", 1))
+            await _render_settings(q.message, db.get_user(tid), edit=True)
+
+    elif data == "sett_grade":
+        if user:
+            db.update_notify_settings(tid, grade=not user.get("notify_grade", 1))
+            await _render_settings(q.message, db.get_user(tid), edit=True)
+
+    elif data == "sett_announcement":
+        if user:
+            db.update_notify_settings(tid, announcement=not user.get("notify_announcement", 1))
             await _render_settings(q.message, db.get_user(tid), edit=True)
 
     elif data.startswith("iv_"):
@@ -1207,6 +1368,8 @@ async def _fetch_show_course(msg_obj, tid, user, course_id, edit=False):
     assigns   = content.get("assignments", [])
     quizzes   = content.get("quizzes",    [])
     resources = content.get("resources",  [])
+    grades    = content.get("grades",     [])
+    anns      = content.get("announcements", [])
 
     for item in assigns:
         db.mark_seen(tid, course_id, item["id"], "assign",
@@ -1217,6 +1380,14 @@ async def _fetch_show_course(msg_obj, tid, user, course_id, edit=False):
     for item in resources:
         db.mark_seen(tid, course_id, item["id"], "resource",
                      item["name"], item["url"])
+    for g in grades:
+        db.upsert_grade(tid, course_id, g["item_id"], g.get("item_name", ""),
+                        g.get("grade_val", ""), g.get("grade_max", ""),
+                        g.get("percentage", ""), g.get("feedback", ""), g.get("url", ""))
+    for ann in anns:
+        db.upsert_announcement(tid, course_id, ann["discuss_id"], ann.get("forum_name", ""),
+                               ann.get("title", ""), ann.get("author", ""),
+                               ann.get("posted_date", ""), "", ann.get("url", ""))
 
     for a in assigns:
         if a.get("is_submitted"):
@@ -1226,7 +1397,10 @@ async def _fetch_show_course(msg_obj, tid, user, course_id, edit=False):
     is_mon = course["is_monitored"] if course else True
     toggle_txt = "⏸ إيقاف المراقبة" if is_mon else "▶️ تفعيل المراقبة"
 
-    sections = _build_course_sections(course_name, course_id, assigns, quizzes, resources)
+    sections = _build_course_sections(
+        course_name, course_id, assigns, quizzes, resources,
+        grades=grades, announcements=anns
+    )
     keyboard = [
         [
             InlineKeyboardButton("🔄 تحديث المحتوى", callback_data=f"refresh_{course_id}"),
@@ -1242,22 +1416,112 @@ async def _fetch_show_course(msg_obj, tid, user, course_id, edit=False):
     ]
     await _send_sections(msg_obj, sections, keyboard=keyboard, edit_first=True)
 
+async def _render_grades_view(msg_obj, tid, edit=False):
+    all_grades = db.get_user_grades(tid)
+    kb = [
+        [InlineKeyboardButton("🔄 تحديث العلامات من LMS الآن", callback_data="refresh_grades")],
+        [
+            InlineKeyboardButton("📚 موادي المسجلة", callback_data="my_courses"),
+            InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
+        ],
+    ]
+    if not all_grades:
+        await _send(
+            msg_obj,
+            "🎯 *رادار العلامات والتقييمات*\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "لا توجد علامات مرصودة في قاعدة البيانات حالياً.\n\n"
+            "اضغط على الزر أدناه لسحب أحدث العلامات من نظام الجامعة:",
+            kb,
+            edit=edit
+        )
+        return
+
+    grouped = {}
+    for g in all_grades:
+        grouped.setdefault(g.get("course_name", "مادة"), []).append(g)
+
+    lines = ["🎯 *كشف العلامات والتقييمات الأكاديمية*\n━━━━━━━━━━━━━━━━━━━━━━"]
+    for cname, items in grouped.items():
+        lines.append(f"\n📖 *{_esc(cname)}:*")
+        has_any = False
+        for g in items:
+            iname = _esc(str(g.get("item_name", "تقييم"))[:65])
+            gval = _esc(g.get("grade_val") or "لم تُرصد بعد")
+            gmax = f" / `{_esc(g['grade_max'])}`" if g.get("grade_max") else ""
+            pct = f" ({_esc(g['percentage'])})" if g.get("percentage") else ""
+            fb = f"\n      💬 _{_esc(g['feedback'][:120])}_" if g.get("feedback") else ""
+            icon = "✅" if g.get("grade_val") else "⏳"
+            lines.append(f"  {icon} *{iname}*: `{gval}`{gmax}{pct}{fb}")
+            has_any = True
+        if not has_any:
+            lines.append("  • لا توجد عناصر تقييم بعد")
+
+    text = "\n".join(lines)[:3900]
+    await _send(msg_obj, text, kb, edit=edit)
+
+async def _render_announcements_view(msg_obj, tid, edit=False):
+    anns = db.get_user_announcements(tid, limit=15)
+    kb = [
+        [InlineKeyboardButton("🔄 فحص الإعلانات الجديدة من LMS", callback_data="refresh_announcements")],
+        [
+            InlineKeyboardButton("📚 موادي المسجلة", callback_data="my_courses"),
+            InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
+        ],
+    ]
+    if not anns:
+        await _send(
+            msg_obj,
+            "📢 *رادار إعلانات الدكاترة ومنتديات المقررات*\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "لا توجد إعلانات مرصودة في منتديات موادك حتى الآن.\n\n"
+            "اضغط على الزر أدناه لفحص منتديات الأخبار في LMS:",
+            kb,
+            edit=edit
+        )
+        return
+
+    lines = ["📢 *أحدث إعلانات الدكاترة والمقررات*\n━━━━━━━━━━━━━━━━━━━━━━"]
+    for a in anns[:10]:
+        cname = _esc(a.get("course_name", "مادة"))
+        title = _esc(a.get("title", "إعلان"))
+        author = _esc(a.get("author", ""))
+        pdate = _esc(a.get("posted_date", ""))
+        body = _esc((a.get("body_text") or "")[:240])
+        url = a.get("url", "")
+        meta = " • ".join(x for x in [author, pdate] if x)
+        block = f"\n📌 [{title}]({url})\n   📖 *{cname}*"
+        if meta:
+            block += f"\n   👨‍🏫 `{meta}`"
+        if body:
+            block += f"\n   📝 _{body}_"
+        lines.append(block)
+
+    text = "\n".join(lines)[:3900]
+    await _send(msg_obj, text, kb, edit=edit)
+
 async def _render_settings(msg_obj, user, edit=False):
-    a  = "🔔 مفعل" if user.get("notify_assign",   1) else "🔕 معطل"
-    q  = "🔔 مفعل" if user.get("notify_quiz",     1) else "🔕 معطل"
-    r  = "🔔 مفعل" if user.get("notify_resource", 1) else "🔕 معطل"
-    iv = user.get("check_interval", 10)
+    a   = "🔔 مفعل" if user.get("notify_assign",       1) else "🔕 معطل"
+    q   = "🔔 مفعل" if user.get("notify_quiz",         1) else "🔕 معطل"
+    r   = "🔔 مفعل" if user.get("notify_resource",     1) else "🔕 معطل"
+    g   = "🔔 مفعل" if user.get("notify_grade",        1) else "🔕 معطل"
+    ann = "🔔 مفعل" if user.get("notify_announcement", 1) else "🔕 معطل"
+    iv  = user.get("check_interval", 10)
     iv_txt = _format_interval(iv)
 
     keyboard = [
         [
             InlineKeyboardButton(f"الواجبات: {a}", callback_data="sett_assign"),
-        ],
-        [
             InlineKeyboardButton(f"الكويزات: {q}", callback_data="sett_quiz"),
         ],
         [
             InlineKeyboardButton(f"الملفات والموارد: {r}", callback_data="sett_resource"),
+        ],
+        [
+            InlineKeyboardButton(f"🎯 رادار العلامات: {g}", callback_data="sett_grade"),
+        ],
+        [
+            InlineKeyboardButton(f"📢 إعلانات الدكاترة: {ann}", callback_data="sett_announcement"),
         ],
         [
             InlineKeyboardButton(f"{'✔ ' if iv==5    else ''}5 د",  callback_data="iv_5"),
@@ -1281,7 +1545,9 @@ async def _render_settings(msg_obj, user, edit=False):
         f"🔔 *تنبيهات المحتوى:*\n"
         f"  • الواجبات: {a}\n"
         f"  • الكويزات: {q}\n"
-        f"  • الملفات والموارد: {r}\n\n"
+        f"  • الملفات والموارد: {r}\n"
+        f"  • رادار العلامات: {g}\n"
+        f"  • إعلانات الدكاترة: {ann}\n\n"
         f"⏱️ *فترة الفحص الدوري:* كل `{iv_txt}`\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"_اضغط على أي زر لتفعيل/تعطيل الإشعار أو تحديد فترة الفحص:_",
@@ -1290,6 +1556,9 @@ async def _render_settings(msg_obj, user, edit=False):
     )
 
 async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        await _reject_unauthorized(update)
+        return
     await _send(update.message,
         "💡 *استخدم الأزرار للتنقل!*\n\n"
         "اضغط /start لفتح القائمة الرئيسية.",

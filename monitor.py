@@ -349,6 +349,88 @@ class MonitorEngine:
             if event:
                 events.append(event)
 
+        # 4. Gradebook & Marks Radar
+        grades_list = content.get("grades", [])
+        existing_course_grades = db.get_user_grades(tid, cid)
+        is_first_grade_seed = len(existing_course_grades) == 0
+
+        for g in grades_list:
+            item_id = g["item_id"]
+            item_name = g.get("item_name", "تقييم")
+            grade_val = (g.get("grade_val") or "").strip()
+            grade_max = (g.get("grade_max") or "").strip()
+            pct = (g.get("percentage") or "").strip()
+            fb = (g.get("feedback") or "").strip()
+            g_url = g.get("url", "")
+
+            old_g = db.get_grade(tid, cid, item_id)
+            old_val = (old_g.get("grade_val") or "").strip() if old_g else ""
+
+            db.upsert_grade(tid, cid, item_id, item_name, grade_val, grade_max, pct, fb, g_url)
+
+            # Notify if a real grade value was newly posted or changed (and not initial course seed)
+            if not is_first_grade_seed and grade_val and grade_val != old_val:
+                if user.get("notify_grade", 1):
+                    g_lines = [
+                        "🎯 *تم رصد علامة جديدة في LMS!*",
+                        "━━━━━━━━━━━━━━━━━━━━━━",
+                        f"📖 المادة: *{_esc(cname)}*",
+                        f"📝 التقييم: *{_esc(item_name)}*",
+                        f"🏆 العلامة: `{_esc(grade_val)}`" + (f" _(المدى: {_esc(grade_max)})_" if grade_max else ""),
+                    ]
+                    if pct:
+                        g_lines.append(f"📊 النسبة: `{_esc(pct)}`")
+                    if fb:
+                        g_lines.append(f"💬 ملاحظات الدكتور: _{_esc(fb[:300])}_")
+                    if g_url:
+                        g_lines.append(f"🔗 [عرض سجل العلامات]({g_url})")
+                    await self._send(tid, "\n".join(g_lines))
+
+        # 5. Course Announcements & Forum Radar
+        announcements_list = content.get("announcements", [])
+        existing_course_anns = db.get_user_announcements(tid, cid, limit=5)
+        is_first_ann_seed = len(existing_course_anns) == 0
+
+        for ann in announcements_list:
+            discuss_id = ann["discuss_id"]
+            existing_ann = db.get_announcement(tid, discuss_id)
+            if existing_ann is not None:
+                continue
+
+            body_text = ""
+            author = ann.get("author", "")
+            posted_date = ann.get("posted_date", "")
+
+            if not is_first_ann_seed and ann.get("url"):
+                details = await loop.run_in_executor(None, scraper.get_announcement_details, ann["url"])
+                body_text = details.get("body", "")
+                author = author or details.get("author", "")
+                posted_date = posted_date or details.get("date", "")
+
+            db.upsert_announcement(
+                tid, cid, discuss_id,
+                ann.get("forum_name", "منتدى المقرر"),
+                ann.get("title", "إعلان جديد"),
+                author, posted_date, body_text, ann.get("url", "")
+            )
+
+            if not is_first_ann_seed and user.get("notify_announcement", 1):
+                a_lines = [
+                    "📢 *إعلان جديد من مدرس المساق!*",
+                    "━━━━━━━━━━━━━━━━━━━━━━",
+                    f"📖 المادة: *{_esc(cname)}*",
+                    f"📌 الموضوع: *{_esc(ann.get('title', 'إعلان'))}*",
+                ]
+                if author:
+                    a_lines.append(f"👨‍🏫 الناشر: {_esc(author)}")
+                if posted_date:
+                    a_lines.append(f"🕒 التاريخ: `{_esc(posted_date)}`")
+                if body_text:
+                    a_lines.append(f"\n📝 *نص الإعلان:*\n{_esc(body_text[:600])}")
+                if ann.get("url"):
+                    a_lines.append(f"\n🔗 [فتح الإعلان في LMS]({ann['url']})")
+                await self._send(tid, "\n".join(a_lines))
+
         return events, True
 
     def _collect_change(self, tid, cid, cname, item, content_type, enabled):

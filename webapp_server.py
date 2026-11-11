@@ -11,7 +11,7 @@ from typing import Optional
 
 import database as db
 from lms_scraper import LMSScraper
-from config import TELEGRAM_BOT_TOKEN
+from config import TELEGRAM_BOT_TOKEN, OWNER_TELEGRAM_ID
 
 logger = logging.getLogger(__name__)
 
@@ -108,7 +108,7 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                 self._send_html("<h1>Mini App template not found</h1>", 404)
             return
 
-        # API: user data
+        # API: user data (Personal Bot — locked to OWNER_TELEGRAM_ID)
         if path == "/api/user-data":
             tid_str = str(query.get("tid", "")).strip()
             init_data = query.get("initData", "")
@@ -130,16 +130,11 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                     except Exception:
                         pass
 
-            # Only fallback to single DB user if no tid could be extracted from query/initData AND only 1 user exists
-            if not tid:
-                with db.DBContext() as ctx:
-                    all_u = ctx.fetchall("SELECT telegram_id FROM users LIMIT 2")
-                    if len(all_u) == 1:
-                        tid = all_u[0]["telegram_id"]
-
-            if not tid:
-                self._send_json({"success": False, "not_registered": True, "error": "يرجى تسجيل الدخول بحساب الجامعة"}, 200)
+            if tid and int(tid) != int(OWNER_TELEGRAM_ID):
+                self._send_json({"success": False, "error": "🔒 هذا النظام خاص بصاحبه فقط"}, 403)
                 return
+
+            tid = int(OWNER_TELEGRAM_ID)
 
             user = db.get_user(tid)
             if not user:
@@ -161,6 +156,8 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                 "notify_assign": bool(user.get("notify_assign", 1)),
                 "notify_quiz": bool(user.get("notify_quiz", 1)),
                 "notify_resource": bool(user.get("notify_resource", 1)),
+                "notify_grade": bool(user.get("notify_grade", 1)),
+                "notify_announcement": bool(user.get("notify_announcement", 1)),
                 "last_check": user.get("last_check") or "لم يتم بعد",
             }
 
@@ -247,6 +244,8 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                 })
 
             stats = db.get_stats(tid)
+            grades = db.get_user_grades(tid)
+            announcements = db.get_user_announcements(tid, limit=30)
 
             total_deadlines = len(deadlines)
             submitted_deadlines = len([d for d in deadlines if d.get("is_submitted")])
@@ -257,6 +256,8 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                 "user": user_safe,
                 "courses": detailed_courses,
                 "deadlines": deadlines,
+                "grades": grades,
+                "announcements": announcements,
                 "stats": stats,
                 "progress": {
                     "total": total_deadlines,
@@ -294,15 +295,32 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                 except Exception:
                     pass
 
-        if not tid:
-            with db.DBContext() as ctx:
-                all_u = ctx.fetchall("SELECT telegram_id FROM users LIMIT 2")
-                if len(all_u) == 1:
-                    tid = all_u[0]["telegram_id"]
-
-        if not tid:
-            self._send_json({"success": False, "error": "تعذر تحديد معرف تيليجرام؛ افتح اللوحة من داخل البوت"}, 401)
+        if tid and int(tid) != int(OWNER_TELEGRAM_ID):
+            self._send_json({"success": False, "error": "🔒 هذا النظام خاص بصاحبه فقط"}, 403)
             return
+
+        tid = int(OWNER_TELEGRAM_ID)
+
+        def _persist_course_content(cid, content):
+            for item in content.get("assignments", []):
+                db.mark_seen(tid, cid, item["id"], "assign", item["name"], item["url"], item.get("due_date", ""))
+            for item in content.get("quizzes", []):
+                db.mark_seen(tid, cid, item["id"], "quiz", item["name"], item["url"], item.get("due_date", ""))
+            for item in content.get("resources", []):
+                db.mark_seen(tid, cid, item["id"], "resource", item["name"], item["url"])
+            for g in content.get("grades", []):
+                db.upsert_grade(tid, cid, g["item_id"], g.get("item_name", ""),
+                                g.get("grade_val", ""), g.get("grade_max", ""),
+                                g.get("percentage", ""), g.get("feedback", ""), g.get("url", ""))
+            for ann in content.get("announcements", []):
+                db.upsert_announcement(tid, cid, ann["discuss_id"], ann.get("forum_name", ""),
+                                       ann.get("title", ""), ann.get("author", ""),
+                                       ann.get("posted_date", ""), "", ann.get("url", ""))
+            if _REMINDER_ENGINE and content.get("assignments"):
+                _REMINDER_ENGINE.register_assignments(tid, cid, content["assignments"])
+            for a in content.get("assignments", []):
+                if a.get("is_submitted"):
+                    db.mark_assignment_submitted(tid, a["id"], 1)
 
         # 0. Direct Login from Mini App
         if path == "/api/login":
@@ -325,17 +343,7 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                     cid = c["id"]
                     db.add_course(tid, cid, c["name"], c["url"])
                     content = scraper.get_course_content(cid)
-                    for item in content.get("assignments", []):
-                        db.mark_seen(tid, cid, item["id"], "assign", item["name"], item["url"], item.get("due_date", ""))
-                    for item in content.get("quizzes", []):
-                        db.mark_seen(tid, cid, item["id"], "quiz", item["name"], item["url"], item.get("due_date", ""))
-                    for item in content.get("resources", []):
-                        db.mark_seen(tid, cid, item["id"], "resource", item["name"], item["url"])
-                    if _REMINDER_ENGINE and content.get("assignments"):
-                        _REMINDER_ENGINE.register_assignments(tid, cid, content["assignments"])
-                    for a in content.get("assignments", []):
-                        if a.get("is_submitted"):
-                            db.mark_assignment_submitted(tid, a["id"], 1)
+                    _persist_course_content(cid, content)
                 if courses_list:
                     db.set_monitoring(tid, True)
                     db.update_last_check(tid)
@@ -395,12 +403,14 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/update-settings":
             if "check_interval" in payload:
                 db.update_check_interval(tid, int(payload["check_interval"]))
-            if any(k in payload for k in ("notify_assign", "notify_quiz", "notify_resource")):
+            if any(k in payload for k in ("notify_assign", "notify_quiz", "notify_resource", "notify_grade", "notify_announcement")):
                 db.update_notify_settings(
                     tid,
                     assign=payload.get("notify_assign"),
                     quiz=payload.get("notify_quiz"),
-                    resource=payload.get("notify_resource")
+                    resource=payload.get("notify_resource"),
+                    grade=payload.get("notify_grade"),
+                    announcement=payload.get("notify_announcement"),
                 )
             self._send_json({"success": True, "message": "تم حفظ الإعدادات"})
             return
@@ -419,17 +429,7 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                     db.add_course(tid, cid, c["name"], c["url"])
                     added += 1
                     content = scraper.get_course_content(cid)
-                    for item in content.get("assignments", []):
-                        db.mark_seen(tid, cid, item["id"], "assign", item["name"], item["url"], item.get("due_date", ""))
-                    for item in content.get("quizzes", []):
-                        db.mark_seen(tid, cid, item["id"], "quiz", item["name"], item["url"], item.get("due_date", ""))
-                    for item in content.get("resources", []):
-                        db.mark_seen(tid, cid, item["id"], "resource", item["name"], item["url"])
-                    if _REMINDER_ENGINE and content.get("assignments"):
-                        _REMINDER_ENGINE.register_assignments(tid, cid, content["assignments"])
-                    for a in content.get("assignments", []):
-                        if a.get("is_submitted"):
-                            db.mark_assignment_submitted(tid, a["id"], 1)
+                    _persist_course_content(cid, content)
                 db.update_last_check(tid)
                 self._send_json({"success": True, "synced_count": added})
             finally:
@@ -456,17 +456,7 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                     return
                 curl = f"https://mulms.mutah.edu.jo/course/view.php?id={cid}"
                 db.add_course(tid, cid, cname, curl)
-                for item in content.get("assignments", []):
-                    db.mark_seen(tid, cid, item["id"], "assign", item["name"], item["url"], item.get("due_date", ""))
-                for item in content.get("quizzes", []):
-                    db.mark_seen(tid, cid, item["id"], "quiz", item["name"], item["url"], item.get("due_date", ""))
-                for item in content.get("resources", []):
-                    db.mark_seen(tid, cid, item["id"], "resource", item["name"], item["url"])
-                if _REMINDER_ENGINE and content.get("assignments"):
-                    _REMINDER_ENGINE.register_assignments(tid, cid, content["assignments"])
-                for a in content.get("assignments", []):
-                    if a.get("is_submitted"):
-                        db.mark_assignment_submitted(tid, a["id"], 1)
+                _persist_course_content(cid, content)
                 self._send_json({"success": True, "course_name": cname, "course_id": cid})
             finally:
                 scraper.close()
@@ -490,20 +480,13 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                     for item in content.get("assignments", []):
                         if not db.is_seen(tid, item["id"], "assign"):
                             new_items += 1
-                        db.mark_seen(tid, cid, item["id"], "assign", item["name"], item["url"], item.get("due_date", ""))
                     for item in content.get("quizzes", []):
                         if not db.is_seen(tid, item["id"], "quiz"):
                             new_items += 1
-                        db.mark_seen(tid, cid, item["id"], "quiz", item["name"], item["url"], item.get("due_date", ""))
                     for item in content.get("resources", []):
                         if not db.is_seen(tid, item["id"], "resource"):
                             new_items += 1
-                        db.mark_seen(tid, cid, item["id"], "resource", item["name"], item["url"])
-                    if _REMINDER_ENGINE and content.get("assignments"):
-                        _REMINDER_ENGINE.register_assignments(tid, cid, content["assignments"])
-                    for a in content.get("assignments", []):
-                        if a.get("is_submitted"):
-                            db.mark_assignment_submitted(tid, a["id"], 1)
+                    _persist_course_content(cid, content)
                 db.update_last_check(tid)
                 self._send_json({"success": True, "new_items": new_items})
             finally:

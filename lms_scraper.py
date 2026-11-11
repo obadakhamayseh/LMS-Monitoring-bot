@@ -445,6 +445,8 @@ class LMSScraper:
             "assignments": [],
             "quizzes": [],
             "resources": [],
+            "grades": [],
+            "announcements": [],
         }
 
         result["assignments"] = self._get_activities_from_index(
@@ -514,6 +516,10 @@ class LMSScraper:
                     "is_submitted": False,
                     "submission_text": "",
                 })
+
+        # Fetch course grades and announcements
+        result["grades"] = self.get_course_grades(course_id)
+        result["announcements"] = self.get_course_announcements(course_id, course_soup=page_soup)
 
         self.last_fetch_ok = (assign_ok and quiz_ok and res_ok) or (res_ok and page_soup is not None)
         return result
@@ -928,3 +934,278 @@ class LMSScraper:
         except Exception as e:
             logger.warning(f"Error downloading resource {url}: {e}")
             return None
+
+    def get_course_grades(self, course_id: int) -> List[Dict[str, Any]]:
+        """Scrape Moodle User Grade Report (/grade/report/user/index.php?id=course_id)."""
+        grades = []
+        url = f"{LMS_BASE_URL}/grade/report/user/index.php?id={course_id}"
+        try:
+            resp = self.authenticated_get(url, timeout=25)
+            if resp.status_code != 200:
+                return grades
+            soup = BeautifulSoup(resp.text, "lxml")
+
+            table = (
+                soup.find("table", class_=re.compile(r"user-grade|generaltable")) or
+                soup.find("table")
+            )
+            if not table:
+                return grades
+
+            all_rows = table.find_all("tr")
+            name_col, grade_col, range_col, pct_col, fb_col = None, None, None, None, None
+            if all_rows:
+                for idx, hc in enumerate(all_rows[0].find_all(["th", "td"])):
+                    htxt = hc.get_text(strip=True).lower()
+                    if any(k in htxt for k in ["grade item", "البند", "عنصر التقييم", "التقييم", "النشاط"]):
+                        name_col = idx
+                    elif any(k in htxt for k in ["grade", "الدرجة", "العلامة"]) and "item" not in htxt:
+                        grade_col = idx
+                    elif any(k in htxt for k in ["range", "المدى", "النطاق"]):
+                        range_col = idx
+                    elif any(k in htxt for k in ["percentage", "النسبة", "%"]):
+                        pct_col = idx
+                    elif any(k in htxt for k in ["feedback", "ملاحظات", "التغذية", "إفادة"]):
+                        fb_col = idx
+
+            seen_items = set()
+            for row in all_rows[1:]:
+                name_cell = (
+                    row.find(["th", "td"], class_=re.compile(r"column-itemname")) or
+                    row.find(["th", "td"], attrs={"headers": re.compile(r"itemname")})
+                )
+                grade_cell = (
+                    row.find("td", class_=re.compile(r"column-grade")) or
+                    row.find("td", attrs={"headers": re.compile(r"\bgrade\b")})
+                )
+                range_cell = (
+                    row.find("td", class_=re.compile(r"column-range")) or
+                    row.find("td", attrs={"headers": re.compile(r"\brange\b")})
+                )
+                pct_cell = (
+                    row.find("td", class_=re.compile(r"column-percentage")) or
+                    row.find("td", attrs={"headers": re.compile(r"percentage")})
+                )
+                fb_cell = (
+                    row.find("td", class_=re.compile(r"column-feedback")) or
+                    row.find("td", attrs={"headers": re.compile(r"feedback")})
+                )
+
+                cells = row.find_all(["th", "td"])
+                if not name_cell and name_col is not None and name_col < len(cells):
+                    name_cell = cells[name_col]
+                if not grade_cell and grade_col is not None and grade_col < len(cells):
+                    grade_cell = cells[grade_col]
+                if not range_cell and range_col is not None and range_col < len(cells):
+                    range_cell = cells[range_col]
+                if not pct_cell and pct_col is not None and pct_col < len(cells):
+                    pct_cell = cells[pct_col]
+                if not fb_cell and fb_col is not None and fb_col < len(cells):
+                    fb_cell = cells[fb_col]
+
+                if not name_cell or not grade_cell:
+                    continue
+
+                link = name_cell.find("a", href=True)
+                item_url = ""
+                item_id = ""
+                if link:
+                    href = link.get("href", "")
+                    if not href.startswith("http"):
+                        href = LMS_BASE_URL + href
+                    item_url = href
+                    m = re.search(r"id=(\d+)", href)
+                    if m:
+                        item_id = f"mod_{m.group(1)}"
+
+                # Extract clean item name without Moodle category prefix labels
+                title_el = name_cell.find(class_="gradeitemheader") or link or name_cell
+                raw_name = self._clean_link_text(title_el)
+                raw_name = re.sub(
+                    r"^(?:البند|عنصر التقييم|الفئة|العلامة المحسوبة|Calculated grade|Category|Grade item)\s*:?\s*",
+                    "", raw_name, flags=re.I
+                ).strip()
+                if not raw_name or len(raw_name) < 2:
+                    continue
+
+                grade_val = grade_cell.get_text(" ", strip=True)
+                grade_val = re.sub(r"\s+", " ", grade_val).strip()
+                if grade_val in ("-", "—", "Empty", "فارغ"):
+                    grade_val = ""
+
+                grade_max = range_cell.get_text(" ", strip=True) if range_cell else ""
+                percentage = pct_cell.get_text(" ", strip=True) if pct_cell else ""
+                feedback = fb_cell.get_text(" ", strip=True) if fb_cell else ""
+                if feedback in ("-", "—"):
+                    feedback = ""
+
+                # Skip empty category headers that have no link and no grade
+                if not item_url and not grade_val:
+                    continue
+
+                if not item_id:
+                    slug = re.sub(r"\W+", "_", raw_name.lower()).strip("_")[:40]
+                    item_id = f"g_{course_id}_{slug}"
+
+                if item_id in seen_items:
+                    continue
+                seen_items.add(item_id)
+
+                grades.append({
+                    "item_id": item_id,
+                    "item_name": raw_name,
+                    "grade_val": grade_val,
+                    "grade_max": grade_max,
+                    "percentage": percentage,
+                    "feedback": feedback,
+                    "url": item_url or url,
+                    "course_id": course_id,
+                })
+
+            logger.debug(f"المادة {course_id} | grades: {len(grades)} عنصر تقييم")
+        except Exception as e:
+            logger.warning(f"خطأ في جلب العلامات للمادة {course_id}: {e}")
+        return grades
+
+    def get_course_announcements(self, course_id: int,
+                                 course_soup: Optional[BeautifulSoup] = None) -> List[Dict[str, Any]]:
+        """Scrape forum discussions / announcements for a course."""
+        announcements = []
+        try:
+            forum_links = []
+            seen_forums = set()
+
+            if course_soup is not None:
+                for a in course_soup.find_all("a", href=re.compile(r"/mod/forum/view\.php\?id=\d+")):
+                    href = a.get("href", "")
+                    if not href.startswith("http"):
+                        href = LMS_BASE_URL + href
+                    m = re.search(r"id=(\d+)", href)
+                    if not m or m.group(1) in seen_forums:
+                        continue
+                    seen_forums.add(m.group(1))
+                    fname = self._clean_link_text(a) or "منتدى الإعلانات"
+                    forum_links.append((href, fname))
+
+            if not forum_links:
+                idx_url = f"{LMS_BASE_URL}/mod/forum/index.php?id={course_id}"
+                resp = self.authenticated_get(idx_url, timeout=20)
+                if resp.status_code == 200:
+                    idx_soup = BeautifulSoup(resp.text, "lxml")
+                    for a in idx_soup.find_all("a", href=re.compile(r"/mod/forum/view\.php\?id=\d+")):
+                        href = a.get("href", "")
+                        if not href.startswith("http"):
+                            href = LMS_BASE_URL + href
+                        m = re.search(r"id=(\d+)", href)
+                        if not m or m.group(1) in seen_forums:
+                            continue
+                        seen_forums.add(m.group(1))
+                        fname = self._clean_link_text(a) or "منتدى الإعلانات"
+                        forum_links.append((href, fname))
+
+            seen_discuss = set()
+            for f_url, f_name in forum_links[:4]:
+                try:
+                    f_resp = self.authenticated_get(f_url, timeout=20)
+                    if f_resp.status_code != 200:
+                        continue
+                    f_soup = BeautifulSoup(f_resp.text, "lxml")
+
+                    # Check discussion table rows first
+                    for tr in f_soup.find_all("tr", class_=re.compile(r"discussion")):
+                        d_link = tr.find("a", href=re.compile(r"/mod/forum/discuss\.php\?d=\d+"))
+                        if not d_link:
+                            continue
+                        d_href = d_link.get("href", "")
+                        if not d_href.startswith("http"):
+                            d_href = LMS_BASE_URL + d_href
+                        dm = re.search(r"d=(\d+)", d_href)
+                        if not dm:
+                            continue
+                        discuss_id = f"discuss_{dm.group(1)}"
+                        if discuss_id in seen_discuss:
+                            continue
+                        seen_discuss.add(discuss_id)
+
+                        title = self._clean_link_text(d_link)
+                        author_el = tr.find(class_=re.compile(r"author"))
+                        author = ""
+                        posted_date = ""
+                        if author_el:
+                            a_text = author_el.get_text(" ", strip=True)
+                            author = a_text
+                        time_el = tr.find("time")
+                        if time_el:
+                            posted_date = time_el.get_text(strip=True)
+
+                        announcements.append({
+                            "discuss_id": discuss_id,
+                            "forum_name": f_name,
+                            "title": title or f"إعلان #{dm.group(1)}",
+                            "author": author,
+                            "posted_date": posted_date,
+                            "url": d_href,
+                            "course_id": course_id,
+                        })
+
+                    # Fallback for any discuss.php links outside tr.discussion
+                    for d_link in f_soup.find_all("a", href=re.compile(r"/mod/forum/discuss\.php\?d=\d+")):
+                        d_href = d_link.get("href", "")
+                        if "#" in d_href:
+                            continue
+                        if not d_href.startswith("http"):
+                            d_href = LMS_BASE_URL + d_href
+                        dm = re.search(r"d=(\d+)", d_href)
+                        if not dm:
+                            continue
+                        discuss_id = f"discuss_{dm.group(1)}"
+                        if discuss_id in seen_discuss:
+                            continue
+                        title = self._clean_link_text(d_link)
+                        if not title or len(title) < 2:
+                            continue
+                        seen_discuss.add(discuss_id)
+                        announcements.append({
+                            "discuss_id": discuss_id,
+                            "forum_name": f_name,
+                            "title": title,
+                            "author": "",
+                            "posted_date": "",
+                            "url": d_href,
+                            "course_id": course_id,
+                        })
+                except Exception as fe:
+                    logger.debug(f"Forum fetch error ({f_url}): {fe}")
+
+            logger.debug(f"المادة {course_id} | announcements: {len(announcements)} إعلان")
+        except Exception as e:
+            logger.warning(f"خطأ في جلب الإعلانات للمادة {course_id}: {e}")
+        return announcements
+
+    def get_announcement_details(self, discuss_url: str) -> Dict[str, str]:
+        """Fetch the body text, author, and date of a specific forum discussion post."""
+        info = {"body": "", "author": "", "date": ""}
+        try:
+            resp = self.authenticated_get(discuss_url, timeout=20)
+            if resp.status_code != 200:
+                return info
+            soup = BeautifulSoup(resp.text, "lxml")
+
+            post_body = (
+                soup.find(class_=re.compile(r"post-content-container|posting|fullpost")) or
+                soup.find(attrs={"data-region-content": "forum-post-core"})
+            )
+            if post_body:
+                text = post_body.get_text("\n", strip=True)
+                info["body"] = re.sub(r"\n{3,}", "\n\n", text).strip()[:900]
+
+            author_el = soup.find("a", href=re.compile(r"/user/view\.php\?"))
+            if author_el:
+                info["author"] = author_el.get_text(strip=True)
+
+            time_el = soup.find("time")
+            if time_el:
+                info["date"] = time_el.get_text(strip=True)
+        except Exception as e:
+            logger.debug(f"Error fetching announcement details {discuss_url}: {e}")
+        return info

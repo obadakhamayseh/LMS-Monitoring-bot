@@ -150,15 +150,21 @@
         </div>
 
         <!-- Section Navigation Tabs -->
-        <div class="flex items-center gap-1.5 bg-zinc-950 p-1 rounded-xl hairline-border text-xs">
-            <button onclick="switchTab('tab-courses')" id="tabBtn-courses" class="flex-1 py-2 rounded-lg font-bold bg-zinc-800 text-zinc-100 shadow-sm transition-all">
-                المقررات الدراسية (<span id="coursesBadge">0</span>)
+        <div class="grid grid-cols-5 gap-1 bg-zinc-950 p-1 rounded-xl hairline-border text-[11px]">
+            <button onclick="switchTab('tab-courses')" id="tabBtn-courses" class="py-2 rounded-lg font-bold bg-zinc-800 text-zinc-100 shadow-sm transition-all">
+                المقررات (<span id="coursesBadge">0</span>)
             </button>
-            <button onclick="switchTab('tab-deadlines')" id="tabBtn-deadlines" class="flex-1 py-2 rounded-lg font-medium text-zinc-400 hover:text-zinc-200 transition-all">
-                المهام والواجبات (<span id="deadlinesBadge">0</span>)
+            <button onclick="switchTab('tab-deadlines')" id="tabBtn-deadlines" class="py-2 rounded-lg font-medium text-zinc-400 hover:text-zinc-200 transition-all">
+                الواجبات (<span id="deadlinesBadge">0</span>)
             </button>
-            <button onclick="switchTab('tab-settings')" id="tabBtn-settings" class="flex-1 py-2 rounded-lg font-medium text-zinc-400 hover:text-zinc-200 transition-all">
-                التفضيلات
+            <button onclick="switchTab('tab-grades')" id="tabBtn-grades" class="py-2 rounded-lg font-medium text-zinc-400 hover:text-zinc-200 transition-all">
+                العلامات (<span id="gradesBadge">0</span>)
+            </button>
+            <button onclick="switchTab('tab-announcements')" id="tabBtn-announcements" class="py-2 rounded-lg font-medium text-zinc-400 hover:text-zinc-200 transition-all">
+                الإعلانات (<span id="announcementsBadge">0</span>)
+            </button>
+            <button onclick="switchTab('tab-settings')" id="tabBtn-settings" class="py-2 rounded-lg font-medium text-zinc-400 hover:text-zinc-200 transition-all">
+                الإعدادات
             </button>
         </div>
 
@@ -211,7 +217,33 @@
             </div>
         </section>
 
-        <!-- ==================== TAB 3: SETTINGS ==================== -->
+        <!-- ==================== TAB 3: GRADES (GRADEBOOK RADAR) ==================== -->
+        <section id="tab-grades" class="space-y-3 hidden">
+            <div class="flex items-center justify-between text-xs">
+                <span class="text-zinc-400 font-medium">🎯 رادار العلامات والتقييمات الفوري</span>
+                <button onclick="triggerForceCheck()" class="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-sky-400 hairline-border text-[11px] font-semibold transition-all">
+                    🔄 فحص العلامات الآن
+                </button>
+            </div>
+            <div id="gradesListContainer" class="space-y-2.5">
+                <!-- Injected via JS -->
+            </div>
+        </section>
+
+        <!-- ==================== TAB 4: ANNOUNCEMENTS (FORUM TRACKER) ==================== -->
+        <section id="tab-announcements" class="space-y-3 hidden">
+            <div class="flex items-center justify-between text-xs">
+                <span class="text-zinc-400 font-medium">📢 رادار إعلانات الدكاترة ومنتديات المقررات</span>
+                <button onclick="triggerForceCheck()" class="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-sky-400 hairline-border text-[11px] font-semibold transition-all">
+                    🔄 تحديث الإعلانات
+                </button>
+            </div>
+            <div id="announcementsListContainer" class="space-y-2.5">
+                <!-- Injected via JS -->
+            </div>
+        </section>
+
+        <!-- ==================== TAB 5: SETTINGS ==================== -->
         <section id="tab-settings" class="space-y-3 hidden">
             <div class="card-surface rounded-2xl divide-y divide-white/[0.06]">
                 <div class="p-4 flex items-center justify-between">
@@ -243,6 +275,28 @@
                     </div>
                     <label class="relative inline-flex items-center cursor-pointer">
                         <input type="checkbox" id="toggleResource" onchange="saveNotificationSettings()" class="sr-only peer">
+                        <div class="w-9 h-5 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-600"></div>
+                    </label>
+                </div>
+
+                <div class="p-4 flex items-center justify-between">
+                    <div>
+                        <p class="text-xs font-bold text-zinc-200">🎯 رادار العلامات والتقييمات</p>
+                        <p class="text-[11px] text-zinc-500 mt-0.5">تنبيه فوري عند رصد أو تعديل أي علامة وملاحظة الدكتور</p>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="toggleGrade" onchange="saveNotificationSettings()" class="sr-only peer">
+                        <div class="w-9 h-5 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-600"></div>
+                    </label>
+                </div>
+
+                <div class="p-4 flex items-center justify-between">
+                    <div>
+                        <p class="text-xs font-bold text-zinc-200">📢 رادار إعلانات الدكاترة</p>
+                        <p class="text-[11px] text-zinc-500 mt-0.5">إرسال نص إعلانات ومنتديات المقررات فور نشرها</p>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="toggleAnnouncement" onchange="saveNotificationSettings()" class="sr-only peer">
                         <div class="w-9 h-5 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-600"></div>
                     </label>
                 </div>
@@ -461,6 +515,10 @@
             document.getElementById('metricItemsCount').innerText = totalItems;
             document.getElementById('metricInterval').innerText = `${u.check_interval}د`;
             document.getElementById('deadlinesBadge').innerText = appData.deadlines.length;
+            const gradesList = (appData.grades || []).filter(g => g.grade_val && !['-', '—', ''].includes(String(g.grade_val).trim()));
+            const announcementsList = appData.announcements || [];
+            document.getElementById('gradesBadge').innerText = gradesList.length;
+            document.getElementById('announcementsBadge').innerText = announcementsList.length;
 
             // Render Courses
             renderCoursesList(appData.courses);
@@ -468,10 +526,16 @@
             // Render Deadlines
             renderDeadlinesList(appData.deadlines);
 
+            // Render Grades & Announcements
+            renderGradesList(gradesList);
+            renderAnnouncementsList(announcementsList);
+
             // Sync Settings
             document.getElementById('toggleAssign').checked = u.notify_assign;
             document.getElementById('toggleQuiz').checked = u.notify_quiz;
             document.getElementById('toggleResource').checked = u.notify_resource;
+            document.getElementById('toggleGrade').checked = u.notify_grade !== false;
+            document.getElementById('toggleAnnouncement').checked = u.notify_announcement !== false;
             highlightIntervalButton(u.check_interval);
         }
 
@@ -651,18 +715,86 @@
             if (appData) renderDeadlinesList(appData.deadlines);
         }
 
+        function renderGradesList(grades) {
+            const container = document.getElementById('gradesListContainer');
+            if (!grades || !grades.length) {
+                container.innerHTML = `
+                    <div class="p-8 text-center card-surface rounded-2xl space-y-1">
+                        <p class="text-xs font-semibold text-zinc-300">لا توجد علامات مرصودة حتى الآن</p>
+                        <p class="text-[11px] text-zinc-500">سيصلك إشعار فوري بمجرد رصد أي علامة كويز أو واجب أو امتحان في سجل درجاتك</p>
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = grades.map(g => {
+                const maxPart = g.grade_max ? ` / ${escapeHtml(g.grade_max)}` : '';
+                return `
+                <div class="card-surface rounded-2xl p-3.5 space-y-2">
+                    <div class="flex items-start justify-between gap-2">
+                        <div>
+                            <span class="text-[10px] font-medium text-zinc-400">${escapeHtml(g.course_name || '')}</span>
+                            <h4 class="text-xs font-bold text-zinc-100 mt-0.5">${escapeHtml(g.item_name || 'تقييم')}</h4>
+                        </div>
+                        <div class="text-left shrink-0">
+                            <span class="font-mono text-xs font-bold px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                ${escapeHtml(g.grade_val)}${maxPart}
+                            </span>
+                            ${g.percentage ? `<p class="font-mono text-[10px] text-zinc-400 mt-1">${escapeHtml(g.percentage)}</p>` : ''}
+                        </div>
+                    </div>
+                    ${g.feedback ? `
+                    <div class="hairline-top pt-2 text-[11px] text-zinc-300 bg-zinc-950/50 rounded-lg p-2">
+                        <span class="text-zinc-500 font-semibold">💬 ملاحظة المدرس:</span> ${escapeHtml(g.feedback)}
+                    </div>` : ''}
+                </div>`;
+            }).join('');
+        }
+
+        function renderAnnouncementsList(announcements) {
+            const container = document.getElementById('announcementsListContainer');
+            if (!announcements || !announcements.length) {
+                container.innerHTML = `
+                    <div class="p-8 text-center card-surface rounded-2xl space-y-1">
+                        <p class="text-xs font-semibold text-zinc-300">لا توجد إعلانات مسجلة حالياً</p>
+                        <p class="text-[11px] text-zinc-500">يقوم الرادار بمتابعة منتديات الأخبار والإعلانات في جميع موادك تلقائياً</p>
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = announcements.map(a => `
+                <div class="card-surface rounded-2xl p-3.5 space-y-2">
+                    <div class="flex items-start justify-between gap-2">
+                        <div>
+                            <span class="text-[10px] font-medium text-sky-400">${escapeHtml(a.course_name || a.forum_name || '')}</span>
+                            <h4 class="text-xs font-bold text-zinc-100 mt-0.5">${escapeHtml(a.title || 'إعلان مقرر')}</h4>
+                        </div>
+                        ${(a.posted_date || a.posted_at) ? `<span class="font-mono text-[10px] text-zinc-500 shrink-0">${escapeHtml(a.posted_date || a.posted_at)}</span>` : ''}
+                    </div>
+                    ${a.author ? `<p class="text-[11px] text-zinc-400">👨‍🏫 الكاتب: <span class="text-zinc-200 font-medium">${escapeHtml(a.author)}</span></p>` : ''}
+                    ${(a.body_text || a.content_text) ? `<p class="text-[11px] text-zinc-300 leading-relaxed bg-zinc-950/50 p-2.5 rounded-xl hairline-border whitespace-pre-line">${escapeHtml(a.body_text || a.content_text)}</p>` : ''}
+                    ${a.url ? `
+                    <div class="hairline-top pt-2 flex justify-end">
+                        <a href="${a.url}" target="_blank" onclick="haptic('light')" class="text-[11px] text-sky-400 hover:underline font-medium">
+                            فتح الإعلان في LMS ↗
+                        </a>
+                    </div>` : ''}
+                </div>
+            `).join('');
+        }
+
         function switchTab(tabId) {
             haptic('light');
             activeTab = tabId;
-            ['tab-courses', 'tab-deadlines', 'tab-settings'].forEach(id => {
+            ['tab-courses', 'tab-deadlines', 'tab-grades', 'tab-announcements', 'tab-settings'].forEach(id => {
                 const section = document.getElementById(id);
                 const btn = document.getElementById('tabBtn-' + id.replace('tab-', ''));
+                if (!section || !btn) return;
                 if (id === tabId) {
                     section.classList.remove('hidden');
-                    btn.className = 'flex-1 py-2 rounded-lg font-bold bg-zinc-800 text-zinc-100 shadow-sm transition-all';
+                    btn.className = 'py-2 rounded-lg font-bold bg-zinc-800 text-zinc-100 shadow-sm transition-all';
                 } else {
                     section.classList.add('hidden');
-                    btn.className = 'flex-1 py-2 rounded-lg font-medium text-zinc-400 hover:text-zinc-200 transition-all';
+                    btn.className = 'py-2 rounded-lg font-medium text-zinc-400 hover:text-zinc-200 transition-all';
                 }
             });
         }
@@ -806,6 +938,8 @@
             const assign = document.getElementById('toggleAssign').checked;
             const quiz = document.getElementById('toggleQuiz').checked;
             const resource = document.getElementById('toggleResource').checked;
+            const grade = document.getElementById('toggleGrade').checked;
+            const announcement = document.getElementById('toggleAnnouncement').checked;
             try {
                 await fetch('/api/update-settings', {
                     method: 'POST',
@@ -815,6 +949,8 @@
                         notify_assign: assign ? 1 : 0,
                         notify_quiz: quiz ? 1 : 0,
                         notify_resource: resource ? 1 : 0,
+                        notify_grade: grade ? 1 : 0,
+                        notify_announcement: announcement ? 1 : 0,
                         initData: tg?.initData || ''
                     })
                 });
