@@ -177,15 +177,19 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                 for aq in assigns + quizzes:
                     all_assigns_and_quizzes.append((c["course_name"], aq))
 
+                done_tasks = sum(1 for i in assigns + quizzes if i.get("is_submitted"))
                 detailed_courses.append({
                     "id": cid,
                     "name": c["course_name"],
                     "url": c.get("course_url", f"https://mulms.mutah.edu.jo/course/view.php?id={cid}"),
                     "is_monitored": bool(c.get("is_monitored", 1)),
+                    "added_at": c.get("added_at", ""),
                     "stats": {
                         "assignments": len(assigns),
                         "quizzes": len(quizzes),
                         "resources": len(resources),
+                        "tasks_total": len(assigns) + len(quizzes),
+                        "tasks_done": done_tasks,
                     },
                     "items": items,
                 })
@@ -203,11 +207,12 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                 if diff <= 3600:
                     time_remaining = "ساعة أو أقل!"
 
-                seen_deadline_ids.add(str(r["content_id"]))
+                c_id_str = str(r["content_id"])
+                seen_deadline_ids.add(c_id_str)
                 deadlines.append({
                     "id": r["id"],
-                    "content_id": r["content_id"],
-                    "content_type": "assign",
+                    "content_id": c_id_str,
+                    "content_type": "quiz" if c_id_str.startswith("quiz_") else "assign",
                     "content_name": r.get("content_name", "واجب"),
                     "content_url": r.get("content_url", ""),
                     "course_id": r["course_id"],
@@ -238,7 +243,8 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                     "content_url": aq.get("content_url", ""),
                     "course_id": aq.get("course_id", 0),
                     "course_name": cname,
-                    "due_str": aq.get("due_date") or "متاح في المقرر",
+                    "due_str": aq.get("due_date") or "",
+                    "first_seen": aq.get("first_seen") or "",
                     "due_ts": 0,
                     "time_remaining": "",
                     "is_submitted": is_done,

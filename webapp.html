@@ -1,41 +1,20 @@
 <!DOCTYPE html>
-<html lang="ar" dir="rtl">
+<html lang="ar" dir="rtl" class="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>بوابة المتابعة الأكاديمية - جامعة مؤتة</title>
-    <!-- Telegram WebApp SDK -->
+    <title>بوابة المتابعة الأكاديمية — جامعة مؤتة</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Google Fonts: Cairo -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script>
         tailwind.config = {
             darkMode: 'class',
             theme: {
                 extend: {
                     fontFamily: {
-                        cairo: ['Cairo', 'sans-serif'],
-                    },
-                    colors: {
-                        obsidian: '#090A0F',
-                        surface: {
-                            DEFAULT: '#11131B',
-                            hover: '#161924',
-                            border: 'rgba(255, 255, 255, 0.07)',
-                        },
-                        muted: '#7E8695',
-                        subtle: '#4A5060',
-                        accent: {
-                            blue: '#38BDF8',
-                            emerald: '#10B981',
-                            amber: '#F59E0B',
-                            rose: '#F43F5E',
-                        }
+                        sans: ['"IBM Plex Sans Arabic"', 'sans-serif'],
+                        mono: ['"JetBrains Mono"', 'monospace'],
                     }
                 }
             }
@@ -43,348 +22,477 @@
     </script>
     <style>
         * {
-            font-family: 'Cairo', -apple-system, BlinkMacSystemFont, sans-serif;
             -webkit-tap-highlight-color: transparent;
             box-sizing: border-box;
         }
         body {
-            background-color: #090A0F;
-            color: #F8FAFC;
+            font-family: 'IBM Plex Sans Arabic', sans-serif;
+            background-color: #0A0B0E;
+            color: #ECEEF2;
+            overflow-x: hidden;
         }
-        .hairline-border {
-            border: 1px solid rgba(255, 255, 255, 0.07);
+        .font-mono-num {
+            font-family: 'JetBrains Mono', monospace;
+            font-variant-numeric: tabular-nums;
         }
-        .hairline-top {
-            border-top: 1px solid rgba(255, 255, 255, 0.07);
+        .panel {
+            background-color: #111318;
+            border: 1px solid #1E222B;
         }
-        .card-surface {
-            background-color: #11131B;
-            border: 1px solid rgba(255, 255, 255, 0.06);
+        .panel-inset {
+            background-color: #0C0E12;
+            border: 1px solid #181C24;
         }
-        .card-surface:hover {
-            border-color: rgba(255, 255, 255, 0.12);
+        .row-divider > * + * {
+            border-top: 1px solid #1A1D26;
         }
-        /* Custom scrollbar */
+        .top-bar {
+            background-color: rgba(10, 11, 14, 0.92);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-bottom: 1px solid #1A1E26;
+        }
+        .bottom-dock {
+            background-color: rgba(13, 15, 20, 0.96);
+            backdrop-filter: blur(14px);
+            -webkit-backdrop-filter: blur(14px);
+            border-top: 1px solid #1E222B;
+        }
         ::-webkit-scrollbar {
             width: 4px;
             height: 4px;
         }
+        ::-webkit-scrollbar-track {
+            background: #0A0B0E;
+        }
         ::-webkit-scrollbar-thumb {
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 4px;
+            background: #262B36;
+            border-radius: 2px;
         }
     </style>
 </head>
 <body class="min-h-screen pb-24 selection:bg-sky-500/20 selection:text-sky-300">
 
-    <!-- Top Executive Header -->
-    <header class="sticky top-0 z-30 bg-[#090A0F]/90 backdrop-blur-xl hairline-border border-t-0 border-x-0 px-4 py-3.5">
-        <div class="max-w-lg mx-auto flex items-center justify-between">
-            <div class="flex items-center gap-3">
-                <div id="userAvatar" class="w-10 h-10 rounded-full bg-gradient-to-br from-zinc-800 to-zinc-900 hairline-border flex items-center justify-center font-bold text-sm text-zinc-200">
+    <!-- ==================== STICKY HEADER ==================== -->
+    <header class="sticky top-0 z-40 top-bar px-4 py-3">
+        <div class="max-w-xl mx-auto flex items-center justify-between gap-3">
+            <div class="flex items-center gap-3 min-w-0">
+                <div id="userAvatar" class="w-9 h-9 rounded-lg bg-[#171A22] border border-[#262B36] flex items-center justify-center font-bold text-xs text-sky-400 shrink-0">
                     --
                 </div>
-                <div>
-                    <h1 id="userFullName" class="font-bold text-sm text-zinc-100 leading-tight">جاري المزامنة...</h1>
-                    <div class="flex items-center gap-2 text-[11px] text-zinc-400 mt-0.5">
-                        <span id="userStdId" class="font-mono tracking-wider text-zinc-300">...</span>
+                <div class="min-w-0">
+                    <div class="flex items-center gap-2">
+                        <h1 id="userFullName" class="text-xs font-bold text-zinc-100 truncate">جاري التحميل...</h1>
+                        <span id="userStdId" class="font-mono-num text-[10px] px-1.5 py-0.5 rounded bg-[#161922] text-zinc-400 border border-[#232834]">---</span>
+                    </div>
+                    <div class="flex items-center gap-2 mt-0.5 text-[10px] text-zinc-500">
+                        <span>جامعة مؤتة • LMS</span>
                         <span>•</span>
-                        <span>جامعة مؤتة</span>
+                        <span id="lastCheckHeader" class="truncate">آخر فحص: --</span>
                     </div>
                 </div>
             </div>
 
-            <div class="flex items-center gap-2">
-                <button onclick="refreshData()" title="تحديث البيانات" class="w-8 h-8 rounded-full bg-zinc-900 hairline-border flex items-center justify-center text-zinc-400 hover:text-white transition-all active:scale-90">
+            <div class="flex items-center gap-1.5 shrink-0">
+                <button onclick="refreshData()" class="p-2 rounded-lg bg-[#151821] hover:bg-[#1C202B] text-zinc-300 border border-[#232834] transition-colors" title="تحديث البيانات">
                     <svg id="refreshIcon" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
                     </svg>
                 </button>
-                <div id="monitoringBadge" class="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                    <span>متصل</span>
-                </div>
+                <button onclick="triggerToggleMonitor()" id="monitoringBadge" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 transition-all">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                    <span>نشط</span>
+                </button>
             </div>
         </div>
     </header>
 
-    <!-- Main Container -->
-    <main class="max-w-lg mx-auto px-4 pt-4 space-y-4">
+    <!-- ==================== MAIN WORKSPACE ==================== -->
+    <main class="max-w-xl mx-auto px-3.5 pt-3.5 space-y-3.5">
 
-        <!-- Executive Metrics Strip -->
-        <div class="card-surface rounded-2xl p-4">
-            <div class="grid grid-cols-3 divide-x divide-x-reverse divide-white/[0.06] text-center">
-                <div class="px-2">
-                    <p class="text-[11px] text-zinc-400 font-medium">المقررات</p>
-                    <p id="metricCoursesCount" class="text-xl font-bold text-zinc-100 mt-1">0</p>
-                    <p class="text-[10px] text-zinc-500 mt-0.5">مادة نشطة</p>
+        <!-- Toast Notification Banner -->
+        <div id="statusToast" class="hidden rounded-lg px-3.5 py-2.5 text-xs font-medium border"></div>
+
+        <!-- Executive Telemetry Grid -->
+        <section class="panel rounded-xl p-3.5 space-y-3">
+            <div class="grid grid-cols-4 gap-2">
+                <div class="panel-inset rounded-lg p-2.5">
+                    <div class="flex items-center justify-between text-[10px] text-zinc-400">
+                        <span>المقررات</span>
+                        <span id="metricMonitoredSub" class="font-mono-num text-[9px] text-emerald-400">0 نشط</span>
+                    </div>
+                    <p id="metricCoursesCount" class="font-mono-num text-lg font-bold text-zinc-100 mt-1">0</p>
+                    <p class="text-[10px] text-zinc-500 mt-0.5">مادة مسجلة</p>
                 </div>
-                <div class="px-2">
-                    <p class="text-[11px] text-zinc-400 font-medium">المحتويات</p>
-                    <p id="metricItemsCount" class="text-xl font-bold text-zinc-100 mt-1">0</p>
-                    <p class="text-[10px] text-zinc-500 mt-0.5">مرصودة بالنظام</p>
+
+                <div class="panel-inset rounded-lg p-2.5">
+                    <div class="flex items-center justify-between text-[10px] text-zinc-400">
+                        <span>إنجاز المهام</span>
+                        <span id="metricTasksPct" class="font-mono-num text-[10px] text-sky-400 font-semibold">0%</span>
+                    </div>
+                    <p id="metricTasksRatio" class="font-mono-num text-lg font-bold text-zinc-100 mt-1">0/0</p>
+                    <p id="metricPendingCount" class="text-[10px] text-zinc-500 mt-0.5">0 قيد الحل</p>
                 </div>
-                <div class="px-2">
-                    <p class="text-[11px] text-zinc-400 font-medium">دورة الفحص</p>
-                    <p id="metricInterval" class="text-xl font-bold text-zinc-100 mt-1">10د</p>
-                    <p class="text-[10px] text-zinc-500 mt-0.5">معدل التحديث</p>
+
+                <div class="panel-inset rounded-lg p-2.5">
+                    <div class="flex items-center justify-between text-[10px] text-zinc-400">
+                        <span>الحضور</span>
+                        <span id="metricAttSessions" class="font-mono-num text-[9px] text-zinc-400">0 محاضرة</span>
+                    </div>
+                    <p id="metricAttRate" class="font-mono-num text-lg font-bold text-zinc-100 mt-1">--</p>
+                    <p id="metricAttDetail" class="text-[10px] text-zinc-500 mt-0.5">سجل الحضور</p>
+                </div>
+
+                <div class="panel-inset rounded-lg p-2.5">
+                    <div class="flex items-center justify-between text-[10px] text-zinc-400">
+                        <span>الفحص</span>
+                        <span id="metricInterval" class="font-mono-num text-[10px] text-zinc-300 font-semibold">10د</span>
+                    </div>
+                    <p id="metricItemsCount" class="font-mono-num text-lg font-bold text-zinc-100 mt-1">0</p>
+                    <p id="metricItemsBreakdown" class="text-[10px] text-zinc-500 mt-0.5 truncate">عنصر مرصود</p>
                 </div>
             </div>
 
-            <!-- Quick Operational Actions -->
-            <div class="hairline-top pt-3 mt-3 flex items-center justify-between gap-2">
-                <button onclick="triggerForceCheck()" id="btnForceCheck" class="flex-1 py-2 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 active:scale-95 text-zinc-200 hairline-border text-xs font-semibold flex items-center justify-center gap-1.5 transition-all">
-                    <svg class="w-3.5 h-3.5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
-                    </svg>
-                    <span>فحص فوري</span>
-                </button>
+            <!-- Overall Completion Bar & Action Strip -->
+            <div class="pt-1 space-y-2.5">
+                <div class="flex items-center justify-between text-[11px]">
+                    <span class="text-zinc-400">مؤشر إنجاز الواجبات والاختبارات الفصلية</span>
+                    <span id="progressSummaryLabel" class="font-mono-num text-zinc-300 font-semibold">0 من 0 مكتمل</span>
+                </div>
+                <div class="w-full h-1.5 bg-[#181C24] rounded-full overflow-hidden">
+                    <div id="overallProgressBar" class="h-full bg-sky-500 rounded-full transition-all duration-300" style="width: 0%"></div>
+                </div>
 
-                <button onclick="triggerToggleMonitor()" id="btnToggleMonitor" class="flex-1 py-2 px-3 rounded-xl bg-zinc-900 hover:bg-zinc-800 active:scale-95 text-zinc-200 hairline-border text-xs font-semibold flex items-center justify-center gap-1.5 transition-all">
-                    <svg class="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 5.636a9 9 0 010 12.728m0 0l-2.829-2.829m2.829 2.829L21 21M15.536 8.464a5 5 0 010 7.072m0 0l-2.829-2.829m-4.243 2.829a4.978 4.978 0 01-1.414-2.83m-1.414 5.658a9 9 0 01-2.167-9.238m7.824-2.167a1 1 0 111.414 1.414"></path>
-                    </svg>
-                    <span id="btnToggleMonitorText">المراقبة: نشطة</span>
-                </button>
+                <div class="flex items-center gap-2 pt-1">
+                    <button onclick="triggerForceCheck()" id="btnForceCheck" class="flex-1 py-2 px-3 rounded-lg bg-[#161922] hover:bg-[#1D212D] active:scale-[0.99] text-zinc-200 border border-[#252A37] text-xs font-semibold flex items-center justify-center gap-2 transition-all">
+                        <svg class="w-3.5 h-3.5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                        </svg>
+                        <span>فحص فوري ومزامنة من LMS</span>
+                    </button>
+
+                    <button onclick="triggerToggleMonitor()" id="btnToggleMonitor" class="py-2 px-3 rounded-lg bg-[#161922] hover:bg-[#1D212D] active:scale-[0.99] text-zinc-200 border border-[#252A37] text-xs font-semibold flex items-center justify-center gap-1.5 transition-all">
+                        <span id="btnToggleDot" class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                        <span id="btnToggleMonitorText">المراقبة: مفعلة</span>
+                    </button>
+                </div>
             </div>
-        </div>
-
-        <!-- Section Navigation Tabs -->
-        <div class="grid grid-cols-6 gap-1 bg-zinc-950 p-1 rounded-xl hairline-border text-[10.5px]">
-            <button onclick="switchTab('tab-courses')" id="tabBtn-courses" class="py-2 rounded-lg font-bold bg-zinc-800 text-zinc-100 shadow-sm transition-all">
-                المقررات (<span id="coursesBadge">0</span>)
-            </button>
-            <button onclick="switchTab('tab-deadlines')" id="tabBtn-deadlines" class="py-2 rounded-lg font-medium text-zinc-400 hover:text-zinc-200 transition-all">
-                الواجبات (<span id="deadlinesBadge">0</span>)
-            </button>
-            <button onclick="switchTab('tab-grades')" id="tabBtn-grades" class="py-2 rounded-lg font-medium text-zinc-400 hover:text-zinc-200 transition-all">
-                العلامات (<span id="gradesBadge">0</span>)
-            </button>
-            <button onclick="switchTab('tab-attendance')" id="tabBtn-attendance" class="py-2 rounded-lg font-medium text-zinc-400 hover:text-zinc-200 transition-all">
-                الحضور (<span id="attendanceBadge">0</span>)
-            </button>
-            <button onclick="switchTab('tab-announcements')" id="tabBtn-announcements" class="py-2 rounded-lg font-medium text-zinc-400 hover:text-zinc-200 transition-all">
-                الإعلانات (<span id="announcementsBadge">0</span>)
-            </button>
-            <button onclick="switchTab('tab-settings')" id="tabBtn-settings" class="py-2 rounded-lg font-medium text-zinc-400 hover:text-zinc-200 transition-all">
-                الإعدادات
-            </button>
-        </div>
+        </section>
 
         <!-- ==================== TAB 1: COURSES ==================== -->
         <section id="tab-courses" class="space-y-3">
-            <!-- Search & Clear Toolbar -->
-            <div class="flex items-center gap-2">
-                <div class="relative flex-1">
-                    <input type="text" id="courseSearchInput" oninput="filterCourses()" placeholder="بحث في المقررات المضافة..." class="w-full bg-[#11131B] hairline-border rounded-xl px-3.5 py-2 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-500 transition-all">
+            <!-- Toolbar: Search + Add Course -->
+            <div class="panel rounded-xl p-3 space-y-2.5">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h2 class="text-xs font-bold text-zinc-100">إدارة المقررات الدراسية المراقَبة</h2>
+                        <p class="text-[10px] text-zinc-500 mt-0.5">أضف المواد التي ترغب بمراقبتها عبر رقم المادة (Course ID) أو رابط المقرر</p>
+                    </div>
+                    <button onclick="triggerClearAllCourses()" class="px-2.5 py-1 rounded-lg bg-[#171A22] hover:bg-rose-950/40 text-rose-400 border border-[#252A37] text-[10px] font-semibold transition-colors">
+                        مسح الكل
+                    </button>
                 </div>
-                <button onclick="triggerClearAllCourses()" id="btnClearCourses" class="px-3 py-2 rounded-xl bg-zinc-900 hover:bg-rose-950/40 active:scale-95 text-rose-400 hairline-border text-[11px] font-semibold shrink-0 flex items-center gap-1 transition-all" title="حذف جميع المقررات">
-                    <span>🗑 مسح الكل</span>
-                </button>
+
+                <div class="flex items-center gap-2">
+                    <input type="text" id="addCourseInput" placeholder="رقم المادة (مثال: 71177) أو رابط المادة من LMS..." class="flex-1 bg-[#0C0E12] border border-[#1F2430] rounded-lg px-3 py-2 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-sky-500/60 transition-colors">
+                    <button onclick="triggerAddCourse()" id="btnAddCourse" class="px-3.5 py-2 rounded-lg bg-sky-500 hover:bg-sky-400 text-zinc-950 text-xs font-bold shrink-0 transition-colors">
+                        إضافة مقرر
+                    </button>
+                </div>
+
+                <div class="relative">
+                    <input type="text" id="courseSearchInput" oninput="filterCourses()" placeholder="تصفية المقررات بالاسم أو الرقم..." class="w-full bg-[#0C0E12] border border-[#1A1E28] rounded-lg px-3 py-1.5 text-[11px] text-zinc-300 placeholder-zinc-500 focus:outline-none focus:border-zinc-600 transition-colors">
+                </div>
             </div>
 
-            <!-- Add Course by ID / URL Bar -->
-            <div class="flex items-center gap-2">
-                <input type="text" id="addCourseInput" placeholder="إضافة مقرر برقم ID أو رابط المادة..." class="flex-1 bg-[#11131B] hairline-border rounded-xl px-3.5 py-2 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-500 transition-all">
-                <button onclick="triggerAddCourse()" id="btnAddCourse" class="px-3.5 py-2 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 text-sky-400 border border-sky-500/30 text-[11px] font-bold shrink-0 transition-all">
-                    + إضافة
-                </button>
-            </div>
-
-            <!--Status Banner -->
-            <div id="statusToast" class="hidden rounded-xl px-3.5 py-2.5 text-xs font-medium hairline-border bg-zinc-900 text-zinc-200"></div>
-
-            <!-- Real Courses List -->
-            <div id="coursesListContainer" class="space-y-3">
-                <div class="p-8 text-center text-xs text-zinc-500 card-surface rounded-2xl">
-                    جاري تحميل بيانات المقررات المسجلة...
+            <!-- Courses Container -->
+            <div id="coursesListContainer" class="space-y-2.5">
+                <div class="p-8 text-center text-xs text-zinc-500 panel rounded-xl">
+                    جاري تحميل بيانات المقررات...
                 </div>
             </div>
         </section>
 
-        <!-- ==================== TAB 2: DEADLINES ==================== -->
+        <!-- ==================== TAB 2: DEADLINES & TASKS ==================== -->
         <section id="tab-deadlines" class="space-y-3 hidden">
-            <!-- Filter Pills -->
-            <div class="flex items-center justify-between text-xs">
-                <span class="text-zinc-400 font-medium">جدول التكاليف والامتحانات</span>
-                <div class="flex items-center gap-1 bg-zinc-950 p-1 rounded-lg hairline-border text-[11px]">
-                    <button onclick="setDeadlinesFilter('all')" id="btnFilterAll" class="px-2 py-0.5 rounded font-semibold bg-zinc-800 text-zinc-200">الكل</button>
-                    <button onclick="setDeadlinesFilter('pending')" id="btnFilterPending" class="px-2 py-0.5 rounded font-medium text-zinc-400 hover:text-white">المعلقة</button>
-                    <button onclick="setDeadlinesFilter('submitted')" id="btnFilterSubmitted" class="px-2 py-0.5 rounded font-medium text-zinc-400 hover:text-white">المسلّمة</button>
+            <div class="panel rounded-xl p-3 space-y-2.5">
+                <div class="flex items-center justify-between gap-2">
+                    <div>
+                        <h2 class="text-xs font-bold text-zinc-100">الواجبات والاختبارات القصيرة (حسب المادة)</h2>
+                        <p class="text-[10px] text-zinc-500 mt-0.5">اضغط على أي مادة لفتح قائمتها المنسدلة واستعراض حالة إنجاز مهامها</p>
+                    </div>
+                    <button onclick="toggleAllGroupAccordions('dl-course-')" class="px-2.5 py-1 rounded-lg bg-[#161922] hover:bg-[#1E222E] text-zinc-300 border border-[#252A37] text-[10px] font-semibold shrink-0 transition-colors">
+                        فتح / طي الكل
+                    </button>
+                </div>
+
+                <!-- Filter Bar -->
+                <div class="grid grid-cols-5 gap-1 bg-[#0C0E12] p-1 rounded-lg border border-[#1A1E28] text-[10.5px]">
+                    <button onclick="setDeadlinesFilter('all')" id="btnFilterAll" class="py-1.5 rounded font-semibold bg-[#1C202B] text-zinc-100">الكل</button>
+                    <button onclick="setDeadlinesFilter('pending')" id="btnFilterPending" class="py-1.5 rounded font-medium text-zinc-400 hover:text-zinc-200">قيد الحل</button>
+                    <button onclick="setDeadlinesFilter('submitted')" id="btnFilterSubmitted" class="py-1.5 rounded font-medium text-zinc-400 hover:text-zinc-200">المنجزة</button>
+                    <button onclick="setDeadlinesFilter('assign')" id="btnFilterAssign" class="py-1.5 rounded font-medium text-zinc-400 hover:text-zinc-200">واجبات</button>
+                    <button onclick="setDeadlinesFilter('quiz')" id="btnFilterQuiz" class="py-1.5 rounded font-medium text-zinc-400 hover:text-zinc-200">كويزات</button>
                 </div>
             </div>
 
-            <!-- Deadlines Container -->
-            <div id="deadlinesListContainer" class="space-y-2.5">
-                <!-- Injected via JS -->
-            </div>
+            <div id="deadlinesListContainer" class="space-y-2.5"></div>
         </section>
 
-        <!-- ==================== TAB 3: GRADES (GRADEBOOK RADAR) ==================== -->
+        <!-- ==================== TAB 3: GRADES ==================== -->
         <section id="tab-grades" class="space-y-3 hidden">
-            <div class="flex items-center justify-between text-xs">
-                <span class="text-zinc-400 font-medium">🎯 العلامات والتقييمات (حسب المادة)</span>
-                <button onclick="triggerForceCheck()" class="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-sky-400 hairline-border text-[11px] font-semibold transition-all">
-                    🔄 فحص العلامات الآن
-                </button>
+            <div class="panel rounded-xl p-3 space-y-2.5">
+                <div class="flex items-center justify-between gap-2">
+                    <div>
+                        <h2 class="text-xs font-bold text-zinc-100">سجل العلامات والتقييمات الأكاديمية</h2>
+                        <p class="text-[10px] text-zinc-500 mt-0.5">قائمة منسدلة لكل مقرر تعرض الدرجات المرصودة وبنود التقييم والمدى وملاحظات المدرس</p>
+                    </div>
+                    <div class="flex items-center gap-1.5 shrink-0">
+                        <button onclick="toggleAllGroupAccordions('gr-course-')" class="px-2.5 py-1 rounded-lg bg-[#161922] hover:bg-[#1E222E] text-zinc-300 border border-[#252A37] text-[10px] font-semibold transition-colors">
+                            فتح / طي الكل
+                        </button>
+                    </div>
+                </div>
+
+                <div class="flex items-center justify-between gap-2 pt-0.5">
+                    <div class="flex items-center gap-1 bg-[#0C0E12] p-1 rounded-lg border border-[#1A1E28] text-[10.5px]">
+                        <button onclick="setGradesFilter('all')" id="btnGradeFilterAll" class="px-2.5 py-1 rounded font-semibold bg-[#1C202B] text-zinc-100">جميع بنود التقييم</button>
+                        <button onclick="setGradesFilter('graded')" id="btnGradeFilterGraded" class="px-2.5 py-1 rounded font-medium text-zinc-400 hover:text-zinc-200">العلامات المرصودة فقط</button>
+                    </div>
+                    <button onclick="triggerForceCheck()" class="px-2.5 py-1.5 rounded-lg bg-[#161922] hover:bg-[#1E222E] text-sky-400 border border-[#252A37] text-[10.5px] font-semibold transition-colors">
+                        تحديث السجل
+                    </button>
+                </div>
             </div>
-            <div id="gradesListContainer" class="space-y-2.5">
-                <!-- Injected via JS -->
-            </div>
+
+            <div id="gradesListContainer" class="space-y-2.5"></div>
         </section>
 
-        <!-- ==================== TAB 3.5: ATTENDANCE (ATTENDANCE RADAR) ==================== -->
+        <!-- ==================== TAB 4: ATTENDANCE ==================== -->
         <section id="tab-attendance" class="space-y-3 hidden">
-            <div class="flex items-center justify-between text-xs">
-                <span class="text-zinc-400 font-medium">📋 سجل الحضور والغياب (Attendance)</span>
-                <button onclick="triggerForceCheck()" class="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-sky-400 hairline-border text-[11px] font-semibold transition-all">
-                    🔄 تحديث الحضور
-                </button>
+            <div class="panel rounded-xl p-3 flex items-center justify-between gap-2">
+                <div>
+                    <h2 class="text-xs font-bold text-zinc-100">سجل الحضور والغياب (Attendance)</h2>
+                    <p class="text-[10px] text-zinc-500 mt-0.5">رصد تلقائي للمحاضرات المسجلة وعدد مرات الحضور والغياب والنسبة المئوية لكل مادة</p>
+                </div>
+                <div class="flex items-center gap-1.5 shrink-0">
+                    <button onclick="toggleAllGroupAccordions('att-course-')" class="px-2.5 py-1.5 rounded-lg bg-[#161922] hover:bg-[#1E222E] text-zinc-300 border border-[#252A37] text-[10px] font-semibold transition-colors">
+                        فتح / طي السجلات
+                    </button>
+                    <button onclick="triggerForceCheck()" class="px-2.5 py-1.5 rounded-lg bg-[#161922] hover:bg-[#1E222E] text-sky-400 border border-[#252A37] text-[10px] font-semibold transition-colors">
+                        تحديث
+                    </button>
+                </div>
             </div>
-            <div id="attendanceListContainer" class="space-y-2.5">
-                <!-- Injected via JS -->
-            </div>
+
+            <div id="attendanceListContainer" class="space-y-2.5"></div>
         </section>
 
-        <!-- ==================== TAB 4: ANNOUNCEMENTS (FORUM TRACKER) ==================== -->
+        <!-- ==================== TAB 5: ANNOUNCEMENTS ==================== -->
         <section id="tab-announcements" class="space-y-3 hidden">
-            <div class="flex items-center justify-between text-xs">
-                <span class="text-zinc-400 font-medium">📢 رادار إعلانات الدكاترة ومنتديات المقررات</span>
-                <button onclick="triggerForceCheck()" class="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-sky-400 hairline-border text-[11px] font-semibold transition-all">
-                    🔄 تحديث الإعلانات
+            <div class="panel rounded-xl p-3 flex items-center justify-between gap-2">
+                <div>
+                    <h2 class="text-xs font-bold text-zinc-100">إعلانات المدرسين ومنتديات المقررات</h2>
+                    <p class="text-[10px] text-zinc-500 mt-0.5">متابعة مباشرة لجميع المنشورات والتنبيهات الصادرة داخل منتديات الأخبار</p>
+                </div>
+                <button onclick="triggerForceCheck()" class="px-2.5 py-1.5 rounded-lg bg-[#161922] hover:bg-[#1E222E] text-sky-400 border border-[#252A37] text-[10.5px] font-semibold shrink-0 transition-colors">
+                    فحص الإعلانات
                 </button>
             </div>
-            <div id="announcementsListContainer" class="space-y-2.5">
-                <!-- Injected via JS -->
-            </div>
+
+            <div id="announcementsListContainer" class="space-y-2.5"></div>
         </section>
 
-        <!-- ==================== TAB 5: SETTINGS ==================== -->
+        <!-- ==================== TAB 6: SETTINGS ==================== -->
         <section id="tab-settings" class="space-y-3 hidden">
-            <div class="card-surface rounded-2xl divide-y divide-white/[0.06]">
-                <div class="p-4 flex items-center justify-between">
+            <div class="panel rounded-xl p-3">
+                <h2 class="text-xs font-bold text-zinc-100">ضبط التنبيهات الفورية ودورة الفحص</h2>
+                <p class="text-[10px] text-zinc-500 mt-0.5">تحكم في أنواع الإشعارات التي يرسلها البوت مباشرة في محادثة تيليجرام</p>
+            </div>
+
+            <div class="panel rounded-xl row-divider">
+                <div class="p-3.5 flex items-center justify-between gap-3">
                     <div>
-                        <p class="text-xs font-bold text-zinc-200">إشعارات التكاليف والواجبات</p>
-                        <p class="text-[11px] text-zinc-500 mt-0.5">تنبيه فوري بمجرد إدراج واجب جديد على Moodle</p>
+                        <p class="text-xs font-semibold text-zinc-100">إشعارات الواجبات والتكاليف</p>
+                        <p class="text-[11px] text-zinc-500 mt-0.5">تنبيه عند نشر واجب جديد أو تعديل موعد التسليم أو رصد إنجازه</p>
                     </div>
-                    <label class="relative inline-flex items-center cursor-pointer">
+                    <label class="relative inline-flex items-center cursor-pointer shrink-0">
                         <input type="checkbox" id="toggleAssign" onchange="saveNotificationSettings()" class="sr-only peer">
-                        <div class="w-9 h-5 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-600"></div>
+                        <div class="w-9 h-5 bg-zinc-800 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-500"></div>
                     </label>
                 </div>
 
-                <div class="p-4 flex items-center justify-between">
+                <div class="p-3.5 flex items-center justify-between gap-3">
                     <div>
-                        <p class="text-xs font-bold text-zinc-200">إشعارات الكويزات والامتحانات</p>
-                        <p class="text-[11px] text-zinc-500 mt-0.5">تنبيه بمواعيد بدء وانتهاء الاختبارات القصيرة</p>
+                        <p class="text-xs font-semibold text-zinc-100">إشعارات الاختبارات القصيرة (Quizzes)</p>
+                        <p class="text-[11px] text-zinc-500 mt-0.5">تنبيه بمواعيد الكويزات وتأكيد حالة تقديم الاختبار تلقائياً</p>
                     </div>
-                    <label class="relative inline-flex items-center cursor-pointer">
+                    <label class="relative inline-flex items-center cursor-pointer shrink-0">
                         <input type="checkbox" id="toggleQuiz" onchange="saveNotificationSettings()" class="sr-only peer">
-                        <div class="w-9 h-5 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-600"></div>
+                        <div class="w-9 h-5 bg-zinc-800 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-500"></div>
                     </label>
                 </div>
 
-                <div class="p-4 flex items-center justify-between">
+                <div class="p-3.5 flex items-center justify-between gap-3">
                     <div>
-                        <p class="text-xs font-bold text-zinc-200">إشعارات السلايدات والمحاضرات</p>
-                        <p class="text-[11px] text-zinc-500 mt-0.5">إرسال ملفات PDF والمستندات مباشرة إلى المحادثة</p>
+                        <p class="text-xs font-semibold text-zinc-100">إشعارات الملفات والمحاضرات</p>
+                        <p class="text-[11px] text-zinc-500 mt-0.5">إرسال ملفات PDF والعروض التقديمية مباشرة إلى شات البوت فور رفعها</p>
                     </div>
-                    <label class="relative inline-flex items-center cursor-pointer">
+                    <label class="relative inline-flex items-center cursor-pointer shrink-0">
                         <input type="checkbox" id="toggleResource" onchange="saveNotificationSettings()" class="sr-only peer">
-                        <div class="w-9 h-5 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-600"></div>
+                        <div class="w-9 h-5 bg-zinc-800 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-500"></div>
                     </label>
                 </div>
 
-                <div class="p-4 flex items-center justify-between">
+                <div class="p-3.5 flex items-center justify-between gap-3">
                     <div>
-                        <p class="text-xs font-bold text-zinc-200">🎯 رادار العلامات والتقييمات</p>
-                        <p class="text-[11px] text-zinc-500 mt-0.5">تنبيه فوري عند رصد أو تعديل أي علامة وملاحظة الدكتور</p>
+                        <p class="text-xs font-semibold text-zinc-100">رادار العلامات والتقييمات</p>
+                        <p class="text-[11px] text-zinc-500 mt-0.5">إشعار فوري عند رصد أو تعديل أي درجة في كشف العلامات</p>
                     </div>
-                    <label class="relative inline-flex items-center cursor-pointer">
+                    <label class="relative inline-flex items-center cursor-pointer shrink-0">
                         <input type="checkbox" id="toggleGrade" onchange="saveNotificationSettings()" class="sr-only peer">
-                        <div class="w-9 h-5 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-600"></div>
+                        <div class="w-9 h-5 bg-zinc-800 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-500"></div>
                     </label>
                 </div>
 
-                <div class="p-4 flex items-center justify-between">
+                <div class="p-3.5 flex items-center justify-between gap-3">
                     <div>
-                        <p class="text-xs font-bold text-zinc-200">📢 رادار إعلانات الدكاترة</p>
-                        <p class="text-[11px] text-zinc-500 mt-0.5">إرسال نص إعلانات ومنتديات المقررات فور نشرها</p>
+                        <p class="text-xs font-semibold text-zinc-100">رادار الحضور والغياب (Attendance)</p>
+                        <p class="text-[11px] text-zinc-500 mt-0.5">إشعار فوري عند تسجيل حضور أو غياب لمحاضرة جديدة في أي مقرر</p>
                     </div>
-                    <label class="relative inline-flex items-center cursor-pointer">
-                        <input type="checkbox" id="toggleAnnouncement" onchange="saveNotificationSettings()" class="sr-only peer">
-                        <div class="w-9 h-5 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-600"></div>
-                    </label>
-                </div>
-
-                <div class="p-4 flex items-center justify-between">
-                    <div>
-                        <p class="text-xs font-bold text-zinc-200">📋 رادار الحضور والغياب (Attendance)</p>
-                        <p class="text-[11px] text-zinc-500 mt-0.5">تنبيه فوري عند تسجيل حضور أو غياب جديد في أي محاضرة</p>
-                    </div>
-                    <label class="relative inline-flex items-center cursor-pointer">
+                    <label class="relative inline-flex items-center cursor-pointer shrink-0">
                         <input type="checkbox" id="toggleAttendance" onchange="saveNotificationSettings()" class="sr-only peer">
-                        <div class="w-9 h-5 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-600"></div>
+                        <div class="w-9 h-5 bg-zinc-800 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-500"></div>
+                    </label>
+                </div>
+
+                <div class="p-3.5 flex items-center justify-between gap-3">
+                    <div>
+                        <p class="text-xs font-semibold text-zinc-100">رادار إعلانات المدرسين</p>
+                        <p class="text-[11px] text-zinc-500 mt-0.5">إرسال نص الإعلانات المنشورة في منتديات المقررات فور صدورها</p>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer shrink-0">
+                        <input type="checkbox" id="toggleAnnouncement" onchange="saveNotificationSettings()" class="sr-only peer">
+                        <div class="w-9 h-5 bg-zinc-800 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-500"></div>
                     </label>
                 </div>
             </div>
 
             <!-- Interval Selection -->
-            <div class="card-surface rounded-2xl p-4 space-y-2">
-                <p class="text-xs font-bold text-zinc-200">فترة الفحص الدوري للموقع</p>
-                <p class="text-[11px] text-zinc-500">الفترة الزمنية بين كل محاولة فحص لنظام الجامعة</p>
-                <div class="grid grid-cols-4 gap-2 pt-2">
-                    <button onclick="setCheckInterval(5)" id="btnInterval5" class="py-2 rounded-xl text-xs font-semibold hairline-border bg-zinc-900 text-zinc-300 transition-all">5 دقيقة</button>
-                    <button onclick="setCheckInterval(10)" id="btnInterval10" class="py-2 rounded-xl text-xs font-semibold hairline-border bg-zinc-900 text-zinc-300 transition-all">10 دقائق</button>
-                    <button onclick="setCheckInterval(30)" id="btnInterval30" class="py-2 rounded-xl text-xs font-semibold hairline-border bg-zinc-900 text-zinc-300 transition-all">30 دقيقة</button>
-                    <button onclick="setCheckInterval(60)" id="btnInterval60" class="py-2 rounded-xl text-xs font-semibold hairline-border bg-zinc-900 text-zinc-300 transition-all">1 ساعة</button>
+            <div class="panel rounded-xl p-3.5 space-y-2.5">
+                <div>
+                    <p class="text-xs font-semibold text-zinc-100">الفاصل الزمني للفحص التلقائي</p>
+                    <p class="text-[11px] text-zinc-500">المدة بين كل عملية فحص دورية لنظام الجامعة</p>
+                </div>
+                <div class="grid grid-cols-4 gap-2">
+                    <button onclick="setCheckInterval(5)" id="btnInterval5" class="py-2 rounded-lg text-xs font-semibold border border-[#232834] bg-[#151821] text-zinc-300 transition-all">5 دقائق</button>
+                    <button onclick="setCheckInterval(10)" id="btnInterval10" class="py-2 rounded-lg text-xs font-semibold border border-[#232834] bg-[#151821] text-zinc-300 transition-all">10 دقائق</button>
+                    <button onclick="setCheckInterval(30)" id="btnInterval30" class="py-2 rounded-lg text-xs font-semibold border border-[#232834] bg-[#151821] text-zinc-300 transition-all">30 دقيقة</button>
+                    <button onclick="setCheckInterval(60)" id="btnInterval60" class="py-2 rounded-lg text-xs font-semibold border border-[#232834] bg-[#151821] text-zinc-300 transition-all">60 دقيقة</button>
                 </div>
             </div>
 
             <!-- Session Logout -->
-            <div class="card-surface rounded-2xl p-4 flex items-center justify-between">
+            <div class="panel rounded-xl p-3.5 flex items-center justify-between gap-3">
                 <div>
-                    <p class="text-xs font-bold text-rose-400">إنهاء الجلسة وتسجيل الخروج</p>
-                    <p class="text-[11px] text-zinc-500 mt-0.5">تسجيل الخروج من جلسة LMS وإلغاء ربط الحساب الحالي</p>
+                    <p class="text-xs font-semibold text-rose-400">إنهاء الجلسة وتسجيل الخروج</p>
+                    <p class="text-[11px] text-zinc-500 mt-0.5">إغلاق جلسة LMS الحالية وحذف بيانات الربط من النظام</p>
                 </div>
-                <button onclick="triggerLogout()" id="btnLogout" class="px-3.5 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-400 border border-rose-500/30 text-xs font-bold shrink-0 transition-all">
-                    🚪 تسجيل الخروج
+                <button onclick="triggerLogout()" id="btnLogout" class="px-3.5 py-2 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/25 text-xs font-semibold shrink-0 transition-colors">
+                    تسجيل الخروج
                 </button>
-            </div>
-
-            <!-- Security Footnote -->
-            <div class="p-4 text-center text-[11px] text-zinc-500 space-y-1">
-                <p>جميع بيانات الاعتماد مشفرة وفق معيار AES-256 المتماثل</p>
-                <p class="font-mono text-zinc-600">LMS Monitor v2.1 • جامعة مؤتة</p>
             </div>
         </section>
 
     </main>
 
-    <!-- Client-side Logic Script -->
+    <!-- ==================== FIXED BOTTOM NAVIGATION DOCK ==================== -->
+    <nav class="fixed bottom-0 inset-x-0 z-50 bottom-dock px-2 py-1.5">
+        <div class="max-w-xl mx-auto grid grid-cols-6 gap-1">
+            <button onclick="switchTab('tab-courses')" id="tabBtn-courses" class="flex flex-col items-center justify-center py-1.5 px-1 rounded-lg bg-[#1A1E29] text-sky-400 transition-all">
+                <div class="relative">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
+                    </svg>
+                    <span id="coursesBadge" class="font-mono-num absolute -top-1.5 -left-2.5 px-1 min-w-[14px] h-[14px] rounded-full bg-zinc-800 text-zinc-300 text-[9px] flex items-center justify-center border border-zinc-700">0</span>
+                </div>
+                <span class="text-[10px] font-semibold mt-1">المقررات</span>
+            </button>
+
+            <button onclick="switchTab('tab-deadlines')" id="tabBtn-deadlines" class="flex flex-col items-center justify-center py-1.5 px-1 rounded-lg text-zinc-400 hover:text-zinc-200 transition-all">
+                <div class="relative">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
+                    </svg>
+                    <span id="deadlinesBadge" class="font-mono-num absolute -top-1.5 -left-2.5 px-1 min-w-[14px] h-[14px] rounded-full bg-zinc-800 text-zinc-300 text-[9px] flex items-center justify-center border border-zinc-700">0</span>
+                </div>
+                <span class="text-[10px] font-medium mt-1">الواجبات</span>
+            </button>
+
+            <button onclick="switchTab('tab-grades')" id="tabBtn-grades" class="flex flex-col items-center justify-center py-1.5 px-1 rounded-lg text-zinc-400 hover:text-zinc-200 transition-all">
+                <div class="relative">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
+                    </svg>
+                    <span id="gradesBadge" class="font-mono-num absolute -top-1.5 -left-2.5 px-1 min-w-[14px] h-[14px] rounded-full bg-zinc-800 text-zinc-300 text-[9px] flex items-center justify-center border border-zinc-700">0</span>
+                </div>
+                <span class="text-[10px] font-medium mt-1">العلامات</span>
+            </button>
+
+            <button onclick="switchTab('tab-attendance')" id="tabBtn-attendance" class="flex flex-col items-center justify-center py-1.5 px-1 rounded-lg text-zinc-400 hover:text-zinc-200 transition-all">
+                <div class="relative">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+                    </svg>
+                    <span id="attendanceBadge" class="font-mono-num absolute -top-1.5 -left-2.5 px-1 min-w-[14px] h-[14px] rounded-full bg-zinc-800 text-zinc-300 text-[9px] flex items-center justify-center border border-zinc-700">0</span>
+                </div>
+                <span class="text-[10px] font-medium mt-1">الحضور</span>
+            </button>
+
+            <button onclick="switchTab('tab-announcements')" id="tabBtn-announcements" class="flex flex-col items-center justify-center py-1.5 px-1 rounded-lg text-zinc-400 hover:text-zinc-200 transition-all">
+                <div class="relative">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z"></path>
+                    </svg>
+                    <span id="announcementsBadge" class="font-mono-num absolute -top-1.5 -left-2.5 px-1 min-w-[14px] h-[14px] rounded-full bg-zinc-800 text-zinc-300 text-[9px] flex items-center justify-center border border-zinc-700">0</span>
+                </div>
+                <span class="text-[10px] font-medium mt-1">الإعلانات</span>
+            </button>
+
+            <button onclick="switchTab('tab-settings')" id="tabBtn-settings" class="flex flex-col items-center justify-center py-1.5 px-1 rounded-lg text-zinc-400 hover:text-zinc-200 transition-all">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                </svg>
+                <span class="text-[10px] font-medium mt-1">الإعدادات</span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- ==================== CLIENT APPLICATION SCRIPT ==================== -->
     <script>
         const tg = window.Telegram?.WebApp;
         if (tg) {
             tg.ready();
             tg.expand();
             try {
-                tg.setHeaderColor('#090A0F');
-                tg.setBackgroundColor('#090A0F');
-            } catch(e) {}
+                tg.setHeaderColor('#0A0B0E');
+                tg.setBackgroundColor('#0A0B0E');
+            } catch (e) {}
         }
 
         let appData = null;
         let activeTab = 'tab-courses';
         let deadlinesFilter = 'all';
+        let gradesFilter = 'all';
+        let courseSubFilter = {}; // courseId -> 'all' | 'tasks' | 'files'
+        let openAccordions = new Set();
 
         function getTelegramId() {
             const urlParams = new URLSearchParams(window.location.search);
             const qTid = urlParams.get('tid');
             if (qTid && qTid.trim()) return qTid.trim();
-
-            if (tg?.initDataUnsafe?.user?.id) {
-                return tg.initDataUnsafe.user.id;
-            }
+            if (tg?.initDataUnsafe?.user?.id) return tg.initDataUnsafe.user.id;
             return null;
         }
 
@@ -395,18 +503,24 @@
                     else if (type === 'medium') tg.HapticFeedback.impactOccurred('medium');
                     else if (type === 'success') tg.HapticFeedback.notificationOccurred('success');
                 }
-            } catch(e) {}
+            } catch (e) {}
         }
 
         function showToast(msg, isError = false) {
             const el = document.getElementById('statusToast');
             if (!el) return;
             el.className = isError
-                ? 'rounded-xl px-3.5 py-2.5 text-xs font-medium border border-rose-500/30 bg-rose-500/10 text-rose-300'
-                : 'rounded-xl px-3.5 py-2.5 text-xs font-medium border border-emerald-500/30 bg-emerald-500/10 text-emerald-300';
+                ? 'rounded-lg px-3.5 py-2.5 text-xs font-medium border border-rose-500/30 bg-rose-500/10 text-rose-300'
+                : 'rounded-lg px-3.5 py-2.5 text-xs font-medium border border-emerald-500/30 bg-emerald-500/10 text-emerald-300';
             el.innerText = msg;
             el.classList.remove('hidden');
-            setTimeout(() => { el.classList.add('hidden'); }, 4500);
+            setTimeout(() => { el.classList.add('hidden'); }, 4000);
+        }
+
+        function formatShortDate(raw) {
+            if (!raw) return '';
+            const s = String(raw).trim();
+            return s.length > 22 ? s.slice(0, 19) : s;
         }
 
         async function fetchUserData() {
@@ -419,18 +533,18 @@
                 const url = `/api/user-data?tid=${tid || ''}&initData=${encodeURIComponent(initData)}`;
                 const res = await fetch(url);
                 const data = await res.json();
-                
+
                 if (data.success) {
                     appData = data;
                     renderApp();
                 } else {
                     document.getElementById('userFullName').innerText = 'تسجيل الدخول مطلوب';
-                    document.getElementById('userStdId').innerText = 'حساب جامعة مؤتة (LMS)';
+                    document.getElementById('userStdId').innerText = 'LMS';
                     renderLoginView(data.error);
                 }
             } catch (err) {
                 console.error('Fetch error:', err);
-                document.getElementById('userFullName').innerText = 'تعذر الاتصال بالخادم';
+                document.getElementById('userFullName').innerText = 'خطأ في الاتصال بالخادم';
             } finally {
                 if (refreshIcon) refreshIcon.classList.remove('animate-spin');
             }
@@ -440,24 +554,24 @@
             const container = document.getElementById('coursesListContainer');
             if (!container) return;
             container.innerHTML = `
-                <div class="card-surface rounded-2xl p-5 space-y-4">
+                <div class="panel rounded-xl p-5 space-y-4">
                     <div>
-                        <h3 class="text-sm font-bold text-zinc-100">ربط الحساب الأكاديمي (LMS)</h3>
-                        <p class="text-[11px] text-zinc-400 mt-1">${escapeHtml(errMsg || 'أدخل الرقم الجامعي وكلمة المرور لمزامنة المقررات وتفعيل الرصد التلقائي.')}</p>
+                        <h3 class="text-sm font-bold text-zinc-100">ربط الحساب الأكاديمي — جامعة مؤتة</h3>
+                        <p class="text-[11px] text-zinc-400 mt-1">${escapeHtml(errMsg || 'أدخل الرقم الجامعي وكلمة المرور لتفعيل الرصد المباشر.')}</p>
                     </div>
-                    <div class="space-y-2.5">
+                    <div class="space-y-3">
                         <div>
                             <label class="block text-[11px] text-zinc-400 mb-1">الرقم الجامعي (Student ID)</label>
-                            <input type="text" id="loginUsername" placeholder="مثال: 120242222083" class="w-full bg-zinc-950 hairline-border rounded-xl px-3.5 py-2.5 text-xs text-zinc-100 focus:outline-none focus:border-sky-500">
+                            <input type="text" id="loginUsername" placeholder="120242222083" class="w-full bg-[#0C0E12] border border-[#1F2430] rounded-lg px-3.5 py-2.5 text-xs text-zinc-100 focus:outline-none focus:border-sky-500">
                         </div>
                         <div>
                             <label class="block text-[11px] text-zinc-400 mb-1">كلمة المرور (Password)</label>
-                            <input type="password" id="loginPassword" placeholder="••••••••" class="w-full bg-zinc-950 hairline-border rounded-xl px-3.5 py-2.5 text-xs text-zinc-100 focus:outline-none focus:border-sky-500">
+                            <input type="password" id="loginPassword" placeholder="••••••••" class="w-full bg-[#0C0E12] border border-[#1F2430] rounded-lg px-3.5 py-2.5 text-xs text-zinc-100 focus:outline-none focus:border-sky-500">
                         </div>
                     </div>
-                    <div id="loginErrorBox" class="hidden text-[11px] text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-xl px-3 py-2"></div>
-                    <button onclick="submitMiniAppLogin()" id="btnSubmitLogin" class="w-full py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-zinc-950 font-bold text-xs transition-all">
-                        تسجيل الدخول إلى الحساب
+                    <div id="loginErrorBox" class="hidden text-[11px] text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2"></div>
+                    <button onclick="submitMiniAppLogin()" id="btnSubmitLogin" class="w-full py-2.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-zinc-950 font-bold text-xs transition-all">
+                        تسجيل الدخول
                     </button>
                 </div>
             `;
@@ -479,7 +593,7 @@
             if (errBox) errBox.classList.add('hidden');
             if (btn) {
                 btn.disabled = true;
-                btn.innerText = 'جاري التحقق وتسجيل الدخول...';
+                btn.innerText = 'جاري التحقق من الحساب...';
             }
             try {
                 const res = await fetch('/api/login', {
@@ -496,12 +610,10 @@
                 if (d.success) {
                     haptic('success');
                     await fetchUserData();
-                    showToast(`تم تسجيل الدخول بنجاح ومزامنة ${d.courses_synced || 0} مقرر`);
-                } else {
-                    if (errBox) {
-                        errBox.innerText = d.error || 'تعذر تسجيل الدخول؛ تحقق من البيانات';
-                        errBox.classList.remove('hidden');
-                    }
+                    showToast('تم تسجيل الدخول بنجاح — أضف المواد التي تريد مراقبتها');
+                } else if (errBox) {
+                    errBox.innerText = d.error || 'تعذر تسجيل الدخول؛ تحقق من البيانات';
+                    errBox.classList.remove('hidden');
                 }
             } catch (e) {
                 if (errBox) {
@@ -511,7 +623,7 @@
             } finally {
                 if (btn) {
                     btn.disabled = false;
-                    btn.innerText = 'تسجيل الدخول واستيراد المقررات';
+                    btn.innerText = 'تسجيل الدخول';
                 }
             }
         }
@@ -519,56 +631,88 @@
         function renderApp() {
             if (!appData) return;
             const u = appData.user;
-            
-            // Header
+            const courses = appData.courses || [];
+            const deadlines = appData.deadlines || [];
+            const allGrades = appData.grades || [];
+            const gradedOnly = allGrades.filter(g => g.grade_val && !['-', '—', ''].includes(String(g.grade_val).trim()));
+            const attendanceList = appData.attendance || [];
+            const announcementsList = appData.announcements || [];
+
+            // Header Info
             document.getElementById('userFullName').innerText = u.full_name || 'طالب';
             document.getElementById('userStdId').innerText = u.lms_username || '';
+            document.getElementById('lastCheckHeader').innerText = `آخر فحص: ${formatShortDate(u.last_check) || 'لم يتم بعد'}`;
 
-            // Initials avatar
-            const initials = (u.full_name || 'طالب').trim().split(/\s+/);
-            const avatarTxt = initials.length >= 2 ? (initials[0][0] + initials[1][0]) : initials[0][0];
-            document.getElementById('userAvatar').innerText = avatarTxt;
+            const parts = (u.full_name || 'طالب').trim().split(/\s+/);
+            document.getElementById('userAvatar').innerText = parts.length >= 2 ? (parts[0][0] + parts[1][0]) : parts[0][0];
 
-            // Monitoring Badge & Button
+            // Monitoring status
             const badge = document.getElementById('monitoringBadge');
             const btnText = document.getElementById('btnToggleMonitorText');
+            const btnDot = document.getElementById('btnToggleDot');
             if (u.is_monitoring) {
-                badge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
+                badge.className = 'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 transition-all';
                 badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span><span>نشط</span>';
                 btnText.innerText = 'المراقبة: نشطة';
+                if (btnDot) btnDot.className = 'w-2 h-2 rounded-full bg-emerald-400';
             } else {
-                badge.className = 'flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-zinc-800 text-zinc-400 border border-zinc-700';
+                badge.className = 'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-zinc-800/80 text-zinc-400 border border-zinc-700 transition-all';
                 badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-zinc-500"></span><span>متوقفة</span>';
                 btnText.innerText = 'تشغيل المراقبة';
+                if (btnDot) btnDot.className = 'w-2 h-2 rounded-full bg-zinc-500';
             }
 
-            // Metrics
-            document.getElementById('metricCoursesCount').innerText = appData.courses.length;
-            document.getElementById('coursesBadge').innerText = appData.courses.length;
-            
-            let totalItems = 0;
-            appData.courses.forEach(c => {
-                totalItems += (c.items ? c.items.length : 0);
+            // Telemetry KPIs
+            const activeCoursesCount = courses.filter(c => c.is_monitored).length;
+            document.getElementById('metricCoursesCount').innerText = courses.length;
+            document.getElementById('metricMonitoredSub').innerText = `${activeCoursesCount} مراقب`;
+
+            const totalTasks = deadlines.length;
+            const doneTasks = deadlines.filter(d => d.is_submitted).length;
+            const pendingTasks = totalTasks - doneTasks;
+            const pct = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 100;
+
+            document.getElementById('metricTasksPct').innerText = `${pct}%`;
+            document.getElementById('metricTasksRatio').innerText = `${doneTasks}/${totalTasks}`;
+            document.getElementById('metricPendingCount').innerText = pendingTasks > 0 ? `${pendingTasks} قيد الحل` : 'مكتمل بالكامل';
+            document.getElementById('progressSummaryLabel').innerText = `${doneTasks} منجز • ${pendingTasks} قيد الحل (من أصل ${totalTasks})`;
+            document.getElementById('overallProgressBar').style.width = `${pct}%`;
+
+            // Attendance KPI
+            let totalTaken = 0, totalPres = 0, totalAbs = 0;
+            attendanceList.forEach(a => {
+                totalTaken += (a.taken_sessions || 0);
+                totalPres += (a.present_count || 0);
+                totalAbs += (a.absent_count || 0);
             });
+            const attRateStr = totalTaken > 0 ? `${((totalPres / totalTaken) * 100).toFixed(1)}%` : '--';
+            document.getElementById('metricAttRate').innerText = attRateStr;
+            document.getElementById('metricAttSessions').innerText = `${totalTaken} محاضرة`;
+            document.getElementById('metricAttDetail').innerText = totalTaken > 0 ? `حاضر ${totalPres} • غائب ${totalAbs}` : 'لا توجد جلسات بعد';
+
+            // Content Breakdown KPI
+            let sumAssign = 0, sumQuiz = 0, sumRes = 0;
+            courses.forEach(c => {
+                sumAssign += (c.stats?.assignments || 0);
+                sumQuiz += (c.stats?.quizzes || 0);
+                sumRes += (c.stats?.resources || 0);
+            });
+            const totalItems = sumAssign + sumQuiz + sumRes;
             document.getElementById('metricItemsCount').innerText = totalItems;
+            document.getElementById('metricItemsBreakdown').innerText = `${sumAssign} واجب • ${sumQuiz} كويز • ${sumRes} ملف`;
             document.getElementById('metricInterval').innerText = `${u.check_interval}د`;
-            document.getElementById('deadlinesBadge').innerText = appData.deadlines.length;
-            const gradesList = (appData.grades || []).filter(g => g.grade_val && !['-', '—', ''].includes(String(g.grade_val).trim()));
-            const announcementsList = appData.announcements || [];
-            const attendanceList = appData.attendance || [];
-            document.getElementById('gradesBadge').innerText = gradesList.length;
+
+            // Navigation Badges
+            document.getElementById('coursesBadge').innerText = courses.length;
+            document.getElementById('deadlinesBadge').innerText = pendingTasks > 0 ? pendingTasks : totalTasks;
+            document.getElementById('gradesBadge').innerText = gradedOnly.length > 0 ? gradedOnly.length : allGrades.length;
+            document.getElementById('attendanceBadge').innerText = attendanceList.length;
             document.getElementById('announcementsBadge').innerText = announcementsList.length;
-            const attBadge = document.getElementById('attendanceBadge');
-            if (attBadge) attBadge.innerText = attendanceList.length;
 
-            // Render Courses
-            renderCoursesList(appData.courses);
-
-            // Render Deadlines
-            renderDeadlinesList(appData.deadlines);
-
-            // Render Grades, Attendance & Announcements
-            renderGradesList(gradesList);
+            // Render Sections
+            renderCoursesList(courses);
+            renderDeadlinesList(deadlines);
+            renderGradesList(allGrades);
             renderAttendanceList(attendanceList);
             renderAnnouncementsList(announcementsList);
 
@@ -587,105 +731,169 @@
             const container = document.getElementById('coursesListContainer');
             if (!courses.length) {
                 container.innerHTML = `
-                    <div class="p-8 text-center card-surface rounded-2xl space-y-2">
+                    <div class="p-8 text-center panel rounded-xl space-y-1.5">
                         <p class="text-xs font-semibold text-zinc-300">لا توجد مقررات مضافة للمراقبة حالياً</p>
-                        <p class="text-[11px] text-zinc-500">أدخل رقم المادة (Course ID) أو الصق رابط المادة في الحقل أعلاه لإضافتها للمراقبة</p>
+                        <p class="text-[11px] text-zinc-500">أدخل رقم المادة (Course ID) أو رابطها في الحقل أعلاه للبدء برصدها</p>
                     </div>`;
                 return;
             }
 
-            container.innerHTML = courses.map((c, idx) => {
+            const attByCourse = {};
+            if (appData && appData.attendance) {
+                appData.attendance.forEach(a => { attByCourse[a.course_id] = a; });
+            }
+
+            container.innerHTML = courses.map(c => {
                 const assigns = c.stats.assignments || 0;
                 const quizzes = c.stats.quizzes || 0;
                 const resources = c.stats.resources || 0;
                 const items = c.items || [];
+                const tasksTotal = assigns + quizzes;
+                const tasksDone = items.filter(i => (i.content_type === 'assign' || i.content_type === 'quiz') && i.is_submitted).length;
+                const tasksPct = tasksTotal > 0 ? Math.round((tasksDone / tasksTotal) * 100) : 100;
+                const attRec = attByCourse[c.id];
+                const accId = `acc-${c.id}`;
+                const isOpen = openAccordions.has(accId);
+                const subFilter = courseSubFilter[c.id] || 'all';
 
                 return `
-                <div class="card-surface rounded-2xl overflow-hidden transition-all">
-                    <!-- Course Header Row -->
-                    <div class="p-4 space-y-2.5">
-                        <div class="flex items-start justify-between gap-3">
-                            <div>
-                                <span class="font-mono text-[10px] text-zinc-400 bg-zinc-900 px-2 py-0.5 rounded hairline-border">كود: ${c.id}</span>
-                                <h3 class="text-xs font-bold text-zinc-100 mt-1 leading-snug">${escapeHtml(c.name)}</h3>
+                <div class="panel rounded-xl overflow-hidden">
+                    <div class="p-3.5 space-y-3">
+                        <div class="flex items-start justify-between gap-2.5">
+                            <div class="min-w-0">
+                                <div class="flex items-center gap-1.5">
+                                    <span class="font-mono-num text-[10px] text-zinc-400 bg-[#161922] px-2 py-0.5 rounded border border-[#232834]">ID: ${c.id}</span>
+                                    <span class="text-[10px] font-semibold px-2 py-0.5 rounded border ${c.is_monitored ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-zinc-800 text-zinc-400 border-zinc-700'}">
+                                        ${c.is_monitored ? 'قيد المراقبة' : 'متوقف مؤقتاً'}
+                                    </span>
+                                    ${attRec && attRec.taken_sessions > 0 ? `
+                                        <span class="font-mono-num text-[10px] font-semibold px-2 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20">
+                                            الحضور: ${escapeHtml(attRec.percentage_str || '0%')}
+                                        </span>
+                                    ` : ''}
+                                </div>
+                                <h3 class="text-xs font-bold text-zinc-100 mt-1.5 leading-snug">${escapeHtml(c.name)}</h3>
                             </div>
+
                             <div class="flex items-center gap-1.5 shrink-0">
-                                <button onclick="toggleCourseMonitoring(${c.id})" class="text-[11px] font-semibold px-2.5 py-1 rounded-lg hairline-border ${c.is_monitored ? 'bg-zinc-900 text-zinc-400 hover:text-amber-400' : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'} transition-all">
+                                <button onclick="toggleCourseMonitoring(${c.id})" class="text-[10.5px] font-semibold px-2.5 py-1 rounded-lg border border-[#252A37] bg-[#161922] text-zinc-300 hover:text-white transition-colors">
                                     ${c.is_monitored ? 'إيقاف' : 'تفعيل'}
                                 </button>
-                                <button onclick="deleteCourse(${c.id})" class="text-[11px] font-semibold px-2 py-1 rounded-lg hairline-border bg-zinc-900 text-zinc-400 hover:text-rose-400 transition-all" title="حذف المقرر">
-                                    🗑
+                                <button onclick="deleteCourse(${c.id})" class="p-1.5 rounded-lg border border-[#252A37] bg-[#161922] text-zinc-400 hover:text-rose-400 transition-colors" title="حذف المادة">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                    </svg>
                                 </button>
                             </div>
                         </div>
 
-                        <!-- Statistics Badges -->
-                        <div class="flex items-center gap-2 text-[11px] text-zinc-400 font-medium">
-                            <span class="bg-zinc-900/80 px-2 py-1 rounded-lg hairline-border">📚 ${assigns} واجبات</span>
-                            <span class="bg-zinc-900/80 px-2 py-1 rounded-lg hairline-border">📝 ${quizzes} كويزات</span>
-                            <span class="bg-zinc-900/80 px-2 py-1 rounded-lg hairline-border">📎 ${resources} ملفات</span>
+                        <!-- Telemetry Pills & Course Task Progress -->
+                        <div class="grid grid-cols-4 gap-1.5 text-center text-[10.5px]">
+                            <div class="panel-inset rounded-lg py-1.5 px-1">
+                                <span class="text-zinc-500 block text-[9.5px]">الواجبات</span>
+                                <span class="font-mono-num font-bold text-zinc-200">${assigns}</span>
+                            </div>
+                            <div class="panel-inset rounded-lg py-1.5 px-1">
+                                <span class="text-zinc-500 block text-[9.5px]">الكويزات</span>
+                                <span class="font-mono-num font-bold text-zinc-200">${quizzes}</span>
+                            </div>
+                            <div class="panel-inset rounded-lg py-1.5 px-1">
+                                <span class="text-zinc-500 block text-[9.5px]">الملفات</span>
+                                <span class="font-mono-num font-bold text-zinc-200">${resources}</span>
+                            </div>
+                            <div class="panel-inset rounded-lg py-1.5 px-1">
+                                <span class="text-zinc-500 block text-[9.5px]">إنجاز المهام</span>
+                                <span class="font-mono-num font-bold ${tasksDone === tasksTotal && tasksTotal > 0 ? 'text-emerald-400' : 'text-sky-400'}">${tasksDone}/${tasksTotal}</span>
+                            </div>
                         </div>
+
+                        ${tasksTotal > 0 ? `
+                        <div class="w-full h-1 bg-[#181C24] rounded-full overflow-hidden">
+                            <div class="h-full ${tasksPct === 100 ? 'bg-emerald-500' : 'bg-sky-500'} rounded-full" style="width: ${tasksPct}%"></div>
+                        </div>` : ''}
                     </div>
 
-                    <!-- Expandable Course Material Accordion -->
-                    <div class="hairline-top bg-zinc-950/40 px-4 py-2 flex items-center justify-between text-[11px]">
-                        <button onclick="toggleAccordion('acc-${c.id}')" class="text-zinc-400 hover:text-zinc-200 flex items-center gap-1.5 font-medium transition-all">
-                            <span>استعراض المحتويات (${items.length})</span>
-                            <svg id="acc-icon-${c.id}" class="w-3 h-3 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <!-- Accordion Trigger Bar -->
+                    <div class="border-t border-[#1A1E28] bg-[#0D0F14] px-3.5 py-2 flex items-center justify-between text-[11px]">
+                        <button onclick="toggleAccordion('${accId}')" class="text-zinc-300 hover:text-white flex items-center gap-1.5 font-semibold transition-colors">
+                            <span>تصفح محتويات المادة بالتفصيل (${items.length})</span>
+                            <svg id="${accId}-icon" class="w-3.5 h-3.5 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
                             </svg>
                         </button>
                         <a href="${c.url}" target="_blank" onclick="haptic('light')" class="text-sky-400 hover:underline flex items-center gap-1 font-medium">
-                            <span>فتح في LMS</span>
+                            <span>صفحة المادة في LMS</span>
                             <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
                             </svg>
                         </a>
                     </div>
 
-                    <!-- Accordion Dropdown Content -->
-                    <div id="acc-${c.id}" class="hidden hairline-top divide-y divide-white/[0.04] bg-[#0c0e14] px-4 py-1 text-xs">
-                        ${renderCourseItems(items)}
+                    <!-- Accordion Content Drawer -->
+                    <div id="${accId}" class="${isOpen ? '' : 'hidden'} border-t border-[#1A1E28] bg-[#0B0D12] px-3.5 py-2.5 text-xs space-y-2">
+                        <div class="flex items-center gap-1 bg-[#11141C] p-1 rounded-lg border border-[#1C202C] text-[10px]">
+                            <button onclick="setCourseSubFilter(${c.id}, 'all')" class="flex-1 py-1 rounded ${subFilter === 'all' ? 'bg-[#1F2433] text-zinc-100 font-semibold' : 'text-zinc-400'}">الكل (${items.length})</button>
+                            <button onclick="setCourseSubFilter(${c.id}, 'tasks')" class="flex-1 py-1 rounded ${subFilter === 'tasks' ? 'bg-[#1F2433] text-zinc-100 font-semibold' : 'text-zinc-400'}">المهام (${tasksTotal})</button>
+                            <button onclick="setCourseSubFilter(${c.id}, 'files')" class="flex-1 py-1 rounded ${subFilter === 'files' ? 'bg-[#1F2433] text-zinc-100 font-semibold' : 'text-zinc-400'}">الملفات (${resources})</button>
+                        </div>
+                        <div class="row-divider">
+                            ${renderCourseItems(items, subFilter)}
+                        </div>
                     </div>
-                </div>
-                `;
+                </div>`;
             }).join('');
         }
 
-        function renderCourseItems(items) {
-            if (!items.length) {
-                return '<div class="py-3 text-center text-zinc-500 text-[11px]">لا توجد ملفات أو تكاليف مسجلة داخل هذا المقرر</div>';
+        function setCourseSubFilter(courseId, filterVal) {
+            haptic('light');
+            courseSubFilter[courseId] = filterVal;
+            openAccordions.add(`acc-${courseId}`);
+            if (appData) renderCoursesList(appData.courses);
+        }
+
+        function renderCourseItems(items, subFilter = 'all') {
+            let list = items || [];
+            if (subFilter === 'tasks') list = list.filter(i => i.content_type === 'assign' || i.content_type === 'quiz');
+            if (subFilter === 'files') list = list.filter(i => i.content_type === 'resource');
+
+            if (!list.length) {
+                return '<div class="py-4 text-center text-zinc-500 text-[11px]">لا توجد عناصر مسجلة ضمن هذا التصنيف</div>';
             }
-            return items.map(item => {
-                let icon = '📎';
-                const isTask = item.content_type === 'assign' || item.content_type === 'quiz';
-                if (item.content_type === 'assign') { icon = '📚'; }
-                if (item.content_type === 'quiz') { icon = '📝'; }
+            return list.map(item => {
+                const isAssign = item.content_type === 'assign';
+                const isQuiz = item.content_type === 'quiz';
+                const isTask = isAssign || isQuiz;
                 const isDone = Boolean(item.is_submitted);
 
+                let typeBadge = '<span class="text-[9.5px] font-semibold px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700">ملف / مورد</span>';
+                if (isAssign) typeBadge = '<span class="text-[9.5px] font-semibold px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20">واجب</span>';
+                if (isQuiz) typeBadge = '<span class="text-[9.5px] font-semibold px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 border border-violet-500/20">كويز</span>';
+
                 return `
-                <div class="py-2.5 flex items-center justify-between gap-3">
-                    <div class="flex items-center gap-2 overflow-hidden">
-                        <span class="text-sm shrink-0">${icon}</span>
-                        <div class="truncate">
-                            <p class="font-medium text-zinc-200 truncate text-[11px]">${escapeHtml(item.content_name || 'عنصر مقرر')}</p>
-                            ${item.due_date ? `<p class="text-[10px] text-zinc-500 font-mono mt-0.5">الموعد: ${escapeHtml(item.due_date)}</p>` : ''}
+                <div class="py-2.5 flex items-start justify-between gap-2.5">
+                    <div class="min-w-0 space-y-1">
+                        <div class="flex items-center flex-wrap gap-1.5">
+                            ${typeBadge}
+                            <span class="font-semibold text-zinc-200 text-[11.5px] leading-snug break-words">${escapeHtml(item.content_name || 'عنصر مقرر')}</span>
+                        </div>
+                        <div class="flex items-center flex-wrap gap-2 text-[10px] text-zinc-500 font-mono-num">
+                            ${item.due_date ? `<span>الموعد: ${escapeHtml(item.due_date)}</span>` : ''}
+                            ${item.first_seen ? `<span>رُصد: ${escapeHtml(formatShortDate(item.first_seen))}</span>` : ''}
                         </div>
                     </div>
-                    <div class="flex items-center gap-2 shrink-0">
+                    <div class="flex items-center gap-1.5 shrink-0">
                         ${isTask ? `
-                            <span class="text-[10px] font-semibold px-2 py-0.5 rounded ${isDone ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}">
-                                ${isDone ? '✓ منجز' : '⏳ غير منجز'}
+                            <span class="text-[10px] font-semibold px-2 py-0.5 rounded border ${isDone ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25' : 'bg-amber-500/10 text-amber-400 border-amber-500/25'}">
+                                ${isDone ? 'منجز' : 'قيد الحل'}
                             </span>
                         ` : ''}
-                        <a href="${item.content_url || '#'}" target="_blank" class="text-zinc-400 hover:text-white p-1" title="تحميل أو فتح">
+                        <a href="${item.content_url || '#'}" target="_blank" class="p-1.5 rounded-lg bg-[#151822] hover:bg-[#1E2230] text-sky-400 border border-[#232836]" title="فتح في LMS">
                             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
                             </svg>
                         </a>
                     </div>
-                </div>
-                `;
+                </div>`;
             }).join('');
         }
 
@@ -696,17 +904,38 @@
             const icon = document.getElementById(id + '-icon') || document.getElementById(id.replace('acc-', 'acc-icon-'));
             if (el.classList.contains('hidden')) {
                 el.classList.remove('hidden');
+                openAccordions.add(id);
                 if (icon) icon.classList.add('rotate-180');
             } else {
                 el.classList.add('hidden');
+                openAccordions.delete(id);
                 if (icon) icon.classList.remove('rotate-180');
             }
+        }
+
+        function toggleAllGroupAccordions(prefix) {
+            haptic('light');
+            const nodes = Array.from(document.querySelectorAll(`[id^="${prefix}"]`)).filter(el => !el.id.endsWith('-icon'));
+            if (!nodes.length) return;
+            const anyHidden = nodes.some(el => el.classList.contains('hidden'));
+            nodes.forEach(el => {
+                const icon = document.getElementById(el.id + '-icon');
+                if (anyHidden) {
+                    el.classList.remove('hidden');
+                    openAccordions.add(el.id);
+                    if (icon) icon.classList.add('rotate-180');
+                } else {
+                    el.classList.add('hidden');
+                    openAccordions.delete(el.id);
+                    if (icon) icon.classList.remove('rotate-180');
+                }
+            });
         }
 
         function filterCourses() {
             const query = document.getElementById('courseSearchInput').value.trim().toLowerCase();
             if (!appData) return;
-            const filtered = appData.courses.filter(c => 
+            const filtered = appData.courses.filter(c =>
                 c.name.toLowerCase().includes(query) || String(c.id).includes(query)
             );
             renderCoursesList(filtered);
@@ -717,17 +946,28 @@
             let filtered = deadlines || [];
             if (deadlinesFilter === 'pending') filtered = filtered.filter(d => !d.is_submitted);
             if (deadlinesFilter === 'submitted') filtered = filtered.filter(d => d.is_submitted);
+            if (deadlinesFilter === 'assign') filtered = filtered.filter(d => d.content_type === 'assign' && !String(d.content_id || '').startsWith('quiz_'));
+            if (deadlinesFilter === 'quiz') filtered = filtered.filter(d => d.content_type === 'quiz' || String(d.content_id || '').startsWith('quiz_'));
 
             if (!filtered.length) {
                 container.innerHTML = `
-                    <div class="p-8 text-center card-surface rounded-2xl space-y-1">
-                        <p class="text-xs font-semibold text-zinc-300">لا توجد واجبات أو كويزات ضمن هذا التصنيف</p>
-                        <p class="text-[11px] text-zinc-500">أنت على اطلاع دائم بجميع المهام الأكاديمية</p>
+                    <div class="p-8 text-center panel rounded-xl space-y-1">
+                        <p class="text-xs font-semibold text-zinc-300">لا توجد واجبات أو اختبارات ضمن هذا الفلتر</p>
+                        <p class="text-[11px] text-zinc-500">يمكنك التبديل بين الفلاتر أعلاه لاستعراض بقية المهام</p>
                     </div>`;
                 return;
             }
 
-            // Group tasks by course so each course has its own collapsible dropdown
+            // Build lookup for grades by module ID so we can show if a task also has a recorded grade!
+            const gradeByItem = {};
+            if (appData && appData.grades) {
+                appData.grades.forEach(g => {
+                    if (g.item_id && g.grade_val) {
+                        gradeByItem[g.item_id.replace('mod_', '')] = g;
+                    }
+                });
+            }
+
             const courseGroups = new Map();
             if (appData && appData.courses) {
                 appData.courses.forEach(c => {
@@ -737,7 +977,7 @@
             filtered.forEach(d => {
                 const cname = d.course_name || 'مقرر دراسي';
                 if (!courseGroups.has(cname)) {
-                    courseGroups.set(cname, { id: d.course_id || cname, name: cname, tasks: [] });
+                    courseGroups.set(cname, { id: d.course_id || '', name: cname, tasks: [] });
                 }
                 courseGroups.get(cname).tasks.push(d);
             });
@@ -747,56 +987,91 @@
             container.innerHTML = nonEmptyGroups.map((group, idx) => {
                 const doneCount = group.tasks.filter(t => t.is_submitted).length;
                 const pendingCount = group.tasks.length - doneCount;
+                const pct = Math.round((doneCount / group.tasks.length) * 100);
                 const dropId = `dl-course-${idx}`;
+                const isOpen = openAccordions.has(dropId);
 
                 const tasksHtml = group.tasks.map(d => {
                     const isQuiz = d.content_type === 'quiz' || String(d.content_id || '').startsWith('quiz_');
-                    const typeIcon = isQuiz ? '📝' : '📚';
-                    const typeLabel = isQuiz ? 'كويز' : 'واجب';
+                    const cmid = String(d.content_id || '').replace(/^(assign_|quiz_)/, '');
+                    const matchedGrade = gradeByItem[cmid];
+
+                    const typeBadge = isQuiz
+                        ? '<span class="text-[9.5px] font-semibold px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 border border-violet-500/20">اختبار قصير (Quiz)</span>'
+                        : '<span class="text-[9.5px] font-semibold px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20">واجب تسليم (Assignment)</span>';
+
                     return `
-                    <div class="py-3 flex flex-col gap-2">
+                    <div class="py-3 space-y-2">
                         <div class="flex items-start justify-between gap-2.5">
-                            <div class="flex items-start gap-2 min-w-0">
-                                <span class="text-sm shrink-0 mt-0.5">${typeIcon}</span>
-                                <div class="min-w-0">
-                                    <span class="text-[10px] font-medium text-sky-400/90">${typeLabel}</span>
-                                    <h4 class="text-xs font-bold text-zinc-100 leading-snug break-words">${escapeHtml(d.content_name)}</h4>
+                            <div class="space-y-1 min-w-0">
+                                <div class="flex items-center flex-wrap gap-1.5">
+                                    ${typeBadge}
+                                    ${d.time_remaining && !d.is_submitted ? `<span class="font-mono-num text-[9.5px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">المتبقي: ${escapeHtml(d.time_remaining)}</span>` : ''}
+                                    ${matchedGrade ? `<span class="font-mono-num text-[9.5px] font-semibold px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">الدرجة: ${escapeHtml(matchedGrade.grade_val)}${matchedGrade.grade_max ? ' / ' + escapeHtml(matchedGrade.grade_max) : ''}</span>` : ''}
                                 </div>
+                                <h4 class="text-xs font-bold text-zinc-100 leading-snug break-words">${escapeHtml(d.content_name)}</h4>
                             </div>
-                            <span class="text-[10px] font-semibold px-2 py-0.5 rounded ${d.is_submitted ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'} shrink-0">
-                                ${d.is_submitted ? '✓ منجز في LMS' : '⏳ قيد الحل'}
+
+                            <span class="text-[10px] font-semibold px-2 py-0.5 rounded border shrink-0 ${d.is_submitted ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25' : 'bg-rose-500/10 text-rose-400 border-rose-500/25'}">
+                                ${d.is_submitted ? 'منجز في LMS' : 'قيد الحل'}
                             </span>
                         </div>
-                        <div class="flex items-center justify-between text-[11px] text-zinc-400 pl-1">
-                            <span class="font-mono text-[10px] text-zinc-400">${escapeHtml(d.due_str || 'يرصد الإنجاز تلقائياً من LMS')}</span>
-                            <a href="${d.content_url}" target="_blank" onclick="haptic('light')" class="text-sky-400 hover:underline font-medium shrink-0">
-                                فتح في LMS ↗
-                            </a>
+
+                        <div class="flex items-center justify-between gap-2 text-[10.5px] text-zinc-400 pt-0.5">
+                            <div class="flex items-center flex-wrap gap-2 font-mono-num text-[10px] text-zinc-500">
+                                <span>${d.due_str ? `الموعد: ${escapeHtml(d.due_str)}` : 'بدون تاريخ إغلاق محدد'}</span>
+                                ${d.first_seen ? `<span>• رُصد: ${escapeHtml(formatShortDate(d.first_seen))}</span>` : ''}
+                            </div>
+                            <div class="flex items-center gap-2 shrink-0">
+                                ${!d.is_submitted ? `
+                                    <button onclick="markAsSubmitted('${escapeHtml(d.content_id)}')" class="text-[10px] text-zinc-400 hover:text-emerald-400 px-2 py-0.5 rounded border border-[#232834] bg-[#141720] transition-colors">
+                                        تحديد كمنجز
+                                    </button>
+                                ` : ''}
+                                <a href="${d.content_url}" target="_blank" onclick="haptic('light')" class="text-sky-400 hover:underline font-semibold flex items-center gap-1">
+                                    <span>فتح في LMS</span>
+                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                                    </svg>
+                                </a>
+                            </div>
                         </div>
                     </div>`;
                 }).join('');
 
                 return `
-                <div class="card-surface rounded-2xl overflow-hidden transition-all">
-                    <button onclick="toggleAccordion('${dropId}')" class="w-full p-4 text-right flex items-center justify-between gap-3 hover:bg-white/[0.02] transition-all">
-                        <div class="space-y-1.5 min-w-0">
-                            <div class="flex items-center gap-2">
-                                <span class="text-xs font-bold text-zinc-100 truncate">${escapeHtml(group.name)}</span>
+                <div class="panel rounded-xl overflow-hidden">
+                    <button onclick="toggleAccordion('${dropId}')" class="w-full p-3.5 text-right space-y-2.5 hover:bg-white/[0.015] transition-colors">
+                        <div class="flex items-start justify-between gap-3">
+                            <div class="space-y-1 min-w-0">
+                                <div class="flex items-center gap-1.5">
+                                    ${group.id ? `<span class="font-mono-num text-[9.5px] text-zinc-400 bg-[#161922] px-1.5 py-0.5 rounded border border-[#232834]">#${group.id}</span>` : ''}
+                                    <h3 class="text-xs font-bold text-zinc-100 truncate">${escapeHtml(group.name)}</h3>
+                                </div>
+                                <div class="flex items-center flex-wrap gap-1.5 text-[10px] font-semibold">
+                                    <span class="px-2 py-0.5 rounded bg-[#161922] text-zinc-300 border border-[#232834]">المجموع: ${group.tasks.length}</span>
+                                    <span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">منجز: ${doneCount}</span>
+                                    ${pendingCount > 0
+                                        ? `<span class="px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20">قيد الحل: ${pendingCount}</span>`
+                                        : `<span class="px-2 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20">مكتملة 100%</span>`
+                                    }
+                                </div>
                             </div>
-                            <div class="flex items-center flex-wrap gap-1.5 text-[10px] font-semibold">
-                                <span class="px-2 py-0.5 rounded-md bg-zinc-900 text-zinc-300 hairline-border">الإجمالي: ${group.tasks.length}</span>
-                                <span class="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">✓ ${doneCount} منجز</span>
-                                ${pendingCount > 0 ? `<span class="px-2 py-0.5 rounded-md bg-rose-500/10 text-rose-400 border border-rose-500/20">⏳ ${pendingCount} قيد الحل</span>` : ''}
+
+                            <div class="flex items-center gap-1.5 text-[10.5px] text-zinc-300 shrink-0 bg-[#161922] px-2.5 py-1.5 rounded-lg border border-[#252A37]">
+                                <span class="font-mono-num font-bold text-sky-400">${pct}%</span>
+                                <svg id="${dropId}-icon" class="w-3.5 h-3.5 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                                </svg>
                             </div>
                         </div>
-                        <div class="flex items-center gap-1.5 text-[11px] text-zinc-400 shrink-0 bg-zinc-900/90 px-2.5 py-1.5 rounded-xl hairline-border">
-                            <span>الواجبات</span>
-                            <svg id="${dropId}-icon" class="w-3.5 h-3.5 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
-                            </svg>
+
+                        <div class="w-full h-1 bg-[#181C24] rounded-full overflow-hidden">
+                            <div class="h-full ${pct === 100 ? 'bg-emerald-500' : 'bg-sky-500'} rounded-full" style="width: ${pct}%"></div>
                         </div>
                     </button>
-                    <div id="${dropId}" class="hidden hairline-top divide-y divide-white/[0.05] bg-[#0c0e14] px-4 py-1">
+
+                    <div id="${dropId}" class="${isOpen ? '' : 'hidden'} border-t border-[#1A1E28] bg-[#0B0D12] px-3.5 py-1 row-divider">
                         ${tasksHtml}
                     </div>
                 </div>`;
@@ -806,96 +1081,146 @@
         function setDeadlinesFilter(f) {
             haptic('light');
             deadlinesFilter = f;
-            ['all', 'pending', 'submitted'].forEach(name => {
-                const btn = document.getElementById('btnFilter' + name.charAt(0).toUpperCase() + name.slice(1));
-                if (btn) {
-                    if (name === f) {
-                        btn.className = 'px-2 py-0.5 rounded font-semibold bg-zinc-800 text-zinc-200';
-                    } else {
-                        btn.className = 'px-2 py-0.5 rounded font-medium text-zinc-400 hover:text-white';
-                    }
-                }
+            const map = {
+                all: 'btnFilterAll',
+                pending: 'btnFilterPending',
+                submitted: 'btnFilterSubmitted',
+                assign: 'btnFilterAssign',
+                quiz: 'btnFilterQuiz',
+            };
+            Object.entries(map).forEach(([key, btnId]) => {
+                const btn = document.getElementById(btnId);
+                if (!btn) return;
+                btn.className = (key === f)
+                    ? 'py-1.5 rounded font-semibold bg-[#1C202B] text-zinc-100'
+                    : 'py-1.5 rounded font-medium text-zinc-400 hover:text-zinc-200';
             });
             if (appData) renderDeadlinesList(appData.deadlines);
         }
 
-        function renderGradesList(grades) {
+        function setGradesFilter(f) {
+            haptic('light');
+            gradesFilter = f;
+            const bAll = document.getElementById('btnGradeFilterAll');
+            const bGraded = document.getElementById('btnGradeFilterGraded');
+            if (bAll && bGraded) {
+                if (f === 'all') {
+                    bAll.className = 'px-2.5 py-1 rounded font-semibold bg-[#1C202B] text-zinc-100';
+                    bGraded.className = 'px-2.5 py-1 rounded font-medium text-zinc-400 hover:text-zinc-200';
+                } else {
+                    bGraded.className = 'px-2.5 py-1 rounded font-semibold bg-[#1C202B] text-zinc-100';
+                    bAll.className = 'px-2.5 py-1 rounded font-medium text-zinc-400 hover:text-zinc-200';
+                }
+            }
+            if (appData) renderGradesList(appData.grades || []);
+        }
+
+        function renderGradesList(allGrades) {
             const container = document.getElementById('gradesListContainer');
             const courses = (appData && appData.courses) ? appData.courses : [];
-            const validGrades = grades || [];
+            const rawList = allGrades || [];
 
-            if (!courses.length && !validGrades.length) {
-                container.innerHTML = `
-                    <div class="p-8 text-center card-surface rounded-2xl space-y-1">
-                        <p class="text-xs font-semibold text-zinc-300">لا توجد علامات مرصودة حتى الآن</p>
-                        <p class="text-[11px] text-zinc-500">سيصلك إشعار فوري بمجرد رصد أي علامة كويز أو واجب أو امتحان في سجل درجاتك</p>
-                    </div>`;
-                return;
-            }
-
-            // Group grades by course so each course has its own collapsible dropdown
             const gradeGroups = new Map();
             courses.forEach(c => {
-                gradeGroups.set(c.name, { name: c.name, items: [] });
+                gradeGroups.set(c.name, { id: c.id, name: c.name, items: [] });
             });
-            validGrades.forEach(g => {
+            rawList.forEach(g => {
                 const cname = g.course_name || 'مقرر دراسي';
                 if (!gradeGroups.has(cname)) {
-                    gradeGroups.set(cname, { name: cname, items: [] });
+                    gradeGroups.set(cname, { id: g.course_id || '', name: cname, items: [] });
                 }
+                const hasVal = Boolean(g.grade_val && !['-', '—', ''].includes(String(g.grade_val).trim()));
+                if (gradesFilter === 'graded' && !hasVal) return;
                 gradeGroups.get(cname).items.push(g);
             });
 
             const groupsArr = Array.from(gradeGroups.values());
+            if (!groupsArr.length) {
+                container.innerHTML = `
+                    <div class="p-8 text-center panel rounded-xl space-y-1">
+                        <p class="text-xs font-semibold text-zinc-300">لا توجد سجلات علامات متاحة حالياً</p>
+                        <p class="text-[11px] text-zinc-500">سيتم إشعارك فور رصد أي علامة جديدة في LMS</p>
+                    </div>`;
+                return;
+            }
 
             container.innerHTML = groupsArr.map((group, idx) => {
-                const count = group.items.length;
+                const totalItems = group.items.length;
+                const gradedItems = group.items.filter(g => g.grade_val && !['-', '—', ''].includes(String(g.grade_val).trim()));
+                const gradedCount = gradedItems.length;
                 const dropId = `gr-course-${idx}`;
+                const isOpen = openAccordions.has(dropId);
 
-                const gradesHtml = count > 0 ? group.items.map(g => {
-                    const maxPart = g.grade_max ? ` / ${escapeHtml(g.grade_max)}` : '';
+                const rowsHtml = totalItems > 0 ? group.items.map(g => {
+                    const hasVal = Boolean(g.grade_val && !['-', '—', ''].includes(String(g.grade_val).trim()));
+                    const rangeTxt = g.grade_max ? `المدى: ${escapeHtml(g.grade_max)}` : '';
                     return `
-                    <div class="py-3 space-y-1.5">
-                        <div class="flex items-start justify-between gap-2">
-                            <div class="min-w-0">
-                                <h4 class="text-xs font-bold text-zinc-100 leading-snug break-words">${escapeHtml(g.item_name || 'تقييم')}</h4>
-                                ${g.percentage ? `<p class="font-mono text-[10px] text-zinc-400 mt-0.5">النسبة: ${escapeHtml(g.percentage)}</p>` : ''}
+                    <div class="py-3 space-y-2">
+                        <div class="flex items-start justify-between gap-2.5">
+                            <div class="min-w-0 space-y-1">
+                                <div class="flex items-center flex-wrap gap-1.5">
+                                    <span class="text-[9.5px] font-semibold px-1.5 py-0.5 rounded border ${hasVal ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-zinc-800/80 text-zinc-400 border-zinc-700'}">
+                                        ${hasVal ? 'مرصودة' : 'بانتظار الرصد'}
+                                    </span>
+                                    ${rangeTxt ? `<span class="font-mono-num text-[10px] text-zinc-400 bg-[#151821] px-1.5 py-0.5 rounded border border-[#232834]">${rangeTxt}</span>` : ''}
+                                    ${g.percentage ? `<span class="font-mono-num text-[10px] text-sky-400 bg-sky-500/10 px-1.5 py-0.5 rounded border border-sky-500/20">${escapeHtml(g.percentage)}</span>` : ''}
+                                </div>
+                                <h4 class="text-xs font-bold text-zinc-100 leading-snug break-words">${escapeHtml(g.item_name || 'بند تقييم')}</h4>
                             </div>
-                            <span class="font-mono text-xs font-bold px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">
-                                ${escapeHtml(g.grade_val)}${maxPart}
-                            </span>
+
+                            <div class="text-left shrink-0">
+                                <span class="font-mono-num text-xs font-bold px-2.5 py-1 rounded-lg border inline-block ${hasVal ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25' : 'bg-[#151821] text-zinc-500 border-[#232834]'}">
+                                    ${hasVal ? escapeHtml(g.grade_val) : '—'}
+                                </span>
+                            </div>
                         </div>
+
                         ${g.feedback ? `
-                        <div class="text-[11px] text-zinc-300 bg-zinc-950/60 rounded-lg p-2 hairline-border">
-                            <span class="text-zinc-500 font-semibold">💬 ملاحظة المدرس:</span> ${escapeHtml(g.feedback)}
+                        <div class="text-[11px] text-zinc-300 bg-[#12151E] rounded-lg p-2.5 border border-[#1E2330]">
+                            <span class="text-zinc-400 font-semibold">ملاحظات المدرس:</span> ${escapeHtml(g.feedback)}
                         </div>` : ''}
+
+                        <div class="flex items-center justify-between text-[10px] text-zinc-500">
+                            <span class="font-mono-num">${g.updated_at ? `آخر تحديث: ${escapeHtml(formatShortDate(g.updated_at))}` : ''}</span>
+                            ${g.url ? `
+                            <a href="${g.url}" target="_blank" onclick="haptic('light')" class="text-sky-400 hover:underline font-medium">
+                                فتح التقييم في LMS ↗
+                            </a>` : ''}
+                        </div>
                     </div>`;
                 }).join('') : `
                     <div class="py-4 text-center text-[11px] text-zinc-500">
-                        لم يتم رصد علامات لهذه المادة في LMS حتى الآن
+                        ${gradesFilter === 'graded' ? 'لا توجد علامات مرصودة لهذه المادة حتى الآن (اضغط "جميع بنود التقييم" لعرض البنود المنتظرة)' : 'لا توجد بنود تقييم مسجلة في كشف علامات هذه المادة'}
                     </div>`;
 
                 return `
-                <div class="card-surface rounded-2xl overflow-hidden transition-all">
-                    <button onclick="toggleAccordion('${dropId}')" class="w-full p-4 text-right flex items-center justify-between gap-3 hover:bg-white/[0.02] transition-all">
+                <div class="panel rounded-xl overflow-hidden">
+                    <button onclick="toggleAccordion('${dropId}')" class="w-full p-3.5 text-right flex items-center justify-between gap-3 hover:bg-white/[0.015] transition-colors">
                         <div class="space-y-1.5 min-w-0">
-                            <h4 class="text-xs font-bold text-zinc-100 truncate">${escapeHtml(group.name)}</h4>
-                            <div class="flex items-center gap-1.5 text-[10px] font-semibold">
-                                ${count > 0
-                                    ? `<span class="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">🎯 ${count} علامة مرصودة</span>`
-                                    : `<span class="px-2 py-0.5 rounded-md bg-zinc-900 text-zinc-500 hairline-border">لا توجد علامات مرصودة بعد</span>`
-                                }
+                            <div class="flex items-center gap-1.5">
+                                ${group.id ? `<span class="font-mono-num text-[9.5px] text-zinc-400 bg-[#161922] px-1.5 py-0.5 rounded border border-[#232834]">#${group.id}</span>` : ''}
+                                <h3 class="text-xs font-bold text-zinc-100 truncate">${escapeHtml(group.name)}</h3>
+                            </div>
+                            <div class="flex items-center flex-wrap gap-1.5 text-[10px] font-semibold">
+                                <span class="px-2 py-0.5 rounded ${gradedCount > 0 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-[#161922] text-zinc-400 border border-[#232834]'}">
+                                    الدرجات المرصودة: ${gradedCount}
+                                </span>
+                                <span class="px-2 py-0.5 rounded bg-[#161922] text-zinc-400 border border-[#232834]">
+                                    إجمالي بنود التقييم: ${totalItems}
+                                </span>
                             </div>
                         </div>
-                        <div class="flex items-center gap-1.5 text-[11px] text-zinc-400 shrink-0 bg-zinc-900/90 px-2.5 py-1.5 rounded-xl hairline-border">
-                            <span>العلامات</span>
-                            <svg id="${dropId}-icon" class="w-3.5 h-3.5 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+
+                        <div class="flex items-center gap-1.5 text-[10.5px] text-zinc-300 shrink-0 bg-[#161922] px-2.5 py-1.5 rounded-lg border border-[#252A37]">
+                            <span>كشف الدرجات</span>
+                            <svg id="${dropId}-icon" class="w-3.5 h-3.5 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
                             </svg>
                         </div>
                     </button>
-                    <div id="${dropId}" class="hidden hairline-top divide-y divide-white/[0.05] bg-[#0c0e14] px-4 py-1">
-                        ${gradesHtml}
+
+                    <div id="${dropId}" class="${isOpen ? '' : 'hidden'} border-t border-[#1A1E28] bg-[#0B0D12] px-3.5 py-1 row-divider">
+                        ${rowsHtml}
                     </div>
                 </div>`;
             }).join('');
@@ -907,111 +1232,140 @@
             const list = attendance || [];
             if (!list.length) {
                 container.innerHTML = `
-                    <div class="p-8 text-center card-surface rounded-2xl space-y-1">
+                    <div class="p-8 text-center panel rounded-xl space-y-1">
                         <p class="text-xs font-semibold text-zinc-300">لا توجد سجلات حضور وغياب (Attendance) حالياً</p>
-                        <p class="text-[11px] text-zinc-500">يقوم البوت تلقائياً باكتشاف أي مقرر يحتوي على سجل حضور وغياب وحفظه وإرسال إشعارات فورية به</p>
+                        <p class="text-[11px] text-zinc-500">يقوم النظام تلقائياً باكتشاف وحفظ أي سجل حضور وغياب في مقرراتك</p>
                     </div>`;
                 return;
             }
 
             container.innerHTML = list.map((att, idx) => {
                 const dropId = `att-course-${idx}`;
+                const isOpen = openAccordions.has(dropId);
                 const sessions = att.sessions || [];
                 const taken = att.taken_sessions || 0;
                 const total = att.total_sessions || 0;
+                const remaining = Math.max(0, total - taken);
                 const present = att.present_count || 0;
                 const absent = att.absent_count || 0;
                 const late = att.late_count || 0;
                 const excused = att.excused_count || 0;
-                const pctStr = att.percentage_str || (taken > 0 ? `${Math.round((present / taken) * 100)}%` : '0%');
+                const pctStr = att.percentage_str || (taken > 0 ? `${((present / taken) * 100).toFixed(1)}%` : '0.0%');
                 const pctNum = parseFloat(String(pctStr).replace('%', '')) || 0;
-                const pctBadgeColor = pctNum >= 80
-                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                    : (pctNum >= 60 ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20');
 
-                const sessionsHtml = sessions.length > 0 ? sessions.map(s => {
+                const pctBadgeColor = taken === 0
+                    ? 'bg-[#161922] text-zinc-400 border-[#252A37]'
+                    : (pctNum >= 80
+                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25'
+                        : (pctNum >= 60 ? 'bg-amber-500/10 text-amber-400 border-amber-500/25' : 'bg-rose-500/10 text-rose-400 border-rose-500/25'));
+
+                const barColor = pctNum >= 80 ? 'bg-emerald-500' : (pctNum >= 60 ? 'bg-amber-500' : 'bg-rose-500');
+
+                const sessionsHtml = sessions.length > 0 ? sessions.map((s, sIdx) => {
                     const stLow = String(s.status || '').toLowerCase();
                     let badgeCls = 'bg-zinc-800 text-zinc-300 border-zinc-700';
                     let badgeTxt = s.status || 'مسجل';
                     if (stLow.includes('present') || stLow.includes('حاضر')) {
-                        badgeCls = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
-                        badgeTxt = '✓ حاضر (Present)';
+                        badgeCls = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25';
+                        badgeTxt = 'حاضر (Present)';
                     } else if (stLow.includes('absent') || stLow.includes('غائب')) {
-                        badgeCls = 'bg-rose-500/10 text-rose-400 border-rose-500/20';
-                        badgeTxt = '✕ غائب (Absent)';
+                        badgeCls = 'bg-rose-500/10 text-rose-400 border-rose-500/25';
+                        badgeTxt = 'غائب (Absent)';
                     } else if (stLow.includes('late') || stLow.includes('متأخر')) {
-                        badgeCls = 'bg-amber-500/10 text-amber-400 border-amber-500/20';
-                        badgeTxt = '⏳ متأخر (Late)';
+                        badgeCls = 'bg-amber-500/10 text-amber-400 border-amber-500/25';
+                        badgeTxt = 'متأخر (Late)';
                     } else if (stLow.includes('excused') || stLow.includes('معذور')) {
-                        badgeCls = 'bg-sky-500/10 text-sky-400 border-sky-500/20';
-                        badgeTxt = '📝 معذور (Excused)';
+                        badgeCls = 'bg-sky-500/10 text-sky-400 border-sky-500/25';
+                        badgeTxt = 'معذور (Excused)';
                     }
 
                     return `
-                    <div class="py-2.5 flex items-center justify-between gap-2">
-                        <div class="min-w-0">
-                            <p class="font-mono text-[11px] font-semibold text-zinc-200">${escapeHtml(s.date || '')}</p>
-                            <p class="text-[10px] text-zinc-500 mt-0.5">${escapeHtml(s.description || 'محاضرة عادية')}${s.points ? ` • النقاط: ${escapeHtml(s.points)}` : ''}</p>
+                    <div class="py-2.5 flex items-center justify-between gap-2.5">
+                        <div class="flex items-start gap-2.5 min-w-0">
+                            <span class="font-mono-num text-[10px] text-zinc-500 bg-[#141720] px-1.5 py-0.5 rounded border border-[#222734] shrink-0 mt-0.5">#${sIdx + 1}</span>
+                            <div class="min-w-0">
+                                <p class="font-mono-num text-[11px] font-semibold text-zinc-200">${escapeHtml(s.date || '')}</p>
+                                <div class="flex items-center flex-wrap gap-2 text-[10px] text-zinc-500 mt-0.5">
+                                    <span>${escapeHtml(s.description || 'محاضرة دراسية')}</span>
+                                    ${s.points ? `<span class="font-mono-num text-zinc-400">• النقاط: ${escapeHtml(s.points)}</span>` : ''}
+                                    ${s.remarks ? `<span class="text-amber-400">• ملاحظة: ${escapeHtml(s.remarks)}</span>` : ''}
+                                </div>
+                            </div>
                         </div>
-                        <span class="text-[10px] font-bold px-2 py-0.5 rounded border shrink-0 ${badgeCls}">
+                        <span class="text-[10px] font-semibold px-2 py-0.5 rounded border shrink-0 ${badgeCls}">
                             ${escapeHtml(badgeTxt)}
                         </span>
                     </div>`;
                 }).join('') : `
                     <div class="py-4 text-center text-[11px] text-zinc-500">
-                        لم يتم تسجيل أي جلسة حضور أو غياب في هذه المادة حتى الآن
+                        لم يتم رصد محاضرات في هذا السجل حتى الآن
                     </div>`;
 
                 return `
-                <div class="card-surface rounded-2xl overflow-hidden transition-all">
-                    <div class="p-4 space-y-3">
-                        <div class="flex items-start justify-between gap-2">
-                            <div>
-                                <span class="text-[10px] font-medium text-sky-400">سجل الحضور والغياب</span>
-                                <h4 class="text-xs font-bold text-zinc-100 mt-0.5">${escapeHtml(att.course_name || 'مقرر دراسي')}</h4>
+                <div class="panel rounded-xl overflow-hidden">
+                    <div class="p-3.5 space-y-3">
+                        <div class="flex items-start justify-between gap-2.5">
+                            <div class="min-w-0">
+                                <div class="flex items-center gap-1.5">
+                                    <span class="font-mono-num text-[9.5px] text-zinc-400 bg-[#161922] px-1.5 py-0.5 rounded border border-[#232834]">#${att.course_id}</span>
+                                    <span class="text-[10px] text-zinc-400">${escapeHtml(formatShortDate(att.updated_at) ? 'تحديث: ' + formatShortDate(att.updated_at) : 'سجل الحضور')}</span>
+                                </div>
+                                <h4 class="text-xs font-bold text-zinc-100 mt-1 leading-snug">${escapeHtml(att.course_name || 'مقرر دراسي')}</h4>
                             </div>
-                            <span class="font-mono text-xs font-bold px-2.5 py-1 rounded-lg border shrink-0 ${pctBadgeColor}">
-                                ${escapeHtml(pctStr)}
-                            </span>
+                            <div class="text-left shrink-0">
+                                <span class="font-mono-num text-xs font-bold px-2.5 py-1 rounded-lg border inline-block ${pctBadgeColor}">
+                                    ${escapeHtml(pctStr)}
+                                </span>
+                            </div>
                         </div>
 
-                        <!-- Mini Attendance Stats Strip -->
-                        <div class="grid grid-cols-3 gap-2 text-center text-[11px]">
-                            <div class="bg-zinc-900/90 rounded-xl py-2 px-1 hairline-border">
-                                <p class="text-[10px] text-zinc-400">المحاضرات المسجلة</p>
-                                <p class="font-mono font-bold text-zinc-100 mt-0.5">${taken} / ${total}</p>
+                        <!-- 4-Box Telemetry Grid -->
+                        <div class="grid grid-cols-4 gap-1.5 text-center text-[10.5px]">
+                            <div class="panel-inset rounded-lg py-2 px-1">
+                                <p class="text-[9.5px] text-zinc-500">المنعقدة</p>
+                                <p class="font-mono-num font-bold text-zinc-100 mt-0.5">${taken}/${total}</p>
                             </div>
-                            <div class="bg-emerald-500/5 rounded-xl py-2 px-1 border border-emerald-500/15">
-                                <p class="text-[10px] text-emerald-400/80">مرات الحضور</p>
-                                <p class="font-mono font-bold text-emerald-400 mt-0.5">✓ ${present}</p>
+                            <div class="bg-emerald-500/5 rounded-lg py-2 px-1 border border-emerald-500/15">
+                                <p class="text-[9.5px] text-emerald-400/80">الحضور</p>
+                                <p class="font-mono-num font-bold text-emerald-400 mt-0.5">${present}</p>
                             </div>
-                            <div class="bg-rose-500/5 rounded-xl py-2 px-1 border border-rose-500/15">
-                                <p class="text-[10px] text-rose-400/80">مرات الغياب</p>
-                                <p class="font-mono font-bold text-rose-400 mt-0.5">✕ ${absent}</p>
+                            <div class="bg-rose-500/5 rounded-lg py-2 px-1 border border-rose-500/15">
+                                <p class="text-[9.5px] text-rose-400/80">الغياب</p>
+                                <p class="font-mono-num font-bold text-rose-400 mt-0.5">${absent}</p>
+                            </div>
+                            <div class="panel-inset rounded-lg py-2 px-1">
+                                <p class="text-[9.5px] text-zinc-500">النقاط</p>
+                                <p class="font-mono-num font-bold text-sky-400 mt-0.5">${escapeHtml(att.points_str || '0/0')}</p>
                             </div>
                         </div>
-                        ${(late > 0 || excused > 0 || att.points_str) ? `
-                        <div class="flex items-center justify-between text-[10px] text-zinc-400 px-1">
-                            <span>${late > 0 ? `تأخير: ${late} • ` : ''}${excused > 0 ? `عذر: ${excused}` : ''}</span>
-                            ${att.points_str ? `<span class="font-mono">النقاط: ${escapeHtml(att.points_str)}</span>` : ''}
+
+                        ${taken > 0 ? `
+                        <div class="space-y-1">
+                            <div class="w-full h-1.5 bg-[#181C24] rounded-full overflow-hidden">
+                                <div class="h-full ${barColor} rounded-full transition-all" style="width: ${Math.min(100, pctNum)}%"></div>
+                            </div>
+                            <div class="flex items-center justify-between text-[10px] text-zinc-500">
+                                <span>متبقي في جدول الفصل: <strong class="font-mono-num text-zinc-300">${remaining}</strong> محاضرة</span>
+                                ${(late > 0 || excused > 0) ? `<span>تأخير: ${late} • عذر: ${excused}</span>` : `<span>الغيابات المسجلة: <strong class="font-mono-num ${absent > 0 ? 'text-rose-400' : 'text-zinc-300'}">${absent}</strong></span>`}
+                            </div>
                         </div>` : ''}
                     </div>
 
-                    <!-- Expandable Lecture Sessions Dropdown -->
-                    <div class="hairline-top bg-zinc-950/40 px-4 py-2 flex items-center justify-between text-[11px]">
-                        <button onclick="toggleAccordion('${dropId}')" class="text-zinc-300 hover:text-white flex items-center gap-1.5 font-medium transition-all">
-                            <span>سجل المحاضرات بالتفصيل (${sessions.length})</span>
-                            <svg id="${dropId}-icon" class="w-3.5 h-3.5 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <!-- Expandable Lecture Log Dropdown -->
+                    <div class="border-t border-[#1A1E28] bg-[#0D0F14] px-3.5 py-2 flex items-center justify-between text-[11px]">
+                        <button onclick="toggleAccordion('${dropId}')" class="text-zinc-300 hover:text-white flex items-center gap-1.5 font-semibold transition-colors">
+                            <span>جدول المحاضرات والتواريخ المسجلة (${sessions.length})</span>
+                            <svg id="${dropId}-icon" class="w-3.5 h-3.5 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
                             </svg>
                         </button>
                         ${att.url ? `
                         <a href="${att.url}" target="_blank" onclick="haptic('light')" class="text-sky-400 hover:underline font-medium">
-                            فتح في LMS ↗
+                            فتح السجل في LMS ↗
                         </a>` : ''}
                     </div>
 
-                    <div id="${dropId}" class="hidden hairline-top divide-y divide-white/[0.05] bg-[#0c0e14] px-4 py-1">
+                    <div id="${dropId}" class="${isOpen ? '' : 'hidden'} border-t border-[#1A1E28] bg-[#0B0D12] px-3.5 py-1 row-divider">
                         ${sessionsHtml}
                     </div>
                 </div>`;
@@ -1022,28 +1376,28 @@
             const container = document.getElementById('announcementsListContainer');
             if (!announcements || !announcements.length) {
                 container.innerHTML = `
-                    <div class="p-8 text-center card-surface rounded-2xl space-y-1">
-                        <p class="text-xs font-semibold text-zinc-300">لا توجد إعلانات مسجلة حالياً</p>
-                        <p class="text-[11px] text-zinc-500">يقوم الرادار بمتابعة منتديات الأخبار والإعلانات في جميع موادك تلقائياً</p>
+                    <div class="p-8 text-center panel rounded-xl space-y-1">
+                        <p class="text-xs font-semibold text-zinc-300">لا توجد إعلانات منشورة حالياً</p>
+                        <p class="text-[11px] text-zinc-500">يتم فحص منتديات المقررات تلقائياً وإرسال أي إعلان جديد فور نشره</p>
                     </div>`;
                 return;
             }
 
             container.innerHTML = announcements.map(a => `
-                <div class="card-surface rounded-2xl p-3.5 space-y-2">
+                <div class="panel rounded-xl p-3.5 space-y-2.5">
                     <div class="flex items-start justify-between gap-2">
-                        <div>
-                            <span class="text-[10px] font-medium text-sky-400">${escapeHtml(a.course_name || a.forum_name || '')}</span>
-                            <h4 class="text-xs font-bold text-zinc-100 mt-0.5">${escapeHtml(a.title || 'إعلان مقرر')}</h4>
+                        <div class="space-y-1">
+                            <span class="text-[10px] font-semibold text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded border border-sky-500/20">${escapeHtml(a.course_name || a.forum_name || 'منتدى المقرر')}</span>
+                            <h4 class="text-xs font-bold text-zinc-100 mt-1">${escapeHtml(a.title || 'إعلان مقرر')}</h4>
                         </div>
-                        ${(a.posted_date || a.posted_at) ? `<span class="font-mono text-[10px] text-zinc-500 shrink-0">${escapeHtml(a.posted_date || a.posted_at)}</span>` : ''}
+                        ${(a.posted_date || a.posted_at) ? `<span class="font-mono-num text-[10px] text-zinc-500 shrink-0">${escapeHtml(a.posted_date || a.posted_at)}</span>` : ''}
                     </div>
-                    ${a.author ? `<p class="text-[11px] text-zinc-400">👨‍🏫 الكاتب: <span class="text-zinc-200 font-medium">${escapeHtml(a.author)}</span></p>` : ''}
-                    ${(a.body_text || a.content_text) ? `<p class="text-[11px] text-zinc-300 leading-relaxed bg-zinc-950/50 p-2.5 rounded-xl hairline-border whitespace-pre-line">${escapeHtml(a.body_text || a.content_text)}</p>` : ''}
+                    ${a.author ? `<p class="text-[11px] text-zinc-400">الناشر: <span class="text-zinc-200 font-medium">${escapeHtml(a.author)}</span></p>` : ''}
+                    ${(a.body_text || a.content_text) ? `<div class="text-[11px] text-zinc-300 leading-relaxed panel-inset p-3 rounded-lg whitespace-pre-line">${escapeHtml(a.body_text || a.content_text)}</div>` : ''}
                     ${a.url ? `
-                    <div class="hairline-top pt-2 flex justify-end">
-                        <a href="${a.url}" target="_blank" onclick="haptic('light')" class="text-[11px] text-sky-400 hover:underline font-medium">
-                            فتح الإعلان في LMS ↗
+                    <div class="border-t border-[#1A1E28] pt-2 flex justify-end">
+                        <a href="${a.url}" target="_blank" onclick="haptic('light')" class="text-[11px] text-sky-400 hover:underline font-semibold">
+                            فتح الموضوع في LMS ↗
                         </a>
                     </div>` : ''}
                 </div>
@@ -1059,36 +1413,38 @@
                 if (!section || !btn) return;
                 if (id === tabId) {
                     section.classList.remove('hidden');
-                    btn.className = 'py-2 rounded-lg font-bold bg-zinc-800 text-zinc-100 shadow-sm transition-all';
+                    btn.className = 'flex flex-col items-center justify-center py-1.5 px-1 rounded-lg bg-[#1A1E29] text-sky-400 transition-all';
                 } else {
                     section.classList.add('hidden');
-                    btn.className = 'py-2 rounded-lg font-medium text-zinc-400 hover:text-zinc-200 transition-all';
+                    btn.className = 'flex flex-col items-center justify-center py-1.5 px-1 rounded-lg text-zinc-400 hover:text-zinc-200 transition-all';
                 }
             });
+            window.scrollTo({ top: 0, behavior: 'smooth' });
         }
 
-        // Action Handlers
+        // Operational Actions
         async function triggerToggleMonitor() {
             haptic('medium');
-            const tid = getTelegramId();
             try {
                 const res = await fetch('/api/toggle-monitor', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ tid: tid, initData: tg?.initData || '' })
+                    body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '' })
                 });
                 const d = await res.json();
                 if (d.success && appData) {
                     appData.user.is_monitoring = d.is_monitoring;
                     renderApp();
+                    showToast(d.is_monitoring ? 'تم تفعيل المراقبة الدورية' : 'تم إيقاف المراقبة مؤقتاً');
                 }
-            } catch(e) { console.error(e); }
+            } catch (e) { console.error(e); }
         }
 
         async function triggerForceCheck() {
             haptic('medium');
             const btn = document.getElementById('btnForceCheck');
-            btn.innerHTML = '<span class="animate-spin text-sky-400">↻</span> <span>جاري الفحص...</span>';
+            const origHtml = btn ? btn.innerHTML : '';
+            if (btn) btn.innerHTML = '<span class="animate-spin text-sky-400">↻</span><span>جاري فحص المقررات في LMS...</span>';
             try {
                 const res = await fetch('/api/force-check', {
                     method: 'POST',
@@ -1098,14 +1454,14 @@
                 const d = await res.json();
                 await fetchUserData();
                 if (d.success) {
-                    showToast(d.new_items > 0 ? `تم اكتشاف ${d.new_items} محتوى جديد!` : 'اكتمل الفحص الفوري — كافة المقررات محدّثة');
+                    showToast(d.new_items > 0 ? `اكتمل الفحص: تم رصد ${d.new_items} عنصر جديد` : 'اكتمل الفحص الفوري — جميع البيانات محدّثة');
                 } else {
                     showToast(d.error || 'تعذر إكمال الفحص الفوري', true);
                 }
-            } catch(e) {
-                showToast('حدث خطأ أثناء الفحص الفوري', true);
+            } catch (e) {
+                showToast('حدث خطأ أثناء الاتصال بالخادم', true);
             } finally {
-                btn.innerHTML = '<svg class="w-3.5 h-3.5 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg><span>فحص فوري</span>';
+                if (btn) btn.innerHTML = origHtml;
             }
         }
 
@@ -1120,9 +1476,9 @@
                 const d = await res.json();
                 if (d.success) {
                     await fetchUserData();
-                    showToast('تم حذف المقرر من قائمة المراقبة');
+                    showToast('تم إزالة المقرر من قائمة المراقبة');
                 }
-            } catch(e) { console.error(e); }
+            } catch (e) { console.error(e); }
         }
 
         async function triggerClearAllCourses() {
@@ -1140,9 +1496,9 @@
                 const d = await res.json();
                 if (d.success) {
                     await fetchUserData();
-                    showToast('تم مسح جميع المقررات — يمكنك الآن إضافة المواد التي تريد مراقبتها فقط');
+                    showToast('تم مسح جميع المقررات المسجلة');
                 }
-            } catch(e) { console.error(e); }
+            } catch (e) { console.error(e); }
         }
 
         async function triggerLogout() {
@@ -1160,10 +1516,10 @@
                     appData = null;
                     await fetchUserData();
                 }
-            } catch(e) {
+            } catch (e) {
                 console.error(e);
             } finally {
-                if (btn) btn.innerText = '🚪 تسجيل الخروج';
+                if (btn) btn.innerText = 'تسجيل الخروج';
             }
         }
 
@@ -1172,11 +1528,11 @@
             const input = document.getElementById('addCourseInput');
             const val = input ? input.value.trim() : '';
             if (!val) {
-                showToast('أدخل رقم المادة (Course ID) أو الصق رابطها أولاً', true);
+                showToast('أدخل رقم المادة (Course ID) أو رابطها أولاً', true);
                 return;
             }
             const btn = document.getElementById('btnAddCourse');
-            if (btn) btn.innerText = '...';
+            if (btn) btn.innerText = 'جاري الإضافة...';
             try {
                 const res = await fetch('/api/add-course', {
                     method: 'POST',
@@ -1189,23 +1545,22 @@
                     await fetchUserData();
                     showToast(`تمت إضافة المقرر: ${d.course_name}`);
                 } else {
-                    showToast(d.error || 'لم يتم العثور على المقرر', true);
+                    showToast(d.error || 'تعذر العثور على المقرر', true);
                 }
-            } catch(e) {
+            } catch (e) {
                 showToast('تعذر الاتصال بالخادم', true);
             } finally {
-                if (btn) btn.innerText = '+ إضافة';
+                if (btn) btn.innerText = 'إضافة مقرر';
             }
         }
 
         async function toggleCourseMonitoring(cid) {
             haptic('medium');
-            const tid = getTelegramId();
             try {
                 const res = await fetch('/api/toggle-course', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ tid: tid, course_id: cid, initData: tg?.initData || '' })
+                    body: JSON.stringify({ tid: getTelegramId(), course_id: cid, initData: tg?.initData || '' })
                 });
                 const d = await res.json();
                 if (d.success && appData) {
@@ -1213,30 +1568,29 @@
                     if (c) c.is_monitored = d.is_monitored;
                     renderApp();
                 }
-            } catch(e) { console.error(e); }
+            } catch (e) { console.error(e); }
         }
 
         async function markAsSubmitted(contentId) {
             haptic('success');
-            const tid = getTelegramId();
             try {
                 const res = await fetch('/api/mark-submitted', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ tid: tid, content_id: contentId, is_submitted: 1, initData: tg?.initData || '' })
+                    body: JSON.stringify({ tid: getTelegramId(), content_id: contentId, is_submitted: 1, initData: tg?.initData || '' })
                 });
                 const d = await res.json();
                 if (d.success && appData) {
                     const dl = appData.deadlines.find(x => x.content_id === contentId);
                     if (dl) dl.is_submitted = true;
                     renderApp();
+                    showToast('تم تحديث حالة المهمة إلى منجزة');
                 }
-            } catch(e) { console.error(e); }
+            } catch (e) { console.error(e); }
         }
 
         async function saveNotificationSettings() {
             haptic('light');
-            const tid = getTelegramId();
             const assign = document.getElementById('toggleAssign').checked;
             const quiz = document.getElementById('toggleQuiz').checked;
             const resource = document.getElementById('toggleResource').checked;
@@ -1248,7 +1602,7 @@
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({
-                        tid: tid,
+                        tid: getTelegramId(),
                         notify_assign: assign ? 1 : 0,
                         notify_quiz: quiz ? 1 : 0,
                         notify_resource: resource ? 1 : 0,
@@ -1258,22 +1612,22 @@
                         initData: tg?.initData || ''
                     })
                 });
-            } catch(e) { console.error(e); }
+            } catch (e) { console.error(e); }
         }
 
         async function setCheckInterval(minutes) {
             haptic('medium');
-            const tid = getTelegramId();
             highlightIntervalButton(minutes);
             try {
                 await fetch('/api/update-settings', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ tid: tid, check_interval: minutes, initData: tg?.initData || '' })
+                    body: JSON.stringify({ tid: getTelegramId(), check_interval: minutes, initData: tg?.initData || '' })
                 });
                 if (appData) appData.user.check_interval = minutes;
                 renderApp();
-            } catch(e) { console.error(e); }
+                showToast(`تم ضبط الفحص الدوري كل ${minutes} دقيقة`);
+            } catch (e) { console.error(e); }
         }
 
         function highlightIntervalButton(min) {
@@ -1281,9 +1635,9 @@
                 const btn = document.getElementById('btnInterval' + m);
                 if (!btn) return;
                 if (m === min) {
-                    btn.className = 'py-2 rounded-xl text-xs font-bold bg-zinc-800 text-sky-400 border border-sky-500/40 transition-all';
+                    btn.className = 'py-2 rounded-lg text-xs font-bold bg-sky-500/15 text-sky-400 border border-sky-500/40 transition-all';
                 } else {
-                    btn.className = 'py-2 rounded-xl text-xs font-semibold hairline-border bg-zinc-900 text-zinc-300 transition-all';
+                    btn.className = 'py-2 rounded-lg text-xs font-semibold border border-[#232834] bg-[#151821] text-zinc-300 transition-all';
                 }
             });
         }
