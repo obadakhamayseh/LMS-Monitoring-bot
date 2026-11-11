@@ -463,6 +463,7 @@ class LMSScraper:
             "resources": [],
             "grades": [],
             "announcements": [],
+            "attendance": [],
         }
 
         result["assignments"] = self._get_activities_from_index(
@@ -538,9 +539,10 @@ class LMSScraper:
                     "submission_text": "منجز في المقرر" if cmid in completed_cmids else "",
                 })
 
-        # Fetch course grades and announcements
+        # Fetch course grades, announcements, and attendance
         result["grades"] = self.get_course_grades(course_id)
         result["announcements"] = self.get_course_announcements(course_id, course_soup=page_soup)
+        result["attendance"] = self.get_course_attendance(course_id, course_soup=page_soup)
 
         # Cross-reference completion from course page badges & gradebook
         graded_cmids = {
@@ -1249,6 +1251,12 @@ class LMSScraper:
                 if not raw_name or len(raw_name) < 2:
                     continue
 
+                # Skip Attendance items in Grades (tracked in dedicated Attendance section)
+                if "/mod/attendance/" in item_url or raw_name.strip().lower() in (
+                    "attendance", "الحضور والغياب", "الحضور", "سجل الحضور"
+                ):
+                    continue
+
                 for menu_el in grade_cell.find_all(class_=re.compile(r"action-menu|dropdown")):
                     menu_el.decompose()
                 grade_val = grade_cell.get_text(" ", strip=True)
@@ -1440,3 +1448,148 @@ class LMSScraper:
         except Exception as e:
             logger.debug(f"Error fetching announcement details {discuss_url}: {e}")
         return info
+
+    def get_course_attendance(
+        self, course_id: int, course_soup: Optional[BeautifulSoup] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Discover and scrape Moodle Attendance (/mod/attendance/view.php?id=...)
+        for a given course, returning session records and summary statistics.
+        """
+        attendance_records: List[Dict[str, Any]] = []
+        try:
+            soup = course_soup
+            if soup is None:
+                resp = self.authenticated_get(
+                    f"{LMS_BASE_URL}/course/view.php", params={"id": course_id}, timeout=20
+                )
+                if resp.status_code != 200 or "/login/" in resp.url:
+                    return attendance_records
+                soup = BeautifulSoup(resp.text, "lxml")
+
+            att_links: List[Tuple[str, str, str]] = []
+            seen_cmids = set()
+            for a in soup.find_all("a", href=re.compile(r"/mod/attendance/view\.php\?id=\d+")):
+                href = a.get("href", "")
+                if not href.startswith("http"):
+                    href = LMS_BASE_URL + href
+                m = re.search(r"id=(\d+)", href)
+                if not m:
+                    continue
+                cmid = m.group(1)
+                if cmid in seen_cmids:
+                    continue
+                seen_cmids.add(cmid)
+                title = self._clean_link_text(a) or "Attendance"
+                att_links.append((cmid, title, href))
+
+            for cmid, title, base_url in att_links:
+                try:
+                    # view=5 forces Moodle Attendance to display all sessions in the semester
+                    sep = "&" if "?" in base_url else "?"
+                    full_url = f"{base_url}{sep}view=5"
+                    r = self.authenticated_get(full_url, timeout=20)
+                    if r.status_code != 200 or "/login/" in r.url:
+                        continue
+                    att_soup = BeautifulSoup(r.text, "lxml")
+                    tables = att_soup.find_all("table")
+
+                    sessions: List[Dict[str, str]] = []
+                    present_count = 0
+                    absent_count = 0
+                    late_count = 0
+                    excused_count = 0
+
+                    taken_sessions = 0
+                    total_sessions = 0
+                    points_str = ""
+                    percentage_str = ""
+
+                    for tbl in tables:
+                        headers = [th.get_text(" ", strip=True).lower() for th in tbl.find_all("th")]
+                        # Session list table has Date & Status columns
+                        if any("date" in h or "التاريخ" in h for h in headers) and any(
+                            "status" in h or "الحالة" in h or "الوضع" in h for h in headers
+                        ):
+                            for tr in tbl.find_all("tr"):
+                                tds = [td.get_text(" ", strip=True) for td in tr.find_all("td")]
+                                if len(tds) < 3:
+                                    continue
+                                s_date = re.sub(r"\s+", " ", tds[0]).strip()
+                                s_desc = re.sub(r"\s+", " ", tds[1]).strip() if len(tds) > 1 else ""
+                                s_status = re.sub(r"\s+", " ", tds[2]).strip() if len(tds) > 2 else ""
+                                s_points = re.sub(r"\s+", " ", tds[3]).strip() if len(tds) > 3 else ""
+                                s_remarks = re.sub(r"\s+", " ", tds[4]).strip() if len(tds) > 4 else ""
+
+                                # Skip unrecorded future sessions (where status is '?' or empty)
+                                if not s_status or s_status in ("?", "-", "—") or s_status.startswith("?"):
+                                    continue
+                                # Skip "Noiske" or empty table message rows
+                                if "no " in s_date.lower() and len(tds) < 4:
+                                    continue
+
+                                st_low = s_status.lower()
+                                if any(k in st_low for k in ("present", "حاضر", "موجود")):
+                                    present_count += 1
+                                elif any(k in st_low for k in ("absent", "غائب", "غياب")):
+                                    absent_count += 1
+                                elif any(k in st_low for k in ("late", "متأخر", "تأخير")):
+                                    late_count += 1
+                                elif any(k in st_low for k in ("excused", "معذور", "عذر")):
+                                    excused_count += 1
+
+                                sessions.append({
+                                    "date": s_date,
+                                    "description": s_desc,
+                                    "status": s_status,
+                                    "points": s_points,
+                                    "remarks": s_remarks,
+                                })
+                        else:
+                            # Summary key-value table
+                            for tr in tbl.find_all("tr"):
+                                cells = [c.get_text(" ", strip=True) for c in tr.find_all(["td", "th"])]
+                                if len(cells) < 2:
+                                    continue
+                                k = cells[0].lower()
+                                v = cells[1].strip()
+                                if "percentage over taken" in k or "النسبة المئوية" in k or "نسبة الحضور" in k:
+                                    percentage_str = v
+                                elif "points over taken" in k or "النقاط على" in k:
+                                    points_str = v
+                                elif "taken sessions" in k or "الجلسات المأخوذة" in k or "المحاضرات المنعقدة" in k:
+                                    m_num = re.search(r"(\d+)", v)
+                                    if m_num:
+                                        taken_sessions = int(m_num.group(1))
+                                elif "total number of sessions" in k or "مجموع الجلسات" in k or "إجمالي الجلسات" in k:
+                                    m_num = re.search(r"(\d+)", v)
+                                    if m_num:
+                                        total_sessions = int(m_num.group(1))
+
+                    if taken_sessions == 0 and sessions:
+                        taken_sessions = len(sessions)
+                    if total_sessions < taken_sessions:
+                        total_sessions = taken_sessions
+
+                    attendance_records.append({
+                        "att_id": f"att_{cmid}",
+                        "title": title,
+                        "taken_sessions": taken_sessions,
+                        "total_sessions": total_sessions,
+                        "present_count": present_count,
+                        "absent_count": absent_count,
+                        "late_count": late_count,
+                        "excused_count": excused_count,
+                        "points_str": points_str,
+                        "percentage_str": percentage_str,
+                        "sessions": sessions,
+                        "url": base_url,
+                        "course_id": course_id,
+                    })
+                except Exception as ae:
+                    logger.debug(f"Attendance fetch error ({base_url}): {ae}")
+
+            logger.debug(f"المادة {course_id} | attendance: {len(attendance_records)} سجل")
+        except Exception as e:
+            logger.warning(f"خطأ في جلب الحضور والغياب للمادة {course_id}: {e}")
+        return attendance_records

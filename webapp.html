@@ -150,7 +150,7 @@
         </div>
 
         <!-- Section Navigation Tabs -->
-        <div class="grid grid-cols-5 gap-1 bg-zinc-950 p-1 rounded-xl hairline-border text-[11px]">
+        <div class="grid grid-cols-6 gap-1 bg-zinc-950 p-1 rounded-xl hairline-border text-[10.5px]">
             <button onclick="switchTab('tab-courses')" id="tabBtn-courses" class="py-2 rounded-lg font-bold bg-zinc-800 text-zinc-100 shadow-sm transition-all">
                 المقررات (<span id="coursesBadge">0</span>)
             </button>
@@ -159,6 +159,9 @@
             </button>
             <button onclick="switchTab('tab-grades')" id="tabBtn-grades" class="py-2 rounded-lg font-medium text-zinc-400 hover:text-zinc-200 transition-all">
                 العلامات (<span id="gradesBadge">0</span>)
+            </button>
+            <button onclick="switchTab('tab-attendance')" id="tabBtn-attendance" class="py-2 rounded-lg font-medium text-zinc-400 hover:text-zinc-200 transition-all">
+                الحضور (<span id="attendanceBadge">0</span>)
             </button>
             <button onclick="switchTab('tab-announcements')" id="tabBtn-announcements" class="py-2 rounded-lg font-medium text-zinc-400 hover:text-zinc-200 transition-all">
                 الإعلانات (<span id="announcementsBadge">0</span>)
@@ -220,12 +223,25 @@
         <!-- ==================== TAB 3: GRADES (GRADEBOOK RADAR) ==================== -->
         <section id="tab-grades" class="space-y-3 hidden">
             <div class="flex items-center justify-between text-xs">
-                <span class="text-zinc-400 font-medium">🎯 رادار العلامات والتقييمات الفوري</span>
+                <span class="text-zinc-400 font-medium">🎯 العلامات والتقييمات (حسب المادة)</span>
                 <button onclick="triggerForceCheck()" class="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-sky-400 hairline-border text-[11px] font-semibold transition-all">
                     🔄 فحص العلامات الآن
                 </button>
             </div>
             <div id="gradesListContainer" class="space-y-2.5">
+                <!-- Injected via JS -->
+            </div>
+        </section>
+
+        <!-- ==================== TAB 3.5: ATTENDANCE (ATTENDANCE RADAR) ==================== -->
+        <section id="tab-attendance" class="space-y-3 hidden">
+            <div class="flex items-center justify-between text-xs">
+                <span class="text-zinc-400 font-medium">📋 سجل الحضور والغياب (Attendance)</span>
+                <button onclick="triggerForceCheck()" class="px-2.5 py-1 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-sky-400 hairline-border text-[11px] font-semibold transition-all">
+                    🔄 تحديث الحضور
+                </button>
+            </div>
+            <div id="attendanceListContainer" class="space-y-2.5">
                 <!-- Injected via JS -->
             </div>
         </section>
@@ -297,6 +313,17 @@
                     </div>
                     <label class="relative inline-flex items-center cursor-pointer">
                         <input type="checkbox" id="toggleAnnouncement" onchange="saveNotificationSettings()" class="sr-only peer">
+                        <div class="w-9 h-5 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-600"></div>
+                    </label>
+                </div>
+
+                <div class="p-4 flex items-center justify-between">
+                    <div>
+                        <p class="text-xs font-bold text-zinc-200">📋 رادار الحضور والغياب (Attendance)</p>
+                        <p class="text-[11px] text-zinc-500 mt-0.5">تنبيه فوري عند تسجيل حضور أو غياب جديد في أي محاضرة</p>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="toggleAttendance" onchange="saveNotificationSettings()" class="sr-only peer">
                         <div class="w-9 h-5 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-600"></div>
                     </label>
                 </div>
@@ -528,8 +555,11 @@
             document.getElementById('deadlinesBadge').innerText = appData.deadlines.length;
             const gradesList = (appData.grades || []).filter(g => g.grade_val && !['-', '—', ''].includes(String(g.grade_val).trim()));
             const announcementsList = appData.announcements || [];
+            const attendanceList = appData.attendance || [];
             document.getElementById('gradesBadge').innerText = gradesList.length;
             document.getElementById('announcementsBadge').innerText = announcementsList.length;
+            const attBadge = document.getElementById('attendanceBadge');
+            if (attBadge) attBadge.innerText = attendanceList.length;
 
             // Render Courses
             renderCoursesList(appData.courses);
@@ -537,8 +567,9 @@
             // Render Deadlines
             renderDeadlinesList(appData.deadlines);
 
-            // Render Grades & Announcements
+            // Render Grades, Attendance & Announcements
             renderGradesList(gradesList);
+            renderAttendanceList(attendanceList);
             renderAnnouncementsList(announcementsList);
 
             // Sync Settings
@@ -547,6 +578,8 @@
             document.getElementById('toggleResource').checked = u.notify_resource;
             document.getElementById('toggleGrade').checked = u.notify_grade !== false;
             document.getElementById('toggleAnnouncement').checked = u.notify_announcement !== false;
+            const toggleAtt = document.getElementById('toggleAttendance');
+            if (toggleAtt) toggleAtt.checked = u.notify_attendance !== false;
             highlightIntervalButton(u.check_interval);
         }
 
@@ -659,8 +692,8 @@
         function toggleAccordion(id) {
             haptic('light');
             const el = document.getElementById(id);
-            const iconId = id.replace('acc-', 'acc-icon-');
-            const icon = document.getElementById(iconId);
+            if (!el) return;
+            const icon = document.getElementById(id + '-icon') || document.getElementById(id.replace('acc-', 'acc-icon-'));
             if (el.classList.contains('hidden')) {
                 el.classList.remove('hidden');
                 if (icon) icon.classList.add('rotate-180');
@@ -681,41 +714,93 @@
 
         function renderDeadlinesList(deadlines) {
             const container = document.getElementById('deadlinesListContainer');
-            let filtered = deadlines;
-            if (deadlinesFilter === 'pending') filtered = deadlines.filter(d => !d.is_submitted);
-            if (deadlinesFilter === 'submitted') filtered = deadlines.filter(d => d.is_submitted);
+            let filtered = deadlines || [];
+            if (deadlinesFilter === 'pending') filtered = filtered.filter(d => !d.is_submitted);
+            if (deadlinesFilter === 'submitted') filtered = filtered.filter(d => d.is_submitted);
 
             if (!filtered.length) {
                 container.innerHTML = `
                     <div class="p-8 text-center card-surface rounded-2xl space-y-1">
-                        <p class="text-xs font-semibold text-zinc-300">لا توجد واجبات أو تكاليف مستحقة حالياً</p>
+                        <p class="text-xs font-semibold text-zinc-300">لا توجد واجبات أو كويزات ضمن هذا التصنيف</p>
                         <p class="text-[11px] text-zinc-500">أنت على اطلاع دائم بجميع المهام الأكاديمية</p>
                     </div>`;
                 return;
             }
 
-            container.innerHTML = filtered.map(d => `
-                <div class="card-surface rounded-2xl p-3.5 space-y-2">
-                    <div class="flex items-start justify-between gap-2">
-                        <div>
-                            <span class="text-[10px] font-medium text-zinc-400">${escapeHtml(d.course_name)}</span>
-                            <h4 class="text-xs font-bold text-zinc-100 mt-0.5">${escapeHtml(d.content_name)}</h4>
-                        </div>
-                        <span class="text-[10px] font-semibold px-2 py-0.5 rounded ${d.is_submitted ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'} shrink-0">
-                            ${d.is_submitted ? '✓ منجز في LMS' : '⏳ قيد الحل في LMS'}
-                        </span>
-                    </div>
+            // Group tasks by course so each course has its own collapsible dropdown
+            const courseGroups = new Map();
+            if (appData && appData.courses) {
+                appData.courses.forEach(c => {
+                    courseGroups.set(c.name, { id: c.id, name: c.name, tasks: [] });
+                });
+            }
+            filtered.forEach(d => {
+                const cname = d.course_name || 'مقرر دراسي';
+                if (!courseGroups.has(cname)) {
+                    courseGroups.set(cname, { id: d.course_id || cname, name: cname, tasks: [] });
+                }
+                courseGroups.get(cname).tasks.push(d);
+            });
 
-                    <div class="hairline-top pt-2 flex items-center justify-between text-[11px] text-zinc-400">
-                        <span class="font-mono text-[10px] text-zinc-400">${d.due_str || 'يرصد الإنجاز تلقائياً من LMS'}</span>
-                        <div class="flex items-center gap-2">
-                            <a href="${d.content_url}" target="_blank" onclick="haptic('light')" class="text-sky-400 hover:underline font-medium">
+            const nonEmptyGroups = Array.from(courseGroups.values()).filter(g => g.tasks.length > 0);
+
+            container.innerHTML = nonEmptyGroups.map((group, idx) => {
+                const doneCount = group.tasks.filter(t => t.is_submitted).length;
+                const pendingCount = group.tasks.length - doneCount;
+                const dropId = `dl-course-${idx}`;
+
+                const tasksHtml = group.tasks.map(d => {
+                    const isQuiz = d.content_type === 'quiz' || String(d.content_id || '').startsWith('quiz_');
+                    const typeIcon = isQuiz ? '📝' : '📚';
+                    const typeLabel = isQuiz ? 'كويز' : 'واجب';
+                    return `
+                    <div class="py-3 flex flex-col gap-2">
+                        <div class="flex items-start justify-between gap-2.5">
+                            <div class="flex items-start gap-2 min-w-0">
+                                <span class="text-sm shrink-0 mt-0.5">${typeIcon}</span>
+                                <div class="min-w-0">
+                                    <span class="text-[10px] font-medium text-sky-400/90">${typeLabel}</span>
+                                    <h4 class="text-xs font-bold text-zinc-100 leading-snug break-words">${escapeHtml(d.content_name)}</h4>
+                                </div>
+                            </div>
+                            <span class="text-[10px] font-semibold px-2 py-0.5 rounded ${d.is_submitted ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'} shrink-0">
+                                ${d.is_submitted ? '✓ منجز في LMS' : '⏳ قيد الحل'}
+                            </span>
+                        </div>
+                        <div class="flex items-center justify-between text-[11px] text-zinc-400 pl-1">
+                            <span class="font-mono text-[10px] text-zinc-400">${escapeHtml(d.due_str || 'يرصد الإنجاز تلقائياً من LMS')}</span>
+                            <a href="${d.content_url}" target="_blank" onclick="haptic('light')" class="text-sky-400 hover:underline font-medium shrink-0">
                                 فتح في LMS ↗
                             </a>
                         </div>
+                    </div>`;
+                }).join('');
+
+                return `
+                <div class="card-surface rounded-2xl overflow-hidden transition-all">
+                    <button onclick="toggleAccordion('${dropId}')" class="w-full p-4 text-right flex items-center justify-between gap-3 hover:bg-white/[0.02] transition-all">
+                        <div class="space-y-1.5 min-w-0">
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs font-bold text-zinc-100 truncate">${escapeHtml(group.name)}</span>
+                            </div>
+                            <div class="flex items-center flex-wrap gap-1.5 text-[10px] font-semibold">
+                                <span class="px-2 py-0.5 rounded-md bg-zinc-900 text-zinc-300 hairline-border">الإجمالي: ${group.tasks.length}</span>
+                                <span class="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">✓ ${doneCount} منجز</span>
+                                ${pendingCount > 0 ? `<span class="px-2 py-0.5 rounded-md bg-rose-500/10 text-rose-400 border border-rose-500/20">⏳ ${pendingCount} قيد الحل</span>` : ''}
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-1.5 text-[11px] text-zinc-400 shrink-0 bg-zinc-900/90 px-2.5 py-1.5 rounded-xl hairline-border">
+                            <span>الواجبات</span>
+                            <svg id="${dropId}-icon" class="w-3.5 h-3.5 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                            </svg>
+                        </div>
+                    </button>
+                    <div id="${dropId}" class="hidden hairline-top divide-y divide-white/[0.05] bg-[#0c0e14] px-4 py-1">
+                        ${tasksHtml}
                     </div>
-                </div>
-            `).join('');
+                </div>`;
+            }).join('');
         }
 
         function setDeadlinesFilter(f) {
@@ -736,7 +821,10 @@
 
         function renderGradesList(grades) {
             const container = document.getElementById('gradesListContainer');
-            if (!grades || !grades.length) {
+            const courses = (appData && appData.courses) ? appData.courses : [];
+            const validGrades = grades || [];
+
+            if (!courses.length && !validGrades.length) {
                 container.innerHTML = `
                     <div class="p-8 text-center card-surface rounded-2xl space-y-1">
                         <p class="text-xs font-semibold text-zinc-300">لا توجد علامات مرصودة حتى الآن</p>
@@ -745,26 +833,187 @@
                 return;
             }
 
-            container.innerHTML = grades.map(g => {
-                const maxPart = g.grade_max ? ` / ${escapeHtml(g.grade_max)}` : '';
-                return `
-                <div class="card-surface rounded-2xl p-3.5 space-y-2">
-                    <div class="flex items-start justify-between gap-2">
-                        <div>
-                            <span class="text-[10px] font-medium text-zinc-400">${escapeHtml(g.course_name || '')}</span>
-                            <h4 class="text-xs font-bold text-zinc-100 mt-0.5">${escapeHtml(g.item_name || 'تقييم')}</h4>
-                        </div>
-                        <div class="text-left shrink-0">
-                            <span class="font-mono text-xs font-bold px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+            // Group grades by course so each course has its own collapsible dropdown
+            const gradeGroups = new Map();
+            courses.forEach(c => {
+                gradeGroups.set(c.name, { name: c.name, items: [] });
+            });
+            validGrades.forEach(g => {
+                const cname = g.course_name || 'مقرر دراسي';
+                if (!gradeGroups.has(cname)) {
+                    gradeGroups.set(cname, { name: cname, items: [] });
+                }
+                gradeGroups.get(cname).items.push(g);
+            });
+
+            const groupsArr = Array.from(gradeGroups.values());
+
+            container.innerHTML = groupsArr.map((group, idx) => {
+                const count = group.items.length;
+                const dropId = `gr-course-${idx}`;
+
+                const gradesHtml = count > 0 ? group.items.map(g => {
+                    const maxPart = g.grade_max ? ` / ${escapeHtml(g.grade_max)}` : '';
+                    return `
+                    <div class="py-3 space-y-1.5">
+                        <div class="flex items-start justify-between gap-2">
+                            <div class="min-w-0">
+                                <h4 class="text-xs font-bold text-zinc-100 leading-snug break-words">${escapeHtml(g.item_name || 'تقييم')}</h4>
+                                ${g.percentage ? `<p class="font-mono text-[10px] text-zinc-400 mt-0.5">النسبة: ${escapeHtml(g.percentage)}</p>` : ''}
+                            </div>
+                            <span class="font-mono text-xs font-bold px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">
                                 ${escapeHtml(g.grade_val)}${maxPart}
                             </span>
-                            ${g.percentage ? `<p class="font-mono text-[10px] text-zinc-400 mt-1">${escapeHtml(g.percentage)}</p>` : ''}
                         </div>
+                        ${g.feedback ? `
+                        <div class="text-[11px] text-zinc-300 bg-zinc-950/60 rounded-lg p-2 hairline-border">
+                            <span class="text-zinc-500 font-semibold">💬 ملاحظة المدرس:</span> ${escapeHtml(g.feedback)}
+                        </div>` : ''}
+                    </div>`;
+                }).join('') : `
+                    <div class="py-4 text-center text-[11px] text-zinc-500">
+                        لم يتم رصد علامات لهذه المادة في LMS حتى الآن
+                    </div>`;
+
+                return `
+                <div class="card-surface rounded-2xl overflow-hidden transition-all">
+                    <button onclick="toggleAccordion('${dropId}')" class="w-full p-4 text-right flex items-center justify-between gap-3 hover:bg-white/[0.02] transition-all">
+                        <div class="space-y-1.5 min-w-0">
+                            <h4 class="text-xs font-bold text-zinc-100 truncate">${escapeHtml(group.name)}</h4>
+                            <div class="flex items-center gap-1.5 text-[10px] font-semibold">
+                                ${count > 0
+                                    ? `<span class="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">🎯 ${count} علامة مرصودة</span>`
+                                    : `<span class="px-2 py-0.5 rounded-md bg-zinc-900 text-zinc-500 hairline-border">لا توجد علامات مرصودة بعد</span>`
+                                }
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-1.5 text-[11px] text-zinc-400 shrink-0 bg-zinc-900/90 px-2.5 py-1.5 rounded-xl hairline-border">
+                            <span>العلامات</span>
+                            <svg id="${dropId}-icon" class="w-3.5 h-3.5 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                            </svg>
+                        </div>
+                    </button>
+                    <div id="${dropId}" class="hidden hairline-top divide-y divide-white/[0.05] bg-[#0c0e14] px-4 py-1">
+                        ${gradesHtml}
                     </div>
-                    ${g.feedback ? `
-                    <div class="hairline-top pt-2 text-[11px] text-zinc-300 bg-zinc-950/50 rounded-lg p-2">
-                        <span class="text-zinc-500 font-semibold">💬 ملاحظة المدرس:</span> ${escapeHtml(g.feedback)}
-                    </div>` : ''}
+                </div>`;
+            }).join('');
+        }
+
+        function renderAttendanceList(attendance) {
+            const container = document.getElementById('attendanceListContainer');
+            if (!container) return;
+            const list = attendance || [];
+            if (!list.length) {
+                container.innerHTML = `
+                    <div class="p-8 text-center card-surface rounded-2xl space-y-1">
+                        <p class="text-xs font-semibold text-zinc-300">لا توجد سجلات حضور وغياب (Attendance) حالياً</p>
+                        <p class="text-[11px] text-zinc-500">يقوم البوت تلقائياً باكتشاف أي مقرر يحتوي على سجل حضور وغياب وحفظه وإرسال إشعارات فورية به</p>
+                    </div>`;
+                return;
+            }
+
+            container.innerHTML = list.map((att, idx) => {
+                const dropId = `att-course-${idx}`;
+                const sessions = att.sessions || [];
+                const taken = att.taken_sessions || 0;
+                const total = att.total_sessions || 0;
+                const present = att.present_count || 0;
+                const absent = att.absent_count || 0;
+                const late = att.late_count || 0;
+                const excused = att.excused_count || 0;
+                const pctStr = att.percentage_str || (taken > 0 ? `${Math.round((present / taken) * 100)}%` : '0%');
+                const pctNum = parseFloat(String(pctStr).replace('%', '')) || 0;
+                const pctBadgeColor = pctNum >= 80
+                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                    : (pctNum >= 60 ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20');
+
+                const sessionsHtml = sessions.length > 0 ? sessions.map(s => {
+                    const stLow = String(s.status || '').toLowerCase();
+                    let badgeCls = 'bg-zinc-800 text-zinc-300 border-zinc-700';
+                    let badgeTxt = s.status || 'مسجل';
+                    if (stLow.includes('present') || stLow.includes('حاضر')) {
+                        badgeCls = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
+                        badgeTxt = '✓ حاضر (Present)';
+                    } else if (stLow.includes('absent') || stLow.includes('غائب')) {
+                        badgeCls = 'bg-rose-500/10 text-rose-400 border-rose-500/20';
+                        badgeTxt = '✕ غائب (Absent)';
+                    } else if (stLow.includes('late') || stLow.includes('متأخر')) {
+                        badgeCls = 'bg-amber-500/10 text-amber-400 border-amber-500/20';
+                        badgeTxt = '⏳ متأخر (Late)';
+                    } else if (stLow.includes('excused') || stLow.includes('معذور')) {
+                        badgeCls = 'bg-sky-500/10 text-sky-400 border-sky-500/20';
+                        badgeTxt = '📝 معذور (Excused)';
+                    }
+
+                    return `
+                    <div class="py-2.5 flex items-center justify-between gap-2">
+                        <div class="min-w-0">
+                            <p class="font-mono text-[11px] font-semibold text-zinc-200">${escapeHtml(s.date || '')}</p>
+                            <p class="text-[10px] text-zinc-500 mt-0.5">${escapeHtml(s.description || 'محاضرة عادية')}${s.points ? ` • النقاط: ${escapeHtml(s.points)}` : ''}</p>
+                        </div>
+                        <span class="text-[10px] font-bold px-2 py-0.5 rounded border shrink-0 ${badgeCls}">
+                            ${escapeHtml(badgeTxt)}
+                        </span>
+                    </div>`;
+                }).join('') : `
+                    <div class="py-4 text-center text-[11px] text-zinc-500">
+                        لم يتم تسجيل أي جلسة حضور أو غياب في هذه المادة حتى الآن
+                    </div>`;
+
+                return `
+                <div class="card-surface rounded-2xl overflow-hidden transition-all">
+                    <div class="p-4 space-y-3">
+                        <div class="flex items-start justify-between gap-2">
+                            <div>
+                                <span class="text-[10px] font-medium text-sky-400">سجل الحضور والغياب</span>
+                                <h4 class="text-xs font-bold text-zinc-100 mt-0.5">${escapeHtml(att.course_name || 'مقرر دراسي')}</h4>
+                            </div>
+                            <span class="font-mono text-xs font-bold px-2.5 py-1 rounded-lg border shrink-0 ${pctBadgeColor}">
+                                ${escapeHtml(pctStr)}
+                            </span>
+                        </div>
+
+                        <!-- Mini Attendance Stats Strip -->
+                        <div class="grid grid-cols-3 gap-2 text-center text-[11px]">
+                            <div class="bg-zinc-900/90 rounded-xl py-2 px-1 hairline-border">
+                                <p class="text-[10px] text-zinc-400">المحاضرات المسجلة</p>
+                                <p class="font-mono font-bold text-zinc-100 mt-0.5">${taken} / ${total}</p>
+                            </div>
+                            <div class="bg-emerald-500/5 rounded-xl py-2 px-1 border border-emerald-500/15">
+                                <p class="text-[10px] text-emerald-400/80">مرات الحضور</p>
+                                <p class="font-mono font-bold text-emerald-400 mt-0.5">✓ ${present}</p>
+                            </div>
+                            <div class="bg-rose-500/5 rounded-xl py-2 px-1 border border-rose-500/15">
+                                <p class="text-[10px] text-rose-400/80">مرات الغياب</p>
+                                <p class="font-mono font-bold text-rose-400 mt-0.5">✕ ${absent}</p>
+                            </div>
+                        </div>
+                        ${(late > 0 || excused > 0 || att.points_str) ? `
+                        <div class="flex items-center justify-between text-[10px] text-zinc-400 px-1">
+                            <span>${late > 0 ? `تأخير: ${late} • ` : ''}${excused > 0 ? `عذر: ${excused}` : ''}</span>
+                            ${att.points_str ? `<span class="font-mono">النقاط: ${escapeHtml(att.points_str)}</span>` : ''}
+                        </div>` : ''}
+                    </div>
+
+                    <!-- Expandable Lecture Sessions Dropdown -->
+                    <div class="hairline-top bg-zinc-950/40 px-4 py-2 flex items-center justify-between text-[11px]">
+                        <button onclick="toggleAccordion('${dropId}')" class="text-zinc-300 hover:text-white flex items-center gap-1.5 font-medium transition-all">
+                            <span>سجل المحاضرات بالتفصيل (${sessions.length})</span>
+                            <svg id="${dropId}-icon" class="w-3.5 h-3.5 transition-transform duration-200" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                            </svg>
+                        </button>
+                        ${att.url ? `
+                        <a href="${att.url}" target="_blank" onclick="haptic('light')" class="text-sky-400 hover:underline font-medium">
+                            فتح في LMS ↗
+                        </a>` : ''}
+                    </div>
+
+                    <div id="${dropId}" class="hidden hairline-top divide-y divide-white/[0.05] bg-[#0c0e14] px-4 py-1">
+                        ${sessionsHtml}
+                    </div>
                 </div>`;
             }).join('');
         }
@@ -804,7 +1053,7 @@
         function switchTab(tabId) {
             haptic('light');
             activeTab = tabId;
-            ['tab-courses', 'tab-deadlines', 'tab-grades', 'tab-announcements', 'tab-settings'].forEach(id => {
+            ['tab-courses', 'tab-deadlines', 'tab-grades', 'tab-attendance', 'tab-announcements', 'tab-settings'].forEach(id => {
                 const section = document.getElementById(id);
                 const btn = document.getElementById('tabBtn-' + id.replace('tab-', ''));
                 if (!section || !btn) return;
@@ -993,6 +1242,7 @@
             const resource = document.getElementById('toggleResource').checked;
             const grade = document.getElementById('toggleGrade').checked;
             const announcement = document.getElementById('toggleAnnouncement').checked;
+            const attendance = document.getElementById('toggleAttendance') ? document.getElementById('toggleAttendance').checked : true;
             try {
                 await fetch('/api/update-settings', {
                     method: 'POST',
@@ -1004,6 +1254,7 @@
                         notify_resource: resource ? 1 : 0,
                         notify_grade: grade ? 1 : 0,
                         notify_announcement: announcement ? 1 : 0,
+                        notify_attendance: attendance ? 1 : 0,
                         initData: tg?.initData || ''
                     })
                 });

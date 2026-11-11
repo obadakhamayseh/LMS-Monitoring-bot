@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import logging
@@ -147,6 +148,10 @@ def _main_kb(user=None):
         ],
         [
             InlineKeyboardButton("🎯 كشف العلامات", callback_data="grades_menu"),
+            InlineKeyboardButton("📋 الحضور والغياب", callback_data="attendance_menu"),
+        ],
+        [
+            InlineKeyboardButton("📅 جدول الواجبات",  callback_data="deadlines"),
             InlineKeyboardButton("📢 إعلانات الدكاترة", callback_data="announcements_menu"),
         ],
         [
@@ -154,12 +159,11 @@ def _main_kb(user=None):
             InlineKeyboardButton("⚡ فحص فوري الآن", callback_data="check_now"),
         ],
         [
-            InlineKeyboardButton("📅 جدول المواعيد",  callback_data="deadlines"),
             InlineKeyboardButton("📊 الإحصائيات",     callback_data="stats"),
+            InlineKeyboardButton("⚙️ إعدادات الإشعارات", callback_data="settings"),
         ],
         [
-            InlineKeyboardButton("⚙️ إعدادات الإشعارات", callback_data="settings"),
-            InlineKeyboardButton("🚪 تسجيل الخروج",     callback_data="logout_prompt"),
+            InlineKeyboardButton("🚪 تسجيل الخروج من الجلسة", callback_data="logout_prompt"),
         ],
     ])
     return rows
@@ -541,6 +545,7 @@ async def add_course_got_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     resources = content.get("resources",  [])
     grades    = content.get("grades",     [])
     anns      = content.get("announcements", [])
+    att_list  = content.get("attendance", [])
 
     for item in assigns:
         db.mark_seen(tid, course_id, item["id"], "assign",
@@ -561,6 +566,20 @@ async def add_course_got_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         db.upsert_announcement(tid, course_id, ann["discuss_id"], ann.get("forum_name", ""),
                                ann.get("title", ""), ann.get("author", ""),
                                ann.get("posted_date", ""), "", ann.get("url", ""))
+    for att in att_list:
+        db.upsert_attendance(
+            tid, course_id, att["att_id"],
+            taken_sessions=att.get("taken_sessions", 0),
+            total_sessions=att.get("total_sessions", 0),
+            present_count=att.get("present_count", 0),
+            absent_count=att.get("absent_count", 0),
+            late_count=att.get("late_count", 0),
+            excused_count=att.get("excused_count", 0),
+            points_str=att.get("points_str", ""),
+            percentage_str=att.get("percentage_str", ""),
+            sessions_json=json.dumps(att.get("sessions", []), ensure_ascii=False),
+            url=att.get("url", ""),
+        )
 
     reminder_eng: ReminderEngine = ctx.bot_data.get("reminder_engine")
     if reminder_eng:
@@ -572,7 +591,7 @@ async def add_course_got_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     sections = _build_course_sections(
         course_name, course_id, assigns, quizzes, resources,
-        grades=grades, announcements=anns, new_add=True
+        grades=grades, announcements=anns, attendance=att_list, new_add=True
     )
     kb = [
         [
@@ -650,10 +669,11 @@ async def cancel_conv(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 def _build_course_sections(course_name, course_id, assigns, quizzes, resources,
-                            grades=None, announcements=None, new_add=False):
+                            grades=None, announcements=None, attendance=None, new_add=False):
     MAX = 3500
     grades = grades or []
     announcements = announcements or []
+    attendance = attendance or []
 
     url   = f"https://mulms.mutah.edu.jo/course/view.php?id={course_id}"
     cname = _esc(course_name)
@@ -708,6 +728,20 @@ def _build_course_sections(course_name, course_id, assigns, quizzes, resources,
             atitle = _esc(str(ann.get("title", ""))[:75])
             aurl = ann.get("url", "")
             all_lines.append(f"  • [{atitle}]({aurl})")
+        all_lines.append("")
+
+    if attendance:
+        all_lines.append("📋 *سجل الحضور والغياب (Attendance):*")
+        for att in attendance:
+            taken = att.get("taken_sessions", 0)
+            pres = att.get("present_count", 0)
+            absn = att.get("absent_count", 0)
+            pct = _esc(att.get("percentage_str") or "—")
+            aurl = att.get("url", "")
+            all_lines.append(
+                f"  • [سجل المحاضرات]({aurl}): المحاضرات المسجلة `{taken}` "
+                f"(✅ حاضر: `{pres}` | ❌ غائب: `{absn}` | النسبة: `{pct}`)"
+            )
         all_lines.append("")
 
     footer = "━━━━━━━━━━━━━━━━━━━━━━\n🔔 سيتم إشعارك فور نزول أي محتوى جديد."
@@ -964,20 +998,22 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data == "deadlines":
         if not user:
             await q.answer("سجّل دخولك أولاً!", show_alert=True); return
-        upcoming = db.get_upcoming_deadlines(tid, limit=20)
         courses = db.get_user_courses(tid)
-        all_tasks = []
-        seen_task_ids = {str(r["content_id"]) for r in upcoming}
+        upcoming = db.get_upcoming_deadlines(tid, limit=50)
+        due_map = {str(r["content_id"]): r for r in upcoming}
+
+        grouped_tasks = []
+        total_tasks = 0
         for c in courses:
             c_items = db.get_course_items(tid, c["course_id"])
-            for it in c_items:
-                if it.get("content_type") in ("assign", "quiz") and str(it.get("content_id")) not in seen_task_ids:
-                    it["course_name"] = c["course_name"]
-                    all_tasks.append(it)
+            tasks = [it for it in c_items if it.get("content_type") in ("assign", "quiz")]
+            if tasks:
+                grouped_tasks.append((c["course_name"], tasks))
+                total_tasks += len(tasks)
 
-        if not upcoming and not all_tasks:
+        if not grouped_tasks:
             await _send(q.message,
-                "📅 *جدول المواعيد والمهام*\n\n"
+                "📅 *جدول الواجبات والكويزات حسب المادة*\n\n"
                 "😌 لا توجد واجبات أو كويزات مسجّلة حالياً.\n\n"
                 "_سيتم تحديث الجدول تلقائياً عند فحص المواد._",
                 [
@@ -990,67 +1026,30 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        lines = ["📅 *جدول المواعيد وحالة إنجاز المهام:*\n━━━━━━━━━━━━━━━━━━━━━━"]
-        now_ts = int(time.time())
-        if upcoming:
-            lines.append("\n⏰ *المهام ذات المواعيد القادمة:*")
-            for r in upcoming:
-                diff = r["due_ts"] - now_ts
-                days  = diff // 86400
-                hours = (diff % 86400) // 3600
-                is_sub = bool(r.get("is_submitted"))
-
-                if is_sub:
-                    urgency = "✅"
-                    sub_badge = "✅ *منجز في LMS*"
-                    time_str = f"مكتمل ({days} يوم متبقي)" if days > 0 else "مكتمل"
-                else:
-                    sub_badge = "⏳ *قيد الحل (غير منجز)*"
-                    if diff <= 3600:
-                        urgency = "💥"
-                        time_str = "ساعة أو أقل!"
-                    elif diff <= 10800:
-                        urgency = "🟠"
-                        time_str = f"{hours} ساعة"
-                    elif diff <= 86400:
-                        urgency = "🔴"
-                        time_str = f"{hours} ساعة"
-                    else:
-                        urgency = "🟡" if days <= 3 else "🟢"
-                        time_str = f"{days} يوم {'و' + str(hours) + ' ساعة' if hours else ''}"
-
-                cname = _esc(r.get("course_name", "مادة"))
-                aname = _esc(r.get("content_name", "مهمة"))
-                url   = r.get("content_url", "")
-                due   = _esc(r.get("due_str", ""))
-
-                lines.append(
-                    f"{urgency} [{aname}]({url})\n"
-                    f"    📖 {cname}\n"
-                    f"    📌 الحالة: {sub_badge}\n"
-                    f"    ⏰ `{due}`\n"
-                    f"    ⏳ الوقت المتبقي: *{time_str}*"
-                )
-
-        if all_tasks:
-            lines.append("\n📋 *بقية الكويزات والواجبات في موادك:*")
-            for t in all_tasks[:15]:
+        lines = [f"📅 *الواجبات والكويزات مصنفة حسب المادة ({total_tasks} مهمة):*\n━━━━━━━━━━━━━━━━━━━━━━"]
+        for cname_raw, tasks in grouped_tasks:
+            done_cnt = sum(1 for t in tasks if t.get("is_submitted"))
+            pend_cnt = len(tasks) - done_cnt
+            lines.append(
+                f"\n📖 *{_esc(cname_raw)}*\n"
+                f"   📊 الإنجاز: `✅ {done_cnt} منجز` • `⏳ {pend_cnt} قيد الحل`"
+            )
+            for t in tasks:
+                cid_str = str(t.get("content_id"))
                 is_sub = bool(t.get("is_submitted"))
                 icon = "✅" if is_sub else "⏳"
-                st_txt = "✅ *منجز في LMS*" if is_sub else "⏳ *غير منجز*"
+                st_txt = "منجز في LMS" if is_sub else "قيد الحل"
                 t_label = "كويز" if t.get("content_type") == "quiz" else "واجب"
-                cname = _esc(t.get("course_name", "مادة"))
                 tname = _esc(t.get("content_name", "مهمة"))
                 turl = t.get("content_url", "")
-                tdue = f"\n    ⏰ `{_esc(t['due_date'])}`" if t.get("due_date") else ""
+                due_str = t.get("due_date") or (due_map[cid_str].get("due_str", "") if cid_str in due_map else "")
+                due_part = f"\n      ⏰ `{_esc(due_str)}`" if due_str else ""
                 lines.append(
-                    f"{icon} [{tname}]({turl}) _({t_label})_\n"
-                    f"    📖 {cname}\n"
-                    f"    📌 الحالة: {st_txt}{tdue}"
+                    f"   {icon} [{tname}]({turl}) _({t_label} — {st_txt})_{due_part}"
                 )
 
         await _send(q.message,
-            "\n\n".join(lines)[:3900],
+            "\n".join(lines)[:3900],
             [
                 [InlineKeyboardButton("⚡ فحص وتحديث حالة الإنجاز من LMS", callback_data="check_now")],
                 [
@@ -1209,6 +1208,49 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await loop.run_in_executor(None, _fetch_all_anns)
         await _render_announcements_view(q.message, tid, edit=True)
 
+    elif data == "attendance_menu":
+        if not user:
+            await q.answer("سجّل دخولك أولاً!", show_alert=True); return
+        await _render_attendance_view(q.message, tid, edit=True)
+
+    elif data == "refresh_attendance":
+        if not user:
+            await q.answer("سجّل دخولك أولاً!", show_alert=True); return
+        courses = db.get_user_courses(tid)
+        if not courses:
+            await q.answer("أضف موادك أولاً!", show_alert=True); return
+        await _send(q.message, "⏳ *جارٍ فحص وتحديث سجلات الحضور والغياب من LMS...*", edit=True)
+        loop = asyncio.get_running_loop()
+
+        def _fetch_all_att():
+            sc = LMSScraper(user["lms_username"], user["lms_password"])
+            try:
+                if not sc.login():
+                    return False
+                for c in courses:
+                    cid = c["course_id"]
+                    att_list = sc.get_course_attendance(cid)
+                    for att in att_list:
+                        db.upsert_attendance(
+                            tid, cid, att["att_id"],
+                            taken_sessions=att.get("taken_sessions", 0),
+                            total_sessions=att.get("total_sessions", 0),
+                            present_count=att.get("present_count", 0),
+                            absent_count=att.get("absent_count", 0),
+                            late_count=att.get("late_count", 0),
+                            excused_count=att.get("excused_count", 0),
+                            points_str=att.get("points_str", ""),
+                            percentage_str=att.get("percentage_str", ""),
+                            sessions_json=json.dumps(att.get("sessions", []), ensure_ascii=False),
+                            url=att.get("url", ""),
+                        )
+                return True
+            finally:
+                sc.close()
+
+        await loop.run_in_executor(None, _fetch_all_att)
+        await _render_attendance_view(q.message, tid, edit=True)
+
     elif data == "settings":
         if not user:
             await q.answer("سجّل دخولك أولاً!", show_alert=True); return
@@ -1237,6 +1279,11 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data == "sett_announcement":
         if user:
             db.update_notify_settings(tid, announcement=not user.get("notify_announcement", 1))
+            await _render_settings(q.message, db.get_user(tid), edit=True)
+
+    elif data == "sett_attendance":
+        if user:
+            db.update_notify_settings(tid, attendance=not user.get("notify_attendance", 1))
             await _render_settings(q.message, db.get_user(tid), edit=True)
 
     elif data.startswith("iv_"):
@@ -1417,6 +1464,7 @@ async def _fetch_show_course(msg_obj, tid, user, course_id, edit=False):
     resources = content.get("resources",  [])
     grades    = content.get("grades",     [])
     anns      = content.get("announcements", [])
+    att_list  = content.get("attendance", [])
 
     for item in assigns:
         db.mark_seen(tid, course_id, item["id"], "assign",
@@ -1437,6 +1485,20 @@ async def _fetch_show_course(msg_obj, tid, user, course_id, edit=False):
         db.upsert_announcement(tid, course_id, ann["discuss_id"], ann.get("forum_name", ""),
                                ann.get("title", ""), ann.get("author", ""),
                                ann.get("posted_date", ""), "", ann.get("url", ""))
+    for att in att_list:
+        db.upsert_attendance(
+            tid, course_id, att["att_id"],
+            taken_sessions=att.get("taken_sessions", 0),
+            total_sessions=att.get("total_sessions", 0),
+            present_count=att.get("present_count", 0),
+            absent_count=att.get("absent_count", 0),
+            late_count=att.get("late_count", 0),
+            excused_count=att.get("excused_count", 0),
+            points_str=att.get("points_str", ""),
+            percentage_str=att.get("percentage_str", ""),
+            sessions_json=json.dumps(att.get("sessions", []), ensure_ascii=False),
+            url=att.get("url", ""),
+        )
 
     for task_item in assigns + quizzes:
         if task_item.get("is_submitted"):
@@ -1448,7 +1510,7 @@ async def _fetch_show_course(msg_obj, tid, user, course_id, edit=False):
 
     sections = _build_course_sections(
         course_name, course_id, assigns, quizzes, resources,
-        grades=grades, announcements=anns
+        grades=grades, announcements=anns, attendance=att_list
     )
     keyboard = [
         [
@@ -1555,12 +1617,87 @@ async def _render_announcements_view(msg_obj, tid, edit=False):
     text = "\n".join(lines)[:3900]
     await _send(msg_obj, text, kb, edit=edit)
 
+async def _render_attendance_view(msg_obj, tid, edit=False):
+    att_rows = db.get_user_attendance(tid)
+    kb = [
+        [InlineKeyboardButton("🔄 تحديث الحضور والغياب من LMS الآن", callback_data="refresh_attendance")],
+        [
+            InlineKeyboardButton("📚 موادي المراقَبة", callback_data="my_courses"),
+            InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
+        ],
+    ]
+    if not att_rows:
+        await _send(
+            msg_obj,
+            "📋 *قسم الحضور والغياب (Attendance)*\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            "لا توجد سجلات حضور وغياب مرصودة في موادك حالياً.\n\n"
+            "اضغط على الزر أدناه لفحص موادك وسحب سجلات الحضور من LMS:",
+            kb,
+            edit=edit,
+        )
+        return
+
+    lines = ["📋 *سجل الحضور والغياب في المواد (Attendance)*\n━━━━━━━━━━━━━━━━━━━━━━"]
+    for row in att_rows:
+        cname = _esc(row.get("course_name", "مادة"))
+        taken = row.get("taken_sessions", 0)
+        total = row.get("total_sessions", 0)
+        pres = row.get("present_count", 0)
+        absn = row.get("absent_count", 0)
+        late = row.get("late_count", 0)
+        excu = row.get("excused_count", 0)
+        pts = _esc(row.get("points_str") or "—")
+        pct = _esc(row.get("percentage_str") or "—")
+        url = row.get("url", "")
+
+        sessions = []
+        if row.get("sessions_json"):
+            try:
+                sessions = json.loads(row["sessions_json"])
+            except Exception:
+                sessions = []
+
+        lines.append(
+            f"\n📖 *[{cname}]({url})*\n"
+            f"   📊 المحاضرات المسجلة: `{taken}` من `{total}`\n"
+            f"   ✅ حاضر: `{pres}`  |  ❌ غائب: `{absn}`"
+            + (f"  |  ⏳ متأخر: `{late}`" if late else "")
+            + (f"  |  📝 معذور: `{excu}`" if excu else "")
+            + f"\n   📈 النسبة: `{pct}`  |  🎯 النقاط: `{pts}`"
+        )
+        if sessions:
+            lines.append("   🗓 *سجل المحاضرات المسجلة:*")
+            for s in sessions[-8:]:
+                s_date = _esc(s.get("date", ""))
+                s_st = s.get("status", "")
+                st_low = s_st.lower()
+                if any(k in st_low for k in ("present", "حاضر", "موجود")):
+                    s_icon = "✅"
+                    s_lbl = "حاضر"
+                elif any(k in st_low for k in ("absent", "غائب", "غياب")):
+                    s_icon = "❌"
+                    s_lbl = "غائب"
+                elif any(k in st_low for k in ("late", "متأخر")):
+                    s_icon = "⏳"
+                    s_lbl = "متأخر"
+                else:
+                    s_icon = "📌"
+                    s_lbl = _esc(s_st)
+                lines.append(f"      {s_icon} `{s_date}` — *{s_lbl}*")
+        else:
+            lines.append("   ℹ️ _لم يتم رصد محاضرات في هذا السجل حتى الآن_")
+
+    text = "\n".join(lines)[:3900]
+    await _send(msg_obj, text, kb, edit=edit)
+
 async def _render_settings(msg_obj, user, edit=False):
     a   = "🔔 مفعل" if user.get("notify_assign",       1) else "🔕 معطل"
     q   = "🔔 مفعل" if user.get("notify_quiz",         1) else "🔕 معطل"
     r   = "🔔 مفعل" if user.get("notify_resource",     1) else "🔕 معطل"
     g   = "🔔 مفعل" if user.get("notify_grade",        1) else "🔕 معطل"
     ann = "🔔 مفعل" if user.get("notify_announcement", 1) else "🔕 معطل"
+    att = "🔔 مفعل" if user.get("notify_attendance",   1) else "🔕 معطل"
     iv  = user.get("check_interval", 10)
     iv_txt = _format_interval(iv)
 
@@ -1574,6 +1711,7 @@ async def _render_settings(msg_obj, user, edit=False):
         ],
         [
             InlineKeyboardButton(f"🎯 رادار العلامات: {g}", callback_data="sett_grade"),
+            InlineKeyboardButton(f"📋 الحضور والغياب: {att}", callback_data="sett_attendance"),
         ],
         [
             InlineKeyboardButton(f"📢 إعلانات الدكاترة: {ann}", callback_data="sett_announcement"),
@@ -1605,6 +1743,7 @@ async def _render_settings(msg_obj, user, edit=False):
         f"  • الكويزات: {q}\n"
         f"  • الملفات والموارد: {r}\n"
         f"  • رادار العلامات: {g}\n"
+        f"  • رادار الحضور والغياب: {att}\n"
         f"  • إعلانات الدكاترة: {ann}\n\n"
         f"⏱️ *فترة الفحص الدوري:* كل `{iv_txt}`\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"

@@ -158,6 +158,7 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                 "notify_resource": bool(user.get("notify_resource", 1)),
                 "notify_grade": bool(user.get("notify_grade", 1)),
                 "notify_announcement": bool(user.get("notify_announcement", 1)),
+                "notify_attendance": bool(user.get("notify_attendance", 1)),
                 "last_check": user.get("last_check") or "لم يتم بعد",
             }
 
@@ -245,8 +246,25 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                 })
 
             stats = db.get_stats(tid)
-            grades = db.get_user_grades(tid)
+            raw_grades = db.get_user_grades(tid)
+            grades = [
+                g for g in raw_grades
+                if "/mod/attendance/" not in (g.get("url") or "")
+                and (g.get("item_name") or "").strip().lower() not in ("attendance", "الحضور والغياب", "الحضور")
+            ]
             announcements = db.get_user_announcements(tid, limit=30)
+            raw_attendance = db.get_user_attendance(tid)
+            attendance = []
+            for att_row in raw_attendance:
+                sessions_list = []
+                if att_row.get("sessions_json"):
+                    try:
+                        sessions_list = json.loads(att_row["sessions_json"])
+                    except Exception:
+                        sessions_list = []
+                att_copy = dict(att_row)
+                att_copy["sessions"] = sessions_list
+                attendance.append(att_copy)
 
             total_deadlines = len(deadlines)
             submitted_deadlines = len([d for d in deadlines if d.get("is_submitted")])
@@ -259,6 +277,7 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                 "deadlines": deadlines,
                 "grades": grades,
                 "announcements": announcements,
+                "attendance": attendance,
                 "stats": stats,
                 "progress": {
                     "total": total_deadlines,
@@ -321,6 +340,20 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                 db.upsert_announcement(tid, cid, ann["discuss_id"], ann.get("forum_name", ""),
                                        ann.get("title", ""), ann.get("author", ""),
                                        ann.get("posted_date", ""), "", ann.get("url", ""))
+            for att in content.get("attendance", []):
+                db.upsert_attendance(
+                    tid, cid, att["att_id"],
+                    taken_sessions=att.get("taken_sessions", 0),
+                    total_sessions=att.get("total_sessions", 0),
+                    present_count=att.get("present_count", 0),
+                    absent_count=att.get("absent_count", 0),
+                    late_count=att.get("late_count", 0),
+                    excused_count=att.get("excused_count", 0),
+                    points_str=att.get("points_str", ""),
+                    percentage_str=att.get("percentage_str", ""),
+                    sessions_json=json.dumps(att.get("sessions", []), ensure_ascii=False),
+                    url=att.get("url", ""),
+                )
             if _REMINDER_ENGINE and (assigns or quizzes):
                 _REMINDER_ENGINE.register_assignments(tid, cid, assigns + quizzes)
             for task_item in assigns + quizzes:
@@ -411,7 +444,7 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/update-settings":
             if "check_interval" in payload:
                 db.update_check_interval(tid, int(payload["check_interval"]))
-            if any(k in payload for k in ("notify_assign", "notify_quiz", "notify_resource", "notify_grade", "notify_announcement")):
+            if any(k in payload for k in ("notify_assign", "notify_quiz", "notify_resource", "notify_grade", "notify_announcement", "notify_attendance")):
                 db.update_notify_settings(
                     tid,
                     assign=payload.get("notify_assign"),
@@ -419,6 +452,7 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                     resource=payload.get("notify_resource"),
                     grade=payload.get("notify_grade"),
                     announcement=payload.get("notify_announcement"),
+                    attendance=payload.get("notify_attendance"),
                 )
             self._send_json({"success": True, "message": "تم حفظ الإعدادات"})
             return

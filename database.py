@@ -197,6 +197,27 @@ def init_db():
                     UNIQUE(telegram_id, discuss_id)
                 )
             """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS course_attendance (
+                    id              BIGSERIAL PRIMARY KEY,
+                    telegram_id     BIGINT NOT NULL,
+                    course_id       BIGINT NOT NULL,
+                    att_id          TEXT    NOT NULL,
+                    taken_sessions  INTEGER DEFAULT 0,
+                    total_sessions  INTEGER DEFAULT 0,
+                    present_count   INTEGER DEFAULT 0,
+                    absent_count    INTEGER DEFAULT 0,
+                    late_count      INTEGER DEFAULT 0,
+                    excused_count   INTEGER DEFAULT 0,
+                    points_str      TEXT,
+                    percentage_str  TEXT,
+                    sessions_json   TEXT,
+                    att_url         TEXT,
+                    updated_at      TIMESTAMPTZ DEFAULT NOW(),
+                    FOREIGN KEY(telegram_id) REFERENCES users(telegram_id),
+                    UNIQUE(telegram_id, course_id, att_id)
+                )
+            """)
         else:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS users (
@@ -297,6 +318,27 @@ def init_db():
                     UNIQUE(telegram_id, discuss_id)
                 )
             """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS course_attendance (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    telegram_id     INTEGER NOT NULL,
+                    course_id       INTEGER NOT NULL,
+                    att_id          TEXT    NOT NULL,
+                    taken_sessions  INTEGER DEFAULT 0,
+                    total_sessions  INTEGER DEFAULT 0,
+                    present_count   INTEGER DEFAULT 0,
+                    absent_count    INTEGER DEFAULT 0,
+                    late_count      INTEGER DEFAULT 0,
+                    excused_count   INTEGER DEFAULT 0,
+                    points_str      TEXT,
+                    percentage_str  TEXT,
+                    sessions_json   TEXT,
+                    att_url         TEXT,
+                    updated_at      TEXT    DEFAULT (datetime('now','localtime')),
+                    FOREIGN KEY(telegram_id) REFERENCES users(telegram_id),
+                    UNIQUE(telegram_id, course_id, att_id)
+                )
+            """)
         # Migrate users from the old 10-hour default to the new 1-hour default
         # once, without overwriting later per-user interval choices.
         db.execute("CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY)")
@@ -320,6 +362,7 @@ def init_db():
                 db.execute("ALTER TABLE seen_content ADD COLUMN IF NOT EXISTS is_submitted INTEGER DEFAULT 0")
                 db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_grade INTEGER DEFAULT 1")
                 db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_announcement INTEGER DEFAULT 1")
+                db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_attendance INTEGER DEFAULT 1")
             else:
                 cols = [r["name"] for r in db.fetchall("PRAGMA table_info(reminders)")]
                 if "is_submitted" not in cols:
@@ -332,6 +375,8 @@ def init_db():
                     db.execute("ALTER TABLE users ADD COLUMN notify_grade INTEGER DEFAULT 1")
                 if "notify_announcement" not in ucols:
                     db.execute("ALTER TABLE users ADD COLUMN notify_announcement INTEGER DEFAULT 1")
+                if "notify_attendance" not in ucols:
+                    db.execute("ALTER TABLE users ADD COLUMN notify_attendance INTEGER DEFAULT 1")
         except Exception as e:
             logger.debug(f"Migration for new columns: {e}")
 
@@ -385,7 +430,7 @@ def set_monitoring(telegram_id, status: bool):
                      (1 if status else 0, telegram_id))
 
 def update_notify_settings(telegram_id, assign=None, quiz=None, resource=None,
-                           grade=None, announcement=None):
+                           grade=None, announcement=None, attendance=None):
     with DBContext() as db:
         if assign is not None:
             db.execute("UPDATE users SET notify_assign=? WHERE telegram_id=?", (int(assign), telegram_id))
@@ -397,6 +442,8 @@ def update_notify_settings(telegram_id, assign=None, quiz=None, resource=None,
             db.execute("UPDATE users SET notify_grade=? WHERE telegram_id=?", (int(grade), telegram_id))
         if announcement is not None:
             db.execute("UPDATE users SET notify_announcement=? WHERE telegram_id=?", (int(announcement), telegram_id))
+        if attendance is not None:
+            db.execute("UPDATE users SET notify_attendance=? WHERE telegram_id=?", (int(attendance), telegram_id))
 
 def update_check_interval(telegram_id, minutes: int):
     with DBContext() as db:
@@ -413,6 +460,7 @@ def update_last_check(telegram_id):
 
 def delete_user(telegram_id):
     with DBContext() as db:
+        db.execute("DELETE FROM course_attendance    WHERE telegram_id=?", (telegram_id,))
         db.execute("DELETE FROM course_grades        WHERE telegram_id=?", (telegram_id,))
         db.execute("DELETE FROM course_announcements WHERE telegram_id=?", (telegram_id,))
         db.execute("DELETE FROM seen_content         WHERE telegram_id=?", (telegram_id,))
@@ -432,6 +480,7 @@ def add_course(telegram_id, course_id, course_name, course_url=""):
 
 def remove_course(telegram_id, course_id):
     with DBContext() as db:
+        db.execute("DELETE FROM course_attendance    WHERE telegram_id=? AND course_id=?", (telegram_id, course_id))
         db.execute("DELETE FROM course_grades        WHERE telegram_id=? AND course_id=?", (telegram_id, course_id))
         db.execute("DELETE FROM course_announcements WHERE telegram_id=? AND course_id=?", (telegram_id, course_id))
         db.execute("DELETE FROM user_courses         WHERE telegram_id=? AND course_id=?", (telegram_id, course_id))
@@ -542,6 +591,7 @@ def mark_assignment_submitted(telegram_id, content_id, is_submitted=1):
 
 def clear_all_user_courses(telegram_id):
     with DBContext() as db:
+        db.execute("DELETE FROM course_attendance WHERE telegram_id=?", (telegram_id,))
         db.execute("DELETE FROM reminders WHERE telegram_id=?", (telegram_id,))
         db.execute("DELETE FROM course_grades WHERE telegram_id=?", (telegram_id,))
         db.execute("DELETE FROM course_announcements WHERE telegram_id=?", (telegram_id,))
@@ -729,3 +779,57 @@ def get_user_announcements(telegram_id, course_id=None, limit=30) -> list:
             ORDER BY a.id DESC
             LIMIT ?
         """, (telegram_id, limit))
+
+# ==================== ATTENDANCE (الحضور والغياب) ====================
+
+def get_attendance(telegram_id, course_id, att_id):
+    with DBContext() as db:
+        return db.fetchone(
+            "SELECT * FROM course_attendance WHERE telegram_id=? AND course_id=? AND att_id=?",
+            (telegram_id, course_id, str(att_id))
+        )
+
+def upsert_attendance(telegram_id, course_id, att_id, taken_sessions=0, total_sessions=0,
+                      present_count=0, absent_count=0, late_count=0, excused_count=0,
+                      points_str="", percentage_str="", sessions_json="[]", att_url=""):
+    with DBContext() as db:
+        db.execute("""
+            INSERT INTO course_attendance
+                (telegram_id, course_id, att_id, taken_sessions, total_sessions,
+                 present_count, absent_count, late_count, excused_count,
+                 points_str, percentage_str, sessions_json, att_url)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(telegram_id, course_id, att_id) DO UPDATE SET
+                taken_sessions = excluded.taken_sessions,
+                total_sessions = excluded.total_sessions,
+                present_count  = excluded.present_count,
+                absent_count   = excluded.absent_count,
+                late_count     = excluded.late_count,
+                excused_count  = excluded.excused_count,
+                points_str     = excluded.points_str,
+                percentage_str = excluded.percentage_str,
+                sessions_json  = excluded.sessions_json,
+                att_url        = excluded.att_url
+        """, (telegram_id, course_id, str(att_id), int(taken_sessions or 0), int(total_sessions or 0),
+              int(present_count or 0), int(absent_count or 0), int(late_count or 0), int(excused_count or 0),
+              str(points_str or ""), str(percentage_str or ""), str(sessions_json or "[]"), str(att_url or "")))
+
+def get_user_attendance(telegram_id, course_id=None) -> list:
+    with DBContext() as db:
+        if course_id is not None:
+            return db.fetchall("""
+                SELECT att.*, uc.course_name
+                FROM course_attendance att
+                JOIN user_courses uc
+                  ON att.telegram_id = uc.telegram_id AND att.course_id = uc.course_id
+                WHERE att.telegram_id = ? AND att.course_id = ?
+                ORDER BY att.id ASC
+            """, (telegram_id, course_id))
+        return db.fetchall("""
+            SELECT att.*, uc.course_name
+            FROM course_attendance att
+            JOIN user_courses uc
+              ON att.telegram_id = uc.telegram_id AND att.course_id = uc.course_id
+            WHERE att.telegram_id = ?
+            ORDER BY att.course_id ASC, att.id ASC
+        """, (telegram_id,))
