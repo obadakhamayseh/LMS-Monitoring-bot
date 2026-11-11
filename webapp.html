@@ -430,7 +430,7 @@
                     </div>
                     <div id="loginErrorBox" class="hidden text-[11px] text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-xl px-3 py-2"></div>
                     <button onclick="submitMiniAppLogin()" id="btnSubmitLogin" class="w-full py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-zinc-950 font-bold text-xs transition-all">
-                        تسجيل الدخول واستيراد المقررات
+                        تسجيل الدخول إلى الحساب
                     </button>
                 </div>
             `;
@@ -452,7 +452,7 @@
             if (errBox) errBox.classList.add('hidden');
             if (btn) {
                 btn.disabled = true;
-                btn.innerText = 'جاري التحقق ومزامنة المواد من LMS...';
+                btn.innerText = 'جاري التحقق وتسجيل الدخول...';
             }
             try {
                 const res = await fetch('/api/login', {

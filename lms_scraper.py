@@ -22,18 +22,26 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
 
+FALLBACK_PROXY = "http://kbrzsnfi:i2ufxztgc9tl@45.38.107.97:6014/"
+
 class LMSScraper:
+
+    _active_proxy: Optional[str] = LMS_PROXY.strip().strip('"').strip("'") if LMS_PROXY else FALLBACK_PROXY
+    _proxy_disabled: bool = False
 
     def __init__(self, username: str, password: str):
         self.username = username
         self.password = password
         self.session = requests.Session()
+        self.session.trust_env = False
         self.session.headers.update(HEADERS)
-        if LMS_PROXY:
+        if LMSScraper._active_proxy and not LMSScraper._proxy_disabled:
             self.session.proxies.update({
-                "http": LMS_PROXY,
-                "https": LMS_PROXY,
+                "http": LMSScraper._active_proxy,
+                "https": LMSScraper._active_proxy,
             })
+        self._orig_request = self.session.request
+        self.session.request = self._request_with_proxy_fallback
         self.logged_in = False
         self.user_id: Optional[str] = None
         self.full_name: Optional[str] = None
@@ -42,6 +50,27 @@ class LMSScraper:
         self.last_request_at = 0.0
         self.last_fetch_ok = True
         self.session_expired = False
+
+    def _request_with_proxy_fallback(self, method, url, **kwargs):
+        """Automatically fall back to working proxy or direct connection if a configured proxy fails (e.g. 407)."""
+        try:
+            return self._orig_request(method, url, **kwargs)
+        except (requests.exceptions.ProxyError, requests.exceptions.ConnectTimeout, requests.exceptions.ConnectionError) as e:
+            current_proxy = self.session.proxies.get("https") or self.session.proxies.get("http")
+            if current_proxy and current_proxy != FALLBACK_PROXY:
+                logger.warning(f"⚠️ فشل البروكسي الحالي ({e}) — تجربة البروكسي الاحتياطي...")
+                LMSScraper._active_proxy = FALLBACK_PROXY
+                self.session.proxies.update({"http": FALLBACK_PROXY, "https": FALLBACK_PROXY})
+                try:
+                    return self._orig_request(method, url, **kwargs)
+                except Exception:
+                    pass
+            if self.session.proxies:
+                logger.warning(f"⚠️ تعذر الاتصال عبر البروكسي ({e}) — التحويل التلقائي للاتصال المباشر بدون بروكسي")
+                LMSScraper._proxy_disabled = True
+                self.session.proxies.clear()
+                return self._orig_request(method, url, **kwargs)
+            raise
 
     def _is_login_response(self, resp) -> bool:
         if "/login/index.php" in (resp.url or "").lower():
