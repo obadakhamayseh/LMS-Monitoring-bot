@@ -142,8 +142,8 @@ def _main_kb(user=None):
 
     rows.extend([
         [
-            InlineKeyboardButton("📚 موادي المسجلة", callback_data="my_courses"),
-            InlineKeyboardButton("📥 استيراد موادي تلقائياً", callback_data="sync_courses"),
+            InlineKeyboardButton("📚 موادي المراقَبة", callback_data="my_courses"),
+            InlineKeyboardButton("➕ إضافة مادة للمراقبة", callback_data="add_course_start"),
         ],
         [
             InlineKeyboardButton("🎯 كشف العلامات", callback_data="grades_menu"),
@@ -155,13 +155,10 @@ def _main_kb(user=None):
         ],
         [
             InlineKeyboardButton("📅 جدول المواعيد",  callback_data="deadlines"),
-            InlineKeyboardButton("➕ إضافة برقم ID", callback_data="add_course_start"),
-        ],
-        [
             InlineKeyboardButton("📊 الإحصائيات",     callback_data="stats"),
-            InlineKeyboardButton("⚙️ إعدادات الإشعارات", callback_data="settings"),
         ],
         [
+            InlineKeyboardButton("⚙️ إعدادات الإشعارات", callback_data="settings"),
             InlineKeyboardButton("🚪 تسجيل الخروج",     callback_data="logout_prompt"),
         ],
     ])
@@ -358,20 +355,20 @@ async def login_got_pass(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if monitored_courses and db.get_user(tid).get("is_monitoring"):
             next_step = "موادك المراقبة محفوظة، وسيستأنف البوت متابعتها قريباً."
             actions = [
-                InlineKeyboardButton("📚 موادي المسجلة", callback_data="my_courses"),
+                InlineKeyboardButton("📚 موادي المراقَبة", callback_data="my_courses"),
                 InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
             ]
         elif registered_courses:
-            next_step = "موادك المسجلة محفوظة. يمكنك مراجعتها أو تشغيل المراقبة من القائمة الرئيسية."
+            next_step = "موادك المضافة محفوظة. يمكنك مراجعتها أو إضافة مواد جديدة من القائمة أدناه."
             actions = [
-                InlineKeyboardButton("📚 موادي المسجلة", callback_data="my_courses"),
-                InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
+                InlineKeyboardButton("📚 موادي المراقَبة", callback_data="my_courses"),
+                InlineKeyboardButton("➕ إضافة مادة", callback_data="add_course_start"),
             ]
         else:
-            next_step = "اضغط على الزر أدناه لاستيراد جميع موادك المسجلة تلقائياً بنقرة واحدة:"
+            next_step = "اضغط على «➕ إضافة مادة للمراقبة» لإدخال رقم أو رابط المواد التي ترغب بمراقبتها:"
             actions = [
-                InlineKeyboardButton("📥 استيراد موادي تلقائياً", callback_data="sync_courses"),
-                InlineKeyboardButton("➕ إضافة برقم ID", callback_data="add_course_start"),
+                InlineKeyboardButton("➕ إضافة مادة للمراقبة", callback_data="add_course_start"),
+                InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
             ]
 
         try:
@@ -547,10 +544,12 @@ async def add_course_got_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     for item in assigns:
         db.mark_seen(tid, course_id, item["id"], "assign",
-                     item["name"], item["url"], item.get("due_date", ""))
+                     item["name"], item["url"], item.get("due_date", ""),
+                     is_submitted=1 if item.get("is_submitted") else 0)
     for item in quizzes:
         db.mark_seen(tid, course_id, item["id"], "quiz",
-                     item["name"], item["url"], item.get("due_date", ""))
+                     item["name"], item["url"], item.get("due_date", ""),
+                     is_submitted=1 if item.get("is_submitted") else 0)
     for item in resources:
         db.mark_seen(tid, course_id, item["id"], "resource",
                      item["name"], item["url"])
@@ -565,11 +564,11 @@ async def add_course_got_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     reminder_eng: ReminderEngine = ctx.bot_data.get("reminder_engine")
     if reminder_eng:
-        reminder_eng.register_assignments(tid, course_id, assigns)
+        reminder_eng.register_assignments(tid, course_id, assigns + quizzes)
 
-    for a in assigns:
-        if a.get("is_submitted"):
-            db.mark_assignment_submitted(tid, a["id"], 1)
+    for task_item in assigns + quizzes:
+        if task_item.get("is_submitted"):
+            db.mark_assignment_submitted(tid, task_item["id"], 1)
 
     sections = _build_course_sections(
         course_name, course_id, assigns, quizzes, resources,
@@ -689,7 +688,7 @@ def _build_course_sections(course_name, course_id, assigns, quizzes, resources,
 
     all_lines = []
     all_lines.extend(_section_lines("الواجبات", "📚", assigns, show_due=True, is_assign=True))
-    all_lines.extend(_section_lines("الكويزات", "📝", quizzes, show_due=True, is_assign=False))
+    all_lines.extend(_section_lines("الكويزات", "📝", quizzes, show_due=True, is_assign=True))
     all_lines.extend(_section_lines("الملفات والموارد", "📎", resources, show_due=False, is_assign=False))
 
     graded_items = [g for g in grades if g.get("grade_val")]
@@ -1289,6 +1288,25 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await q.answer("🗑 تم حذف المادة بنجاح", show_alert=True)
         await _render_courses(q.message, tid, edit=True)
 
+    elif data == "clear_all_courses_prompt":
+        await _send(q.message,
+            "🗑 *تأكيد حذف جميع المواد*\n\n"
+            "هل تريد حذف جميع المواد المسجلة حالياً من البوت لإدخال المواد التي تريد مراقبتها فقط؟\n"
+            "_(سيبقى حسابك مسجلاً ولن تحتاج لإعادة تسجيل الدخول)_",
+            [
+                [
+                    InlineKeyboardButton("🗑 نعم، احذف جميع المواد", callback_data="confirm_clear_all_courses"),
+                    InlineKeyboardButton("❌ إلغاء", callback_data="my_courses"),
+                ]
+            ],
+            edit=True
+        )
+
+    elif data == "confirm_clear_all_courses":
+        db.clear_all_user_courses(tid)
+        await q.answer("🗑 تم حذف جميع المواد بنجاح", show_alert=True)
+        await _render_courses(q.message, tid, edit=True)
+
     elif data.startswith("refresh_"):
         course_id = int(data.split("_", 1)[1])
         if not user:
@@ -1300,10 +1318,9 @@ async def _render_courses(msg_obj, tid, edit=False):
     if not courses:
         await _send(msg_obj,
             "📭 *لا توجد مواد مضافة للمراقبة بعد!*\n\n"
-            "يمكنك استيراد جميع موادك تلقائياً بنقرة واحدة من LMS، أو إضافة مادة برقم الـ ID.",
+            "اضغط على الزر أدناه لإضافة المواد التي تريد مراقبتها فقط (عبر رقم الـ ID أو لصق رابط المادة من LMS):",
             [
-                [InlineKeyboardButton("📥 استيراد موادي تلقائياً", callback_data="sync_courses")],
-                [InlineKeyboardButton("➕ إضافة مادة برقم ID", callback_data="add_course_start")],
+                [InlineKeyboardButton("➕ إضافة مادة للمراقبة", callback_data="add_course_start")],
                 [InlineKeyboardButton("🏠 القائمة الرئيسية",  callback_data="main_menu")],
             ],
             edit=edit
@@ -1311,7 +1328,7 @@ async def _render_courses(msg_obj, tid, edit=False):
         return
 
     lines = [
-        "📚 *موادي المسجلة في المراقبة*\n",
+        "📚 *موادي المضافة للمراقبة*\n",
         "💡 _اضغط على اسم المادة لعرض محتوياتها بالكامل، أو تحكّم بها من الأزرار أدناها:_\n"
     ]
     keyboard = []
@@ -1333,8 +1350,8 @@ async def _render_courses(msg_obj, tid, edit=False):
         ])
 
     keyboard.append([
-        InlineKeyboardButton("📥 مزامنة المواد من LMS", callback_data="sync_courses"),
-        InlineKeyboardButton("➕ إضافة برقم ID", callback_data="add_course_start"),
+        InlineKeyboardButton("➕ إضافة مادة جديدة", callback_data="add_course_start"),
+        InlineKeyboardButton("🗑 حذف جميع المواد", callback_data="clear_all_courses_prompt"),
     ])
     keyboard.append([
         InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
@@ -1373,10 +1390,12 @@ async def _fetch_show_course(msg_obj, tid, user, course_id, edit=False):
 
     for item in assigns:
         db.mark_seen(tid, course_id, item["id"], "assign",
-                     item["name"], item["url"], item.get("due_date", ""))
+                     item["name"], item["url"], item.get("due_date", ""),
+                     is_submitted=1 if item.get("is_submitted") else 0)
     for item in quizzes:
         db.mark_seen(tid, course_id, item["id"], "quiz",
-                     item["name"], item["url"], item.get("due_date", ""))
+                     item["name"], item["url"], item.get("due_date", ""),
+                     is_submitted=1 if item.get("is_submitted") else 0)
     for item in resources:
         db.mark_seen(tid, course_id, item["id"], "resource",
                      item["name"], item["url"])
@@ -1389,9 +1408,9 @@ async def _fetch_show_course(msg_obj, tid, user, course_id, edit=False):
                                ann.get("title", ""), ann.get("author", ""),
                                ann.get("posted_date", ""), "", ann.get("url", ""))
 
-    for a in assigns:
-        if a.get("is_submitted"):
-            db.mark_assignment_submitted(tid, a["id"], 1)
+    for task_item in assigns + quizzes:
+        if task_item.get("is_submitted"):
+            db.mark_assignment_submitted(tid, task_item["id"], 1)
 
     course = db.get_course(tid, course_id)
     is_mon = course["is_monitored"] if course else True
@@ -1421,8 +1440,11 @@ async def _render_grades_view(msg_obj, tid, edit=False):
     kb = [
         [InlineKeyboardButton("🔄 تحديث العلامات من LMS الآن", callback_data="refresh_grades")],
         [
-            InlineKeyboardButton("📚 موادي المسجلة", callback_data="my_courses"),
+            InlineKeyboardButton("📚 موادي المراقَبة", callback_data="my_courses"),
             InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
+        ],
+        [
+            InlineKeyboardButton("🚪 تسجيل الخروج من الحساب", callback_data="logout_prompt"),
         ],
     ]
     if not all_grades:
@@ -1465,8 +1487,11 @@ async def _render_announcements_view(msg_obj, tid, edit=False):
     kb = [
         [InlineKeyboardButton("🔄 فحص الإعلانات الجديدة من LMS", callback_data="refresh_announcements")],
         [
-            InlineKeyboardButton("📚 موادي المسجلة", callback_data="my_courses"),
+            InlineKeyboardButton("📚 موادي المراقَبة", callback_data="my_courses"),
             InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
+        ],
+        [
+            InlineKeyboardButton("🚪 تسجيل الخروج من الحساب", callback_data="logout_prompt"),
         ],
     ]
     if not anns:
@@ -1534,8 +1559,11 @@ async def _render_settings(msg_obj, user, edit=False):
             InlineKeyboardButton(f"{'✔ ' if iv==1440 else ''}24 س", callback_data="iv_1440"),
         ],
         [
-            InlineKeyboardButton("📚 موادي المسجلة", callback_data="my_courses"),
+            InlineKeyboardButton("📚 موادي المراقَبة", callback_data="my_courses"),
             InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
+        ],
+        [
+            InlineKeyboardButton("🚪 تسجيل الخروج من الحساب", callback_data="logout_prompt"),
         ],
     ]
 
@@ -1565,9 +1593,37 @@ async def handle_text(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         [[InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu")]]
     )
 
+async def cmd_logout(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return await _reject_unauthorized(update)
+    ctx.user_data.clear()
+    tid = update.effective_user.id
+    user = db.get_user(tid)
+    if not user:
+        await _send(
+            update.message,
+            "ℹ️ *أنت غير مسجل الدخول حالياً.*\n\nاضغط على الزر أدناه لتسجيل الدخول:",
+            [[InlineKeyboardButton("🔑 تسجيل الدخول إلى LMS", callback_data="login_start")]]
+        )
+        return ConversationHandler.END
+    await _send(
+        update.message,
+        "⚠️ *تأكيد تسجيل الخروج من الجلسة*\n\n"
+        "عند تسجيل الخروج سيتم إنهاء جلستك في LMS وحذف بيانات الحساب والمواد من البوت.\n"
+        "هل أنت متأكد من رغبتك بتسجيل الخروج؟",
+        [
+            [
+                InlineKeyboardButton("⚠️ نعم، تسجيل الخروج", callback_data="confirm_logout"),
+                InlineKeyboardButton("❌ إلغاء", callback_data="main_menu"),
+            ]
+        ]
+    )
+    return ConversationHandler.END
+
 async def post_init(app: Application):
     await app.bot.set_my_commands([
         BotCommand("start", "🏠 القائمة الرئيسية"),
+        BotCommand("logout", "🚪 تسجيل الخروج من الحساب"),
     ])
     rem_engine = ReminderEngine(app.bot)
     app.bot_data["reminder_engine"] = rem_engine
@@ -1650,6 +1706,7 @@ def main():
 
     app.add_handler(conv_handler)
     app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("logout", cmd_logout))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 

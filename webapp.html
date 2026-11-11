@@ -170,13 +170,13 @@
 
         <!-- ==================== TAB 1: COURSES ==================== -->
         <section id="tab-courses" class="space-y-3">
-            <!-- Search & Sync Toolbar -->
+            <!-- Search & Clear Toolbar -->
             <div class="flex items-center gap-2">
                 <div class="relative flex-1">
-                    <input type="text" id="courseSearchInput" oninput="filterCourses()" placeholder="بحث في المقررات أو المحتويات..." class="w-full bg-[#11131B] hairline-border rounded-xl px-3.5 py-2 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-500 transition-all">
+                    <input type="text" id="courseSearchInput" oninput="filterCourses()" placeholder="بحث في المقررات المضافة..." class="w-full bg-[#11131B] hairline-border rounded-xl px-3.5 py-2 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-zinc-500 transition-all">
                 </div>
-                <button onclick="triggerSyncCourses()" id="btnSyncCourses" class="px-3 py-2 rounded-xl bg-zinc-900 hover:bg-zinc-800 active:scale-95 text-zinc-200 hairline-border text-[11px] font-semibold shrink-0 flex items-center gap-1.5 transition-all">
-                    <span>📥 مزامنة LMS</span>
+                <button onclick="triggerClearAllCourses()" id="btnClearCourses" class="px-3 py-2 rounded-xl bg-zinc-900 hover:bg-rose-950/40 active:scale-95 text-rose-400 hairline-border text-[11px] font-semibold shrink-0 flex items-center gap-1 transition-all" title="حذف جميع المقررات">
+                    <span>🗑 مسح الكل</span>
                 </button>
             </div>
 
@@ -312,6 +312,17 @@
                     <button onclick="setCheckInterval(30)" id="btnInterval30" class="py-2 rounded-xl text-xs font-semibold hairline-border bg-zinc-900 text-zinc-300 transition-all">30 دقيقة</button>
                     <button onclick="setCheckInterval(60)" id="btnInterval60" class="py-2 rounded-xl text-xs font-semibold hairline-border bg-zinc-900 text-zinc-300 transition-all">1 ساعة</button>
                 </div>
+            </div>
+
+            <!-- Session Logout -->
+            <div class="card-surface rounded-2xl p-4 flex items-center justify-between">
+                <div>
+                    <p class="text-xs font-bold text-rose-400">إنهاء الجلسة وتسجيل الخروج</p>
+                    <p class="text-[11px] text-zinc-500 mt-0.5">تسجيل الخروج من جلسة LMS وإلغاء ربط الحساب الحالي</p>
+                </div>
+                <button onclick="triggerLogout()" id="btnLogout" class="px-3.5 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-400 border border-rose-500/30 text-xs font-bold shrink-0 transition-all">
+                    🚪 تسجيل الخروج
+                </button>
             </div>
 
             <!-- Security Footnote -->
@@ -544,8 +555,8 @@
             if (!courses.length) {
                 container.innerHTML = `
                     <div class="p-8 text-center card-surface rounded-2xl space-y-2">
-                        <p class="text-xs font-semibold text-zinc-300">لم يتم إدراج أي مقررات دراسية بعد</p>
-                        <p class="text-[11px] text-zinc-500">استخدم خيار "استيراد موادي تلقائياً" في البوت لسحب المواد مباشرة من LMS</p>
+                        <p class="text-xs font-semibold text-zinc-300">لا توجد مقررات مضافة للمراقبة حالياً</p>
+                        <p class="text-[11px] text-zinc-500">أدخل رقم المادة (Course ID) أو الصق رابط المادة في الحقل أعلاه لإضافتها للمراقبة</p>
                     </div>`;
                 return;
             }
@@ -565,9 +576,14 @@
                                 <span class="font-mono text-[10px] text-zinc-400 bg-zinc-900 px-2 py-0.5 rounded hairline-border">كود: ${c.id}</span>
                                 <h3 class="text-xs font-bold text-zinc-100 mt-1 leading-snug">${escapeHtml(c.name)}</h3>
                             </div>
-                            <button onclick="toggleCourseMonitoring(${c.id})" class="text-[11px] font-semibold px-2.5 py-1 rounded-lg hairline-border ${c.is_monitored ? 'bg-zinc-900 text-zinc-400 hover:text-rose-400' : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'} transition-all shrink-0">
-                                ${c.is_monitored ? 'إيقاف' : 'تفعيل'}
-                            </button>
+                            <div class="flex items-center gap-1.5 shrink-0">
+                                <button onclick="toggleCourseMonitoring(${c.id})" class="text-[11px] font-semibold px-2.5 py-1 rounded-lg hairline-border ${c.is_monitored ? 'bg-zinc-900 text-zinc-400 hover:text-amber-400' : 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'} transition-all">
+                                    ${c.is_monitored ? 'إيقاف' : 'تفعيل'}
+                                </button>
+                                <button onclick="deleteCourse(${c.id})" class="text-[11px] font-semibold px-2 py-1 rounded-lg hairline-border bg-zinc-900 text-zinc-400 hover:text-rose-400 transition-all" title="حذف المقرر">
+                                    🗑
+                                </button>
+                            </div>
                         </div>
 
                         <!-- Statistics Badges -->
@@ -678,20 +694,15 @@
                             <h4 class="text-xs font-bold text-zinc-100 mt-0.5">${escapeHtml(d.content_name)}</h4>
                         </div>
                         <span class="text-[10px] font-semibold px-2 py-0.5 rounded ${d.is_submitted ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'} shrink-0">
-                            ${d.is_submitted ? '✓ تم التسليم' : 'بانتظار الحل'}
+                            ${d.is_submitted ? '✓ منجز في LMS' : '⏳ قيد الحل في LMS'}
                         </span>
                     </div>
 
                     <div class="hairline-top pt-2 flex items-center justify-between text-[11px] text-zinc-400">
-                        <span class="font-mono text-[10px] text-zinc-400">${d.due_str || 'موعد نهائي محدد'}</span>
+                        <span class="font-mono text-[10px] text-zinc-400">${d.due_str || 'يرصد الإنجاز تلقائياً من LMS'}</span>
                         <div class="flex items-center gap-2">
-                            ${!d.is_submitted ? `
-                                <button onclick="markAsSubmitted('${d.content_id}')" class="px-2.5 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[10px] font-semibold hairline-border transition-all">
-                                    تحديد كمنجز
-                                </button>
-                            ` : ''}
-                            <a href="${d.content_url}" target="_blank" onclick="haptic('light')" class="text-sky-400 hover:underline">
-                                تسليم الواجب ↗
+                            <a href="${d.content_url}" target="_blank" onclick="haptic('light')" class="text-sky-400 hover:underline font-medium">
+                                فتح في LMS ↗
                             </a>
                         </div>
                     </div>
@@ -841,27 +852,61 @@
             }
         }
 
-        async function triggerSyncCourses() {
+        async function deleteCourse(cid) {
             haptic('medium');
-            const btn = document.getElementById('btnSyncCourses');
-            if (btn) btn.innerText = '⏳ جاري الاستيراد...';
             try {
-                const res = await fetch('/api/sync-courses', {
+                const res = await fetch('/api/delete-course', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ tid: getTelegramId(), course_id: cid, initData: tg?.initData || '' })
+                });
+                const d = await res.json();
+                if (d.success) {
+                    await fetchUserData();
+                    showToast('تم حذف المقرر من قائمة المراقبة');
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        async function triggerClearAllCourses() {
+            haptic('medium');
+            if (!appData || !appData.courses || !appData.courses.length) {
+                showToast('لا توجد مقررات لحذفها');
+                return;
+            }
+            try {
+                const res = await fetch('/api/delete-course', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ tid: getTelegramId(), clear_all: true, initData: tg?.initData || '' })
+                });
+                const d = await res.json();
+                if (d.success) {
+                    await fetchUserData();
+                    showToast('تم مسح جميع المقررات — يمكنك الآن إضافة المواد التي تريد مراقبتها فقط');
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        async function triggerLogout() {
+            haptic('medium');
+            const btn = document.getElementById('btnLogout');
+            if (btn) btn.innerText = 'جاري الخروج...';
+            try {
+                const res = await fetch('/api/logout', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '' })
                 });
                 const d = await res.json();
-                await fetchUserData();
                 if (d.success) {
-                    showToast(`تمت مزامنة ${d.synced_count || 0} مقرر من نظام الجامعة بنجاح`);
-                } else {
-                    showToast(d.error || 'تعذر استيراد المقررات تلقائياً', true);
+                    appData = null;
+                    await fetchUserData();
                 }
             } catch(e) {
-                showToast('خطأ أثناء الاتصال بالخادم', true);
+                console.error(e);
             } finally {
-                if (btn) btn.innerText = '📥 مزامنة LMS';
+                if (btn) btn.innerText = '🚪 تسجيل الخروج';
             }
         }
 

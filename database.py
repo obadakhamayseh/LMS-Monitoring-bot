@@ -104,6 +104,7 @@ def init_db():
                     content_name TEXT,
                     content_url  TEXT,
                     due_date     TEXT,
+                    is_submitted INTEGER DEFAULT 0,
                     first_seen   TIMESTAMPTZ DEFAULT NOW(),
                     FOREIGN KEY(telegram_id) REFERENCES users(telegram_id),
                     UNIQUE(telegram_id, content_id, content_type)
@@ -203,6 +204,7 @@ def init_db():
                     content_name TEXT,
                     content_url  TEXT,
                     due_date     TEXT,
+                    is_submitted INTEGER DEFAULT 0,
                     first_seen   TEXT    DEFAULT (datetime('now','localtime')),
                     FOREIGN KEY(telegram_id) REFERENCES users(telegram_id),
                     UNIQUE(telegram_id, content_id, content_type)
@@ -276,16 +278,20 @@ def init_db():
             db.execute("INSERT INTO schema_migrations (version) VALUES (?)",
                        (interval_migration,))
 
-        # Migration: add is_submitted to reminders and notify_grade/notify_announcement to users
+        # Migration: add is_submitted to reminders/seen_content and notify_grade/notify_announcement to users
         try:
             if db.is_pg:
                 db.execute("ALTER TABLE reminders ADD COLUMN IF NOT EXISTS is_submitted INTEGER DEFAULT 0")
+                db.execute("ALTER TABLE seen_content ADD COLUMN IF NOT EXISTS is_submitted INTEGER DEFAULT 0")
                 db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_grade INTEGER DEFAULT 1")
                 db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_announcement INTEGER DEFAULT 1")
             else:
                 cols = [r["name"] for r in db.fetchall("PRAGMA table_info(reminders)")]
                 if "is_submitted" not in cols:
                     db.execute("ALTER TABLE reminders ADD COLUMN is_submitted INTEGER DEFAULT 0")
+                scols = [r["name"] for r in db.fetchall("PRAGMA table_info(seen_content)")]
+                if "is_submitted" not in scols:
+                    db.execute("ALTER TABLE seen_content ADD COLUMN is_submitted INTEGER DEFAULT 0")
                 ucols = [r["name"] for r in db.fetchall("PRAGMA table_info(users)")]
                 if "notify_grade" not in ucols:
                     db.execute("ALTER TABLE users ADD COLUMN notify_grade INTEGER DEFAULT 1")
@@ -456,26 +462,56 @@ def delete_seen(telegram_id, content_id, content_type):
         )
 
 def update_seen_content(telegram_id, content_id, content_type,
-                        name=None, url=None, due=None):
+                        name=None, url=None, due=None, is_submitted=None):
     with DBContext() as db:
-        db.execute(
-            """UPDATE seen_content
-               SET content_name=?, content_url=?, due_date=?
-               WHERE telegram_id=? AND content_id=? AND content_type=?""",
-            (name, url, due, telegram_id, str(content_id), content_type)
-        )
+        if is_submitted is not None:
+            db.execute(
+                """UPDATE seen_content
+                   SET content_name=?, content_url=?, due_date=?, is_submitted=?
+                   WHERE telegram_id=? AND content_id=? AND content_type=?""",
+                (name, url, due, 1 if is_submitted else 0, telegram_id, str(content_id), content_type)
+            )
+        else:
+            db.execute(
+                """UPDATE seen_content
+                   SET content_name=?, content_url=?, due_date=?
+                   WHERE telegram_id=? AND content_id=? AND content_type=?""",
+                (name, url, due, telegram_id, str(content_id), content_type)
+            )
 
 def mark_seen(telegram_id, course_id, content_id, content_type,
-              name=None, url=None, due=None):
+              name=None, url=None, due=None, is_submitted=0):
     with DBContext() as db:
         db.execute("""
             INSERT INTO seen_content
             (telegram_id, course_id, content_id, content_type,
-             content_name, content_url, due_date)
-            VALUES (?,?,?,?,?,?,?)
-            ON CONFLICT(telegram_id, content_id, content_type) DO NOTHING
+             content_name, content_url, due_date, is_submitted)
+            VALUES (?,?,?,?,?,?,?,?)
+            ON CONFLICT(telegram_id, content_id, content_type) DO UPDATE SET
+                due_date = CASE WHEN excluded.due_date <> '' THEN excluded.due_date ELSE seen_content.due_date END,
+                is_submitted = CASE WHEN excluded.is_submitted = 1 THEN 1 ELSE seen_content.is_submitted END
         """, (telegram_id, course_id, str(content_id), content_type,
-              name, url, due))
+              name, url, due, 1 if is_submitted else 0))
+
+def mark_assignment_submitted(telegram_id, content_id, is_submitted=1):
+    val = 1 if is_submitted else 0
+    with DBContext() as db:
+        db.execute(
+            "UPDATE reminders SET is_submitted=? WHERE telegram_id=? AND content_id=?",
+            (val, telegram_id, str(content_id))
+        )
+        db.execute(
+            "UPDATE seen_content SET is_submitted=? WHERE telegram_id=? AND content_id=?",
+            (val, telegram_id, str(content_id))
+        )
+
+def clear_all_user_courses(telegram_id):
+    with DBContext() as db:
+        db.execute("DELETE FROM reminders WHERE telegram_id=?", (telegram_id,))
+        db.execute("DELETE FROM course_grades WHERE telegram_id=?", (telegram_id,))
+        db.execute("DELETE FROM course_announcements WHERE telegram_id=?", (telegram_id,))
+        db.execute("DELETE FROM seen_content WHERE telegram_id=?", (telegram_id,))
+        db.execute("DELETE FROM user_courses WHERE telegram_id=?", (telegram_id,))
 
 def get_stats(telegram_id) -> dict:
     with DBContext() as db:
@@ -507,13 +543,6 @@ def upsert_reminder(telegram_id, course_id, content_id, content_name,
                 is_submitted = CASE WHEN excluded.is_submitted = 1 THEN 1 ELSE reminders.is_submitted END
         """, (telegram_id, course_id, str(content_id), content_name,
               content_url, due_ts, due_str, 1 if is_submitted else 0))
-
-def mark_assignment_submitted(telegram_id, content_id, is_submitted=1):
-    with DBContext() as db:
-        db.execute(
-            "UPDATE reminders SET is_submitted=? WHERE telegram_id=? AND content_id=?",
-            (1 if is_submitted else 0, telegram_id, str(content_id))
-        )
 
 def delete_reminder(telegram_id, content_id):
     with DBContext() as db:

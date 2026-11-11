@@ -228,6 +228,7 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                 if not cid_key or cid_key in seen_deadline_ids:
                     continue
                 seen_deadline_ids.add(cid_key)
+                is_done = bool(aq.get("is_submitted", 0)) or sub_map.get(cid_key, False)
                 deadlines.append({
                     "id": aq.get("id", 0),
                     "content_id": cid_key,
@@ -239,7 +240,7 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                     "due_str": aq.get("due_date") or "متاح في المقرر",
                     "due_ts": 0,
                     "time_remaining": "",
-                    "is_submitted": sub_map.get(cid_key, False),
+                    "is_submitted": is_done,
                     "is_upcoming": False,
                 })
 
@@ -302,10 +303,14 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
         tid = int(OWNER_TELEGRAM_ID)
 
         def _persist_course_content(cid, content):
-            for item in content.get("assignments", []):
-                db.mark_seen(tid, cid, item["id"], "assign", item["name"], item["url"], item.get("due_date", ""))
-            for item in content.get("quizzes", []):
-                db.mark_seen(tid, cid, item["id"], "quiz", item["name"], item["url"], item.get("due_date", ""))
+            assigns = content.get("assignments", [])
+            quizzes = content.get("quizzes", [])
+            for item in assigns:
+                db.mark_seen(tid, cid, item["id"], "assign", item["name"], item["url"],
+                             item.get("due_date", ""), is_submitted=1 if item.get("is_submitted") else 0)
+            for item in quizzes:
+                db.mark_seen(tid, cid, item["id"], "quiz", item["name"], item["url"],
+                             item.get("due_date", ""), is_submitted=1 if item.get("is_submitted") else 0)
             for item in content.get("resources", []):
                 db.mark_seen(tid, cid, item["id"], "resource", item["name"], item["url"])
             for g in content.get("grades", []):
@@ -316,13 +321,13 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                 db.upsert_announcement(tid, cid, ann["discuss_id"], ann.get("forum_name", ""),
                                        ann.get("title", ""), ann.get("author", ""),
                                        ann.get("posted_date", ""), "", ann.get("url", ""))
-            if _REMINDER_ENGINE and content.get("assignments"):
-                _REMINDER_ENGINE.register_assignments(tid, cid, content["assignments"])
-            for a in content.get("assignments", []):
-                if a.get("is_submitted"):
-                    db.mark_assignment_submitted(tid, a["id"], 1)
+            if _REMINDER_ENGINE and (assigns or quizzes):
+                _REMINDER_ENGINE.register_assignments(tid, cid, assigns + quizzes)
+            for task_item in assigns + quizzes:
+                if task_item.get("is_submitted"):
+                    db.mark_assignment_submitted(tid, task_item["id"], 1)
 
-        # 0. Direct Login from Mini App
+        # 0. Direct Login from Mini App (No auto-import of courses — user adds only desired courses)
         if path == "/api/login":
             raw_user = str(payload.get("username") or "").strip().translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789"))
             raw_pass = str(payload.get("password") or "").strip().translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789"))
@@ -337,19 +342,22 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                     return
 
                 db.save_user(tid, raw_user, raw_pass, scraper.user_id, scraper.full_name)
-                # Auto-fetch courses on login
-                courses_list = scraper.get_courses()
-                for c in courses_list:
-                    cid = c["id"]
-                    db.add_course(tid, cid, c["name"], c["url"])
-                    content = scraper.get_course_content(cid)
-                    _persist_course_content(cid, content)
-                if courses_list:
-                    db.set_monitoring(tid, True)
-                    db.update_last_check(tid)
-                self._send_json({"success": True, "courses_synced": len(courses_list)})
+                self._send_json({"success": True})
             finally:
                 scraper.close()
+            return
+
+        # 0.b Logout from Session
+        if path == "/api/logout":
+            if _ENGINE:
+                try:
+                    _ENGINE._discard_session(tid, logout=True)
+                    _ENGINE._auth_required.discard(tid)
+                    _ENGINE._auth_alerted.discard(tid)
+                except Exception:
+                    pass
+            db.delete_user(tid)
+            self._send_json({"success": True})
             return
 
         user = db.get_user(tid)
@@ -434,6 +442,20 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"success": True, "synced_count": added})
             finally:
                 scraper.close()
+            return
+
+        # 5. Delete specific course or clear all courses
+        if path == "/api/delete-course":
+            if payload.get("clear_all"):
+                db.clear_all_user_courses(tid)
+                self._send_json({"success": True, "cleared_all": True})
+                return
+            course_id = payload.get("course_id")
+            if not course_id:
+                self._send_json({"success": False, "error": "course_id مطلوب"}, 400)
+                return
+            db.remove_course(tid, int(course_id))
+            self._send_json({"success": True, "course_id": int(course_id)})
             return
 
         # 6. Add course by ID or URL directly via Mini App

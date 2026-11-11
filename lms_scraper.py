@@ -81,6 +81,26 @@ class LMSScraper:
             logger.warning(f"LMS keepalive failed: {e}")
             return False
 
+    def logout(self):
+        """Terminate the LMS server session and clear local cookies."""
+        try:
+            if self.logged_in and self.sesskey:
+                self.session.get(
+                    f"{LMS_BASE_URL}/login/logout.php?sesskey={self.sesskey}",
+                    timeout=10,
+                    allow_redirects=True,
+                )
+        except Exception as e:
+            logger.debug(f"LMS logout request error: {e}")
+        finally:
+            self.logged_in = False
+            self.sesskey = None
+            try:
+                self.session.cookies.clear()
+            except Exception:
+                pass
+            self.session.close()
+
     def close(self):
         self.session.close()
 
@@ -468,7 +488,10 @@ class LMSScraper:
         result["resources"] = resources
 
         # Supplement assignments & quizzes from the main course page if any were missed by index.php
+        completed_cmids = set()
         if page_soup is not None:
+            completed_cmids = self._extract_course_page_completions(page_soup)
+
             seen_assigns = {a["id"] for a in result["assignments"]}
             for a in page_soup.find_all("a", href=re.compile(r"/mod/assign/view\.php\?id=\d+")):
                 href = a.get("href", "")
@@ -477,20 +500,21 @@ class LMSScraper:
                 id_m = re.search(r"id=(\d+)", href)
                 if not id_m:
                     continue
-                act_id = f"assign_{id_m.group(1)}"
+                cmid = id_m.group(1)
+                act_id = f"assign_{cmid}"
                 if act_id in seen_assigns:
                     continue
                 seen_assigns.add(act_id)
                 name = self._clean_link_text(a)
                 result["assignments"].append({
                     "id": act_id,
-                    "name": name or f"assign #{id_m.group(1)}",
+                    "name": name or f"assign #{cmid}",
                     "url": href,
                     "type": "assign",
                     "course_id": course_id,
                     "due_date": "",
-                    "is_submitted": False,
-                    "submission_text": "",
+                    "is_submitted": cmid in completed_cmids,
+                    "submission_text": "منجز في المقرر" if cmid in completed_cmids else "",
                 })
 
             seen_quizzes = {q["id"] for q in result["quizzes"]}
@@ -501,28 +525,119 @@ class LMSScraper:
                 id_m = re.search(r"id=(\d+)", href)
                 if not id_m:
                     continue
-                act_id = f"quiz_{id_m.group(1)}"
+                cmid = id_m.group(1)
+                act_id = f"quiz_{cmid}"
                 if act_id in seen_quizzes:
                     continue
                 seen_quizzes.add(act_id)
                 name = self._clean_link_text(a)
                 result["quizzes"].append({
                     "id": act_id,
-                    "name": name or f"quiz #{id_m.group(1)}",
+                    "name": name or f"quiz #{cmid}",
                     "url": href,
                     "type": "quiz",
                     "course_id": course_id,
                     "due_date": "",
-                    "is_submitted": False,
-                    "submission_text": "",
+                    "is_submitted": cmid in completed_cmids,
+                    "submission_text": "منجز في المقرر" if cmid in completed_cmids else "",
                 })
 
         # Fetch course grades and announcements
         result["grades"] = self.get_course_grades(course_id)
         result["announcements"] = self.get_course_announcements(course_id, course_soup=page_soup)
 
+        # Cross-reference completion from course page badges & gradebook
+        graded_cmids = {
+            g["item_id"].replace("mod_", "")
+            for g in result["grades"]
+            if g.get("item_id", "").startswith("mod_") and g.get("grade_val")
+        }
+
+        for a in result["assignments"]:
+            cmid = str(a["id"]).replace("assign_", "")
+            if cmid in completed_cmids or cmid in graded_cmids:
+                a["is_submitted"] = True
+
+        for q in result["quizzes"]:
+            cmid = str(q["id"]).replace("quiz_", "")
+            if cmid in completed_cmids or cmid in graded_cmids:
+                q["is_submitted"] = True
+
+        # Deep-check individual assignment & quiz pages when submission or due_date is not yet known
+        for a in result["assignments"][:10]:
+            if (not a.get("is_submitted") or not a.get("due_date")) and a.get("url"):
+                st = self.get_assignment_status(a["url"])
+                if st.get("is_submitted"):
+                    a["is_submitted"] = True
+                    a["submission_text"] = st.get("status_text") or "تم التسليم"
+                if not a.get("due_date") and st.get("due_date"):
+                    a["due_date"] = st["due_date"]
+
+        for q in result["quizzes"][:10]:
+            if (not q.get("is_submitted") or not q.get("due_date")) and q.get("url"):
+                qst = self.get_quiz_status(q["url"])
+                if qst.get("is_submitted"):
+                    q["is_submitted"] = True
+                    q["submission_text"] = qst.get("status_text") or "تم الحل"
+                if not q.get("due_date") and qst.get("due_date"):
+                    q["due_date"] = qst["due_date"]
+
         self.last_fetch_ok = (assign_ok and quiz_ok and res_ok) or (res_ok and page_soup is not None)
         return result
+
+    @staticmethod
+    def _extract_course_page_completions(soup: BeautifulSoup) -> set:
+        """Detect completed activity module IDs (cmids) from Moodle 3.x/4.x course page."""
+        completed = set()
+        if soup is None:
+            return completed
+        try:
+            for act in soup.find_all(["li", "div"], class_=re.compile(r"\bactivity\b|\bactivity-item\b")):
+                cmid = act.get("data-id") or ""
+                if not cmid:
+                    act_id_attr = act.get("id") or ""
+                    m = re.search(r"module-(\d+)", act_id_attr)
+                    if m:
+                        cmid = m.group(1)
+                if not cmid:
+                    link = act.find("a", href=re.compile(r"/mod/\w+/view\.php\?id=(\d+)"))
+                    if link:
+                        m = re.search(r"id=(\d+)", link.get("href", ""))
+                        if m:
+                            cmid = m.group(1)
+                if not cmid:
+                    continue
+
+                # 1. Moodle 4.x completion badge/button (btn-success / bg-success / data-toggletype="manual:undo")
+                comp_region = act.find(attrs={"data-region": "completion-info"}) or act.find(class_=re.compile(r"activity-completion"))
+                if comp_region:
+                    if comp_region.find(class_=re.compile(r"btn-success|bg-success|badge-success")):
+                        completed.add(str(cmid))
+                        continue
+                    undo_btn = comp_region.find(attrs={"data-toggletype": re.compile(r"undo", re.I)})
+                    if undo_btn:
+                        completed.add(str(cmid))
+                        continue
+                    reg_txt = comp_region.get_text(" ", strip=True).lower()
+                    if any(k in reg_txt for k in ["done:", "done", "تم:", "مكتمل", "منجز"]):
+                        if not any(neg in reg_txt for neg in ["to do", "mark as done", "وضع علامة", "غير مكتمل"]):
+                            completed.add(str(cmid))
+                            continue
+
+                # 2. Moodle 3.x completion icon (completion-auto-y / completion-manual-y / completion-auto-pass)
+                for img in act.find_all("img"):
+                    src = (img.get("src") or "").lower()
+                    title = (img.get("title") or img.get("alt") or "").lower()
+                    if any(k in src for k in ["completion-auto-y", "completion-manual-y", "completion-auto-pass"]):
+                        completed.add(str(cmid))
+                        break
+                    if any(k in title for k in ["completed:", "مكتمل:", "تم إنجاز"]):
+                        if "not completed" not in title and "غير مكتمل" not in title:
+                            completed.add(str(cmid))
+                            break
+        except Exception as e:
+            logger.debug(f"Course completion badge parse error: {e}")
+        return completed
 
     @staticmethod
     def _looks_like_date(text: str) -> bool:
@@ -608,8 +723,15 @@ class LMSScraper:
                         s_txt = cells[sub_col_idx].get_text(strip=True)
                         if s_txt and s_txt not in ("-", "—"):
                             submission_text = s_txt
-                            if re.search(r"submitted for grading|تم تسليمها للتقييم|تم التسليم|submitted|مسلّمة", s_txt, re.I):
+                            if re.search(r"submitted for grading|تم تسليمها للتقييم|تم التسليم|submitted|مسلّمة|مسلّم|graded|تم التقييم", s_txt, re.I):
                                 is_submitted = True
+
+                    if grade_col_idx is not None and grade_col_idx < len(cells):
+                        g_txt = cells[grade_col_idx].get_text(strip=True)
+                        if g_txt and g_txt not in ("-", "—", "Empty", "فارغ") and any(ch.isdigit() for ch in g_txt):
+                            is_submitted = True
+                            if not submission_text:
+                                submission_text = f"تم التقييم ({g_txt})"
 
                     for idx, cell in enumerate(cells):
                         # Never mistake the activity name cell or the grade cell for due_date
@@ -829,21 +951,100 @@ class LMSScraper:
                     elif any(k in val_lower for k in ["no attempt", "لا توجد محاولة", "لم تسلم"]):
                         result["is_submitted"] = False
 
-                elif any(k in header for k in ["due date", "تاريخ الاستحقاق", "موعد التسليم"]):
+                elif any(k in header for k in ["due date", "تاريخ الاستحقاق", "موعد التسليم", "يُسلَّم"]):
                     result["due_date"] = val
 
                 elif any(k in header for k in ["grading status", "حالة التقييم"]):
                     result["grading_status"] = val
+                    if any(k in val_lower for k in ["graded", "تم التقييم", "مقيّم"]) and "not graded" not in val_lower and "لم يتم" not in val_lower:
+                        result["is_submitted"] = True
+
+                elif any(k in header for k in ["file submissions", "تسليمات الملفات", "online text", "نص عبر الإنترنت"]):
+                    if val and val not in ("-", "—"):
+                        result["is_submitted"] = True
 
                 elif any(k in header for k in ["time remaining", "الوقت المتبقي"]):
                     result["time_remaining"] = val
+                    if any(k in val_lower for k in ["assignment was submitted", "تم تسليم الواجب", "سُلِّم قبل"]):
+                        result["is_submitted"] = True
 
-            badge = soup.find(class_=re.compile(r"submissionstatussubmitted|badge-success|status-submitted"))
-            if badge and any(k in badge.get_text().lower() for k in ["submitted", "تسليم"]):
-                result["is_submitted"] = True
+            # Moodle 4.x activity dates header (Opened / Due)
+            if not result["due_date"]:
+                act_dates = soup.find(attrs={"data-region": "activity-dates"}) or soup.find(class_=re.compile(r"activity-dates"))
+                if act_dates:
+                    for div in act_dates.find_all(["div", "span", "p"]):
+                        txt = div.get_text(" ", strip=True)
+                        if any(k in txt.lower() for k in ["due:", "تاريخ الاستحقاق:", "موعد التسليم:", "يغلق:"]):
+                            cleaned_due = re.sub(r"^(?:due|تاريخ الاستحقاق|موعد التسليم|يغلق)\s*:?\s*", "", txt, flags=re.I).strip()
+                            if cleaned_due:
+                                result["due_date"] = cleaned_due
+                                break
+
+            badge = soup.find(class_=re.compile(r"submissionstatussubmitted|earlysubmission|gradingstatusgraded|badge-success|status-submitted"))
+            if badge:
+                btxt = badge.get_text(" ", strip=True).lower()
+                if any(k in btxt for k in ["submitted", "تسليم", "مسلّم", "graded", "تم التقييم", "done", "مكتمل"]):
+                    result["is_submitted"] = True
 
         except Exception as e:
             logger.warning(f"Error checking assignment status at {url}: {e}")
+        return result
+
+    def get_quiz_status(self, url: str) -> Dict[str, Any]:
+        """Fetch completion/attempt status and close date for an individual quiz."""
+        result = {
+            "is_submitted": False,
+            "status_text": "",
+            "due_date": "",
+        }
+        try:
+            resp = self.authenticated_get(url, timeout=20)
+            if resp.status_code != 200:
+                return result
+            soup = BeautifulSoup(resp.text, "lxml")
+
+            # 1. Check quiz attempt summary table
+            attempt_table = soup.find("table", class_=re.compile(r"quizattemptsummary"))
+            if attempt_table:
+                for tr in attempt_table.find_all("tr")[1:]:
+                    row_txt = tr.get_text(" ", strip=True).lower()
+                    if any(k in row_txt for k in ["finished", "منتهي", "منتهية", "تم التسليم", "submitted"]):
+                        result["is_submitted"] = True
+                        result["status_text"] = "تم تقديم الاختبار"
+                        break
+
+            # 2. Check final grade heading or feedback
+            if not result["is_submitted"]:
+                grade_info = soup.find(id="feedback") or soup.find(class_=re.compile(r"quizgradefeedback|grade"))
+                if grade_info:
+                    gtxt = grade_info.get_text(" ", strip=True).lower()
+                    if any(k in gtxt for k in ["final grade", "علامتك النهائية", "الدرجة النهائية", "أعلى درجة", "highest grade"]):
+                        result["is_submitted"] = True
+                        result["status_text"] = "تم التقييم"
+
+            # 3. Check Moodle 4.x completion badge on the quiz page itself
+            if not result["is_submitted"]:
+                comp = soup.find(attrs={"data-region": "completion-info"})
+                if comp and comp.find(class_=re.compile(r"btn-success|bg-success|badge-success")):
+                    result["is_submitted"] = True
+                    result["status_text"] = "مكتمل"
+
+            # 4. Extract quiz close / due date
+            act_dates = soup.find(attrs={"data-region": "activity-dates"}) or soup.find(class_=re.compile(r"activity-dates|quizinfo"))
+            if act_dates:
+                for el in act_dates.find_all(["div", "p", "span"]):
+                    txt = el.get_text(" ", strip=True)
+                    if any(k in txt.lower() for k in ["close", "closes", "closed", "يغلق", "إغلاق", "انتهاء", "due"]):
+                        cleaned = re.sub(
+                            r"^(?:this quiz (?:will close|closed|closes) (?:at|on)|closes|due|هذا الاختبار (?:يغلق|أغلق) في|تاريخ الإغلاق|يغلق)\s*:?\s*",
+                            "", txt, flags=re.I
+                        ).strip()
+                        if cleaned and len(cleaned) < 90:
+                            result["due_date"] = cleaned
+                            break
+
+        except Exception as e:
+            logger.debug(f"Error checking quiz status at {url}: {e}")
         return result
 
     def download_resource(self, url: str, max_mb: int = 40) -> Optional[tuple]:

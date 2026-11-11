@@ -177,10 +177,16 @@ class MonitorEngine:
         self._sessions[tid] = (username, password, scraper)
         return scraper
 
-    def _discard_session(self, tid: int):
+    def _discard_session(self, tid: int, logout: bool = False):
         current = self._sessions.pop(int(tid), None)
         if current:
-            current[2].close()
+            if logout:
+                try:
+                    current[2].logout()
+                except Exception:
+                    current[2].close()
+            else:
+                current[2].close()
 
     async def resume_user(self, telegram_id: int, scraper: LMSScraper = None):
         """Resume monitoring with the fresh LMS session created by the login flow."""
@@ -198,7 +204,7 @@ class MonitorEngine:
         tid = int(telegram_id)
         lock = self._user_locks.setdefault(tid, asyncio.Lock())
         async with lock:
-            self._discard_session(tid)
+            self._discard_session(tid, logout=True)
             self._auth_required.discard(tid)
             self._auth_alerted.discard(tid)
             for key in [k for k in self._course_cache if isinstance(k, tuple) and k[0] == tid]:
@@ -318,13 +324,27 @@ class MonitorEngine:
             self._course_cache[cache_key] = (now, content)
 
         assignments = content.get("assignments", [])
+        quizzes = content.get("quizzes", [])
         if self.reminder_engine:
-            self.reminder_engine.register_assignments(tid, cid, assignments)
+            self.reminder_engine.register_assignments(tid, cid, assignments + quizzes)
 
-        # Update assignment submission status in database
-        for a in assignments:
-            if a.get("is_submitted"):
-                db.mark_assignment_submitted(tid, a["id"], 1)
+        # Auto-detect solved/completed assignments & quizzes from LMS and update DB
+        for task_item in assignments + quizzes:
+            if task_item.get("is_submitted"):
+                t_type = task_item.get("type", "assign")
+                existing_seen = db.get_seen_content(tid, task_item["id"], t_type)
+                was_previously_unsubmitted = existing_seen is not None and not bool(existing_seen.get("is_submitted", 0))
+                db.mark_assignment_submitted(tid, task_item["id"], 1)
+                if was_previously_unsubmitted:
+                    t_label = "الواجب" if t_type == "assign" else "الاختبار/المهمة"
+                    done_msg = (
+                        f"✅ *تم رصد إنجاز {t_label} تلقائياً في LMS!*\n"
+                        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"📖 المادة: *{_esc(cname)}*\n"
+                        f"📝 المهمة: *{_esc(task_item.get('name', ''))}*\n"
+                        f"🔕 _تم تحديث حالتها إلى (منجز) وإيقاف التذكيرات الزمنية الخاصة بها تلقائياً._"
+                    )
+                    await self._send(tid, done_msg)
 
         events = []
 
@@ -458,16 +478,19 @@ class MonitorEngine:
                 changes.append("تم تغيير رابط المحتوى")
 
         if not is_new and not changes:
-            # Refresh the stored link if only its temporary query token changed.
-            if (existing.get("content_url") or "") != url:
-                db.update_seen_content(tid, content_id, content_type, name, url, due)
+            # Refresh the stored link or submission status if changed
+            old_sub = bool(existing.get("is_submitted", 0))
+            new_sub = bool(item.get("is_submitted", False))
+            if (existing.get("content_url") or "") != url or (new_sub and not old_sub):
+                db.update_seen_content(tid, content_id, content_type, name, url, due, is_submitted=1 if (old_sub or new_sub) else 0)
             return None
 
+        is_sub_val = 1 if item.get("is_submitted") else 0
         if not enabled:
             if is_new:
-                db.mark_seen(tid, cid, content_id, content_type, name, url, due)
+                db.mark_seen(tid, cid, content_id, content_type, name, url, due, is_submitted=is_sub_val)
             else:
-                db.update_seen_content(tid, content_id, content_type, name, url, due)
+                db.update_seen_content(tid, content_id, content_type, name, url, due, is_submitted=is_sub_val)
             return None
 
         return {
@@ -479,6 +502,7 @@ class MonitorEngine:
             "name": name,
             "url": url,
             "due": due,
+            "is_submitted": is_sub_val,
             "is_new": is_new,
             "changes": changes,
         }
@@ -554,6 +578,7 @@ class MonitorEngine:
         db.mark_seen(
             event["telegram_id"], event["course_id"], event["content_id"],
             event["content_type"], event["name"], event["url"], event["due"],
+            is_submitted=event.get("is_submitted", 0),
         )
 
     @staticmethod
@@ -562,6 +587,7 @@ class MonitorEngine:
             db.update_seen_content(
                 event["telegram_id"], event["content_id"], event["content_type"],
                 event["name"], event["url"], event["due"],
+                is_submitted=event.get("is_submitted", 0),
             )
 
     async def _send(self, chat_id: int, text: str,
