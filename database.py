@@ -565,6 +565,7 @@ def update_seen_content(telegram_id, content_id, content_type,
 
 def mark_seen(telegram_id, course_id, content_id, content_type,
               name=None, url=None, due=None, is_submitted=0):
+    val = 1 if is_submitted else 0
     with DBContext() as db:
         db.execute("""
             INSERT INTO seen_content
@@ -573,20 +574,29 @@ def mark_seen(telegram_id, course_id, content_id, content_type,
             VALUES (?,?,?,?,?,?,?,?)
             ON CONFLICT(telegram_id, content_id, content_type) DO UPDATE SET
                 due_date = CASE WHEN excluded.due_date <> '' THEN excluded.due_date ELSE seen_content.due_date END,
-                is_submitted = excluded.is_submitted
+                is_submitted = CASE WHEN excluded.is_submitted = 1 THEN 1 ELSE seen_content.is_submitted END
         """, (telegram_id, course_id, str(content_id), content_type,
-              name, url, due, 1 if is_submitted else 0))
+              name, url, due, val))
+        if val == 1:
+            cid_str = str(content_id)
+            raw_num = cid_str.replace("assign_", "").replace("quiz_", "")
+            db.execute(
+                "UPDATE reminders SET is_submitted=1 WHERE telegram_id=? AND (content_id=? OR content_id=? OR content_id=?)",
+                (telegram_id, cid_str, f"assign_{raw_num}", f"quiz_{raw_num}")
+            )
 
 def mark_assignment_submitted(telegram_id, content_id, is_submitted=1):
     val = 1 if is_submitted else 0
+    cid_str = str(content_id)
+    raw_num = cid_str.replace("assign_", "").replace("quiz_", "")
     with DBContext() as db:
         db.execute(
-            "UPDATE reminders SET is_submitted=? WHERE telegram_id=? AND content_id=?",
-            (val, telegram_id, str(content_id))
+            "UPDATE reminders SET is_submitted=? WHERE telegram_id=? AND (content_id=? OR content_id=? OR content_id=?)",
+            (val, telegram_id, cid_str, f"assign_{raw_num}", f"quiz_{raw_num}")
         )
         db.execute(
-            "UPDATE seen_content SET is_submitted=? WHERE telegram_id=? AND content_id=?",
-            (val, telegram_id, str(content_id))
+            "UPDATE seen_content SET is_submitted=? WHERE telegram_id=? AND (content_id=? OR content_id=? OR content_id=?)",
+            (val, telegram_id, cid_str, f"assign_{raw_num}", f"quiz_{raw_num}")
         )
 
 def clear_all_user_courses(telegram_id):
@@ -625,7 +635,7 @@ def upsert_reminder(telegram_id, course_id, content_id, content_name,
                 reminded_1h  = CASE WHEN reminders.due_ts IS NULL OR reminders.due_ts <> excluded.due_ts THEN 0 ELSE reminders.reminded_1h END,
                 due_ts       = excluded.due_ts,
                 due_str      = excluded.due_str,
-                is_submitted = excluded.is_submitted
+                is_submitted = CASE WHEN excluded.is_submitted = 1 THEN 1 ELSE reminders.is_submitted END
         """, (telegram_id, course_id, str(content_id), content_name,
               content_url, due_ts, due_str, 1 if is_submitted else 0))
 
@@ -791,7 +801,8 @@ def get_attendance(telegram_id, course_id, att_id):
 
 def upsert_attendance(telegram_id, course_id, att_id, taken_sessions=0, total_sessions=0,
                       present_count=0, absent_count=0, late_count=0, excused_count=0,
-                      points_str="", percentage_str="", sessions_json="[]", att_url=""):
+                      points_str="", percentage_str="", sessions_json="[]", att_url="", url="", **kwargs):
+    final_url = str(url or att_url or "")
     with DBContext() as db:
         db.execute("""
             INSERT INTO course_attendance
@@ -812,7 +823,7 @@ def upsert_attendance(telegram_id, course_id, att_id, taken_sessions=0, total_se
                 att_url        = excluded.att_url
         """, (telegram_id, course_id, str(att_id), int(taken_sessions or 0), int(total_sessions or 0),
               int(present_count or 0), int(absent_count or 0), int(late_count or 0), int(excused_count or 0),
-              str(points_str or ""), str(percentage_str or ""), str(sessions_json or "[]"), str(att_url or "")))
+              str(points_str or ""), str(percentage_str or ""), str(sessions_json or "[]"), final_url))
 
 def get_user_attendance(telegram_id, course_id=None) -> list:
     with DBContext() as db:

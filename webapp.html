@@ -1441,11 +1441,18 @@
             } catch (e) { console.error(e); }
         }
 
+        let isForceChecking = false;
         async function triggerForceCheck() {
+            if (isForceChecking) return;
+            isForceChecking = true;
             haptic('medium');
-            const btn = document.getElementById('btnForceCheck');
-            const origHtml = btn ? btn.innerHTML : '';
-            if (btn) btn.innerHTML = '<span class="animate-spin text-sky-400">↻</span><span>جاري فحص المقررات في LMS...</span>';
+            const btns = document.querySelectorAll('button[onclick*="triggerForceCheck"]');
+            btns.forEach(b => {
+                b.dataset.origHtml = b.innerHTML;
+                b.innerHTML = '<span class="animate-spin text-sky-400 inline-block">↻</span><span>جاري الفحص...</span>';
+                b.disabled = true;
+            });
+            showToast('🔄 جارٍ فحص وتحديث كافة المقررات والواجبات في LMS...');
             try {
                 const res = await fetch('/api/force-check', {
                     method: 'POST',
@@ -1455,14 +1462,18 @@
                 const d = await res.json();
                 await fetchUserData();
                 if (d.success) {
-                    showToast(d.new_items > 0 ? `اكتمل الفحص: تم رصد ${d.new_items} عنصر جديد` : 'اكتمل الفحص الفوري — جميع البيانات محدّثة');
+                    showToast(d.new_items > 0 ? `اكتمل الفحص: تم رصد ${d.new_items} عنصر جديد` : 'اكتمل الفحص الفوري — جميع المهام والبيانات محدّثة');
                 } else {
                     showToast(d.error || 'تعذر إكمال الفحص الفوري', true);
                 }
             } catch (e) {
                 showToast('حدث خطأ أثناء الاتصال بالخادم', true);
             } finally {
-                if (btn) btn.innerHTML = origHtml;
+                btns.forEach(b => {
+                    if (b.dataset.origHtml) b.innerHTML = b.dataset.origHtml;
+                    b.disabled = false;
+                });
+                isForceChecking = false;
             }
         }
 

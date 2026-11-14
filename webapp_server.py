@@ -6,6 +6,7 @@ import logging
 import urllib.parse
 import hmac
 import hashlib
+import concurrent.futures
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from typing import Optional
 
@@ -167,6 +168,30 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
             detailed_courses = []
             all_assigns_and_quizzes = []
 
+            # Build unified submission map from both reminders and seen_content tables
+            with db.DBContext() as ctx:
+                rem_rows = ctx.fetchall("SELECT content_id, is_submitted FROM reminders WHERE telegram_id=?", (tid,))
+                seen_rows = ctx.fetchall("SELECT content_id, is_submitted FROM seen_content WHERE telegram_id=? AND (content_type in ('assign', 'quiz'))", (tid,))
+
+            sub_map = {}
+            for r in rem_rows:
+                if r.get("is_submitted"):
+                    cid_s = str(r["content_id"])
+                    raw = cid_s.replace("assign_", "").replace("quiz_", "")
+                    sub_map[cid_s] = True
+                    sub_map[raw] = True
+                    sub_map[f"assign_{raw}"] = True
+                    sub_map[f"quiz_{raw}"] = True
+            for s in seen_rows:
+                if s.get("is_submitted"):
+                    cid_s = str(s["content_id"])
+                    raw = cid_s.replace("assign_", "").replace("quiz_", "")
+                    sub_map[cid_s] = True
+                    raw = cid_s.replace("assign_", "").replace("quiz_", "")
+                    sub_map[raw] = True
+                    sub_map[f"assign_{raw}"] = True
+                    sub_map[f"quiz_{raw}"] = True
+
             for c in courses:
                 cid = c["course_id"]
                 items = db.get_course_items(tid, cid)
@@ -177,7 +202,7 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                 for aq in assigns + quizzes:
                     all_assigns_and_quizzes.append((c["course_name"], aq))
 
-                done_tasks = sum(1 for i in assigns + quizzes if i.get("is_submitted"))
+                done_tasks = sum(1 for i in assigns + quizzes if bool(i.get("is_submitted")) or sub_map.get(str(i.get("content_id")), False))
                 detailed_courses.append({
                     "id": cid,
                     "name": c["course_name"],
@@ -209,6 +234,7 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
 
                 c_id_str = str(r["content_id"])
                 seen_deadline_ids.add(c_id_str)
+                is_sub = bool(r.get("is_submitted", 0)) or sub_map.get(c_id_str, False)
                 deadlines.append({
                     "id": r["id"],
                     "content_id": c_id_str,
@@ -220,14 +246,9 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                     "due_str": r.get("due_str", ""),
                     "due_ts": r["due_ts"],
                     "time_remaining": time_remaining,
-                    "is_submitted": bool(r.get("is_submitted", 0)),
+                    "is_submitted": is_sub,
                     "is_upcoming": True,
                 })
-
-            # Also include all other assignments and quizzes from seen_content so the tasks tab is always populated
-            with db.DBContext() as ctx:
-                rem_rows = ctx.fetchall("SELECT content_id, is_submitted FROM reminders WHERE telegram_id=?", (tid,))
-                sub_map = {str(r["content_id"]): bool(r.get("is_submitted", 0)) for r in rem_rows}
 
             for cname, aq in all_assigns_and_quizzes:
                 cid_key = str(aq.get("content_id", ""))
@@ -338,30 +359,42 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                              item.get("due_date", ""), is_submitted=1 if item.get("is_submitted") else 0)
             for item in content.get("resources", []):
                 db.mark_seen(tid, cid, item["id"], "resource", item["name"], item["url"])
-            for g in content.get("grades", []):
-                db.upsert_grade(tid, cid, g["item_id"], g.get("item_name", ""),
-                                g.get("grade_val", ""), g.get("grade_max", ""),
-                                g.get("percentage", ""), g.get("feedback", ""), g.get("url", ""))
-            for ann in content.get("announcements", []):
-                db.upsert_announcement(tid, cid, ann["discuss_id"], ann.get("forum_name", ""),
-                                       ann.get("title", ""), ann.get("author", ""),
-                                       ann.get("posted_date", ""), "", ann.get("url", ""))
-            for att in content.get("attendance", []):
-                db.upsert_attendance(
-                    tid, cid, att["att_id"],
-                    taken_sessions=att.get("taken_sessions", 0),
-                    total_sessions=att.get("total_sessions", 0),
-                    present_count=att.get("present_count", 0),
-                    absent_count=att.get("absent_count", 0),
-                    late_count=att.get("late_count", 0),
-                    excused_count=att.get("excused_count", 0),
-                    points_str=att.get("points_str", ""),
-                    percentage_str=att.get("percentage_str", ""),
-                    sessions_json=json.dumps(att.get("sessions", []), ensure_ascii=False),
-                    url=att.get("url", ""),
-                )
+            try:
+                for g in content.get("grades", []):
+                    db.upsert_grade(tid, cid, g["item_id"], g.get("item_name", ""),
+                                    g.get("grade_val", ""), g.get("grade_max", ""),
+                                    g.get("percentage", ""), g.get("feedback", ""), g.get("url", ""))
+            except Exception as ge:
+                logger.warning(f"Error persisting grades for course {cid}: {ge}")
+            try:
+                for ann in content.get("announcements", []):
+                    db.upsert_announcement(tid, cid, ann["discuss_id"], ann.get("forum_name", ""),
+                                           ann.get("title", ""), ann.get("author", ""),
+                                           ann.get("posted_date", ""), "", ann.get("url", ""))
+            except Exception as ae:
+                logger.warning(f"Error persisting announcements for course {cid}: {ae}")
+            try:
+                for att in content.get("attendance", []):
+                    db.upsert_attendance(
+                        tid, cid, att["att_id"],
+                        taken_sessions=att.get("taken_sessions", 0),
+                        total_sessions=att.get("total_sessions", 0),
+                        present_count=att.get("present_count", 0),
+                        absent_count=att.get("absent_count", 0),
+                        late_count=att.get("late_count", 0),
+                        excused_count=att.get("excused_count", 0),
+                        points_str=att.get("points_str", ""),
+                        percentage_str=att.get("percentage_str", ""),
+                        sessions_json=json.dumps(att.get("sessions", []), ensure_ascii=False),
+                        url=att.get("url", ""),
+                    )
+            except Exception as atte:
+                logger.warning(f"Error persisting attendance for course {cid}: {atte}")
             if _REMINDER_ENGINE and (assigns or quizzes):
-                _REMINDER_ENGINE.register_assignments(tid, cid, assigns + quizzes)
+                try:
+                    _REMINDER_ENGINE.register_assignments(tid, cid, assigns + quizzes)
+                except Exception as re:
+                    logger.warning(f"Error registering reminders for course {cid}: {re}")
             for task_item in assigns + quizzes:
                 if task_item.get("is_submitted"):
                     db.mark_assignment_submitted(tid, task_item["id"], 1)
@@ -535,10 +568,25 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                 if not scraper.login():
                     self._send_json({"success": False, "error": scraper.error_message or "فشل تسجيل الدخول إلى LMS"}, 400)
                     return
+
                 new_items = 0
-                for c in courses:
+
+                def _fetch_single_course(c):
                     cid = c["course_id"]
-                    content = scraper.get_course_content(cid)
+                    try:
+                        c_content = scraper.get_course_content(cid)
+                        return cid, c_content
+                    except Exception as e:
+                        logger.warning(f"Error fetching course {cid} in force-check: {e}")
+                        return cid, {}
+
+                max_w = min(4, len(courses))
+                with concurrent.futures.ThreadPoolExecutor(max_workers=max_w) as pool:
+                    course_results = list(pool.map(_fetch_single_course, courses))
+
+                for cid, content in course_results:
+                    if not content:
+                        continue
                     for item in content.get("assignments", []):
                         if not db.is_seen(tid, item["id"], "assign"):
                             new_items += 1
@@ -549,6 +597,7 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                         if not db.is_seen(tid, item["id"], "resource"):
                             new_items += 1
                     _persist_course_content(cid, content)
+
                 db.update_last_check(tid)
                 self._send_json({"success": True, "new_items": new_items})
             finally:

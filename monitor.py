@@ -233,13 +233,23 @@ class MonitorEngine:
         sent_count = 0
         complete = True
         events = []
-        for course in courses:
-            if scraper.session_expired:
-                complete = False
-                break
-            course_events, course_complete = await self._check_course(
-                tid, user, scraper, course, bypass_cache=bypass_cache
-            )
+
+        sem = asyncio.Semaphore(4)
+
+        async def _check_course_safe(course):
+            async with sem:
+                if scraper.session_expired:
+                    return [], False
+                try:
+                    return await self._check_course(
+                        tid, user, scraper, course, bypass_cache=bypass_cache
+                    )
+                except Exception as e:
+                    logger.error(f"Error checking course {course.get('course_id')} for {tid}: {e}")
+                    return [], False
+
+        course_results = await asyncio.gather(*(_check_course_safe(c) for c in courses))
+        for course_events, course_complete in course_results:
             events.extend(course_events)
             complete = complete and course_complete
 
@@ -371,167 +381,176 @@ class MonitorEngine:
                 events.append(event)
 
         # 4. Gradebook & Marks Radar
-        grades_list = content.get("grades", [])
-        existing_course_grades = db.get_user_grades(tid, cid)
-        is_first_grade_seed = len(existing_course_grades) == 0
+        try:
+            grades_list = content.get("grades", [])
+            existing_course_grades = db.get_user_grades(tid, cid)
+            is_first_grade_seed = len(existing_course_grades) == 0
 
-        for g in grades_list:
-            item_id = g["item_id"]
-            item_name = g.get("item_name", "تقييم")
-            grade_val = (g.get("grade_val") or "").strip()
-            grade_max = (g.get("grade_max") or "").strip()
-            pct = (g.get("percentage") or "").strip()
-            fb = (g.get("feedback") or "").strip()
-            g_url = g.get("url", "")
+            for g in grades_list:
+                item_id = g["item_id"]
+                item_name = g.get("item_name", "تقييم")
+                grade_val = (g.get("grade_val") or "").strip()
+                grade_max = (g.get("grade_max") or "").strip()
+                pct = (g.get("percentage") or "").strip()
+                fb = (g.get("feedback") or "").strip()
+                g_url = g.get("url", "")
 
-            old_g = db.get_grade(tid, cid, item_id)
-            old_val = (old_g.get("grade_val") or "").strip() if old_g else ""
+                old_g = db.get_grade(tid, cid, item_id)
+                old_val = (old_g.get("grade_val") or "").strip() if old_g else ""
 
-            db.upsert_grade(tid, cid, item_id, item_name, grade_val, grade_max, pct, fb, g_url)
+                db.upsert_grade(tid, cid, item_id, item_name, grade_val, grade_max, pct, fb, g_url)
 
-            # Notify if a real grade value was newly posted or changed (and not initial course seed)
-            if not is_first_grade_seed and grade_val and grade_val != old_val:
-                if user.get("notify_grade", 1):
-                    g_lines = [
-                        "🎯 *تم رصد علامة جديدة في LMS!*",
-                        "━━━━━━━━━━━━━━━━━━━━━━",
-                        f"📖 المادة: *{_esc(cname)}*",
-                        f"📝 التقييم: *{_esc(item_name)}*",
-                        f"🏆 العلامة: `{_esc(grade_val)}`" + (f" _(المدى: {_esc(grade_max)})_" if grade_max else ""),
-                    ]
-                    if pct:
-                        g_lines.append(f"📊 النسبة: `{_esc(pct)}`")
-                    if fb:
-                        g_lines.append(f"💬 ملاحظات الدكتور: _{_esc(fb[:300])}_")
-                    if g_url:
-                        g_lines.append(f"🔗 [عرض سجل العلامات]({g_url})")
-                    await self._send(tid, "\n".join(g_lines))
+                # Notify if a real grade value was newly posted or changed (and not initial course seed)
+                if not is_first_grade_seed and grade_val and grade_val != old_val:
+                    if user.get("notify_grade", 1):
+                        g_lines = [
+                            "🎯 *تم رصد علامة جديدة في LMS!*",
+                            "━━━━━━━━━━━━━━━━━━━━━━",
+                            f"📖 المادة: *{_esc(cname)}*",
+                            f"📝 التقييم: *{_esc(item_name)}*",
+                            f"🏆 العلامة: `{_esc(grade_val)}`" + (f" _(المدى: {_esc(grade_max)})_" if grade_max else ""),
+                        ]
+                        if pct:
+                            g_lines.append(f"📊 النسبة: `{_esc(pct)}`")
+                        if fb:
+                            g_lines.append(f"💬 ملاحظات الدكتور: _{_esc(fb[:300])}_")
+                        if g_url:
+                            g_lines.append(f"🔗 [عرض سجل العلامات]({g_url})")
+                        await self._send(tid, "\n".join(g_lines))
+        except Exception as ge:
+            logger.warning(f"Error checking grades for course {cid} (user {tid}): {ge}")
 
         # 5. Course Announcements & Forum Radar
-        announcements_list = content.get("announcements", [])
-        existing_course_anns = db.get_user_announcements(tid, cid, limit=5)
-        is_first_ann_seed = len(existing_course_anns) == 0
+        try:
+            announcements_list = content.get("announcements", [])
+            existing_course_anns = db.get_user_announcements(tid, cid, limit=5)
+            is_first_ann_seed = len(existing_course_anns) == 0
 
-        for ann in announcements_list:
-            discuss_id = ann["discuss_id"]
-            existing_ann = db.get_announcement(tid, discuss_id)
-            if existing_ann is not None:
-                continue
+            for ann in announcements_list:
+                discuss_id = ann["discuss_id"]
+                existing_ann = db.get_announcement(tid, discuss_id)
+                if existing_ann is not None:
+                    continue
 
-            body_text = ""
-            author = ann.get("author", "")
-            posted_date = ann.get("posted_date", "")
+                body_text = ""
+                author = ann.get("author", "")
+                posted_date = ann.get("posted_date", "")
 
-            if not is_first_ann_seed and ann.get("url"):
-                details = await loop.run_in_executor(None, scraper.get_announcement_details, ann["url"])
-                body_text = details.get("body", "")
-                author = author or details.get("author", "")
-                posted_date = posted_date or details.get("date", "")
+                if not is_first_ann_seed and ann.get("url"):
+                    details = await loop.run_in_executor(None, scraper.get_announcement_details, ann["url"])
+                    body_text = details.get("body", "")
+                    author = author or details.get("author", "")
+                    posted_date = posted_date or details.get("date", "")
 
-            db.upsert_announcement(
-                tid, cid, discuss_id,
-                ann.get("forum_name", "منتدى المقرر"),
-                ann.get("title", "إعلان جديد"),
-                author, posted_date, body_text, ann.get("url", "")
-            )
+                db.upsert_announcement(
+                    tid, cid, discuss_id,
+                    ann.get("forum_name", "منتدى المقرر"),
+                    ann.get("title", "إعلان جديد"),
+                    author, posted_date, body_text, ann.get("url", "")
+                )
 
-            if not is_first_ann_seed and user.get("notify_announcement", 1):
-                a_lines = [
-                    "📢 *إعلان جديد من مدرس المساق!*",
-                    "━━━━━━━━━━━━━━━━━━━━━━",
-                    f"📖 المادة: *{_esc(cname)}*",
-                    f"📌 الموضوع: *{_esc(ann.get('title', 'إعلان'))}*",
-                ]
-                if author:
-                    a_lines.append(f"👨‍🏫 الناشر: {_esc(author)}")
-                if posted_date:
-                    a_lines.append(f"🕒 التاريخ: `{_esc(posted_date)}`")
-                if body_text:
-                    a_lines.append(f"\n📝 *نص الإعلان:*\n{_esc(body_text[:600])}")
-                if ann.get("url"):
-                    a_lines.append(f"\n🔗 [فتح الإعلان في LMS]({ann['url']})")
-                await self._send(tid, "\n".join(a_lines))
-
-        # 6. Attendance & Absence Radar
-        attendance_list = content.get("attendance", [])
-        for att in attendance_list:
-            att_id = att["att_id"]
-            old_att = db.get_attendance(tid, cid, att_id)
-            is_first_att_seed = old_att is None
-
-            old_sessions_map = {}
-            if old_att and old_att.get("sessions_json"):
-                try:
-                    for s in json.loads(old_att["sessions_json"]):
-                        if s.get("date"):
-                            old_sessions_map[s["date"]] = s.get("status", "")
-                except Exception:
-                    pass
-
-            new_sessions = att.get("sessions", [])
-            db.upsert_attendance(
-                tid,
-                cid,
-                att_id,
-                taken_sessions=att.get("taken_sessions", 0),
-                total_sessions=att.get("total_sessions", 0),
-                present_count=att.get("present_count", 0),
-                absent_count=att.get("absent_count", 0),
-                late_count=att.get("late_count", 0),
-                excused_count=att.get("excused_count", 0),
-                points_str=att.get("points_str", ""),
-                percentage_str=att.get("percentage_str", ""),
-                sessions_json=json.dumps(new_sessions, ensure_ascii=False),
-                url=att.get("url", ""),
-            )
-
-            if not is_first_att_seed and user.get("notify_attendance", 1):
-                changed_sessions = []
-                for s in new_sessions:
-                    s_date = s.get("date", "")
-                    s_status = s.get("status", "")
-                    if not s_date or not s_status:
-                        continue
-                    prev_st = old_sessions_map.get(s_date)
-                    if prev_st != s_status:
-                        changed_sessions.append((s, prev_st))
-
-                for s, prev_st in changed_sessions:
-                    st_low = s.get("status", "").lower()
-                    if any(k in st_low for k in ("present", "حاضر", "موجود")):
-                        st_badge = "✅ حاضر (Present)"
-                    elif any(k in st_low for k in ("absent", "غائب", "غياب")):
-                        st_badge = "❌ غائب (Absent)"
-                    elif any(k in st_low for k in ("late", "متأخر", "تأخير")):
-                        st_badge = "⏳ متأخر (Late)"
-                    elif any(k in st_low for k in ("excused", "معذور", "عذر")):
-                        st_badge = "📝 معذور (Excused)"
-                    else:
-                        st_badge = f"📌 {s.get('status', '')}"
-
-                    att_lines = [
-                        "📋 *تحديث سجل الحضور والغياب في LMS!*",
+                if not is_first_ann_seed and user.get("notify_announcement", 1):
+                    a_lines = [
+                        "📢 *إعلان جديد من مدرس المساق!*",
                         "━━━━━━━━━━━━━━━━━━━━━━",
                         f"📖 المادة: *{_esc(cname)}*",
-                        f"📅 تاريخ المحاضرة: `{_esc(s.get('date', ''))}`",
-                        f"📌 الحالة المسجلة: *{st_badge}*",
+                        f"📌 الموضوع: *{_esc(ann.get('title', 'إعلان'))}*",
                     ]
-                    if prev_st:
-                        att_lines.append(f"🔄 _(تغيرت من: {_esc(prev_st)})_")
-                    if s.get("points"):
-                        att_lines.append(f"🎯 النقاط: `{_esc(s['points'])}`")
-                    if s.get("remarks"):
-                        att_lines.append(f"💬 ملاحظات: _{_esc(s['remarks'])}_")
+                    if author:
+                        a_lines.append(f"👨‍🏫 الناشر: {_esc(author)}")
+                    if posted_date:
+                        a_lines.append(f"🕒 التاريخ: `{_esc(posted_date)}`")
+                    if body_text:
+                        a_lines.append(f"\n📝 *نص الإعلان:*\n{_esc(body_text[:600])}")
+                    if ann.get("url"):
+                        a_lines.append(f"\n🔗 [فتح الإعلان في LMS]({ann['url']})")
+                    await self._send(tid, "\n".join(a_lines))
+        except Exception as ane:
+            logger.warning(f"Error checking announcements for course {cid} (user {tid}): {ane}")
 
-                    att_lines.append(
-                        f"\n📊 *ملخص حضورك في المادة:*\n"
-                        f"✅ حاضر: `{att.get('present_count', 0)}`  |  "
-                        f"❌ غائب: `{att.get('absent_count', 0)}`  |  "
-                        f"📈 النسبة: `{_esc(att.get('percentage_str') or '—')}`"
-                    )
-                    if att.get("url"):
-                        att_lines.append(f"🔗 [فتح سجل الحضور في LMS]({att['url']})")
-                    await self._send(tid, "\n".join(att_lines))
+        # 6. Attendance & Absence Radar
+        try:
+            attendance_list = content.get("attendance", [])
+            for att in attendance_list:
+                att_id = att["att_id"]
+                old_att = db.get_attendance(tid, cid, att_id)
+                is_first_att_seed = old_att is None
+
+                old_sessions_map = {}
+                if old_att and old_att.get("sessions_json"):
+                    try:
+                        for s in json.loads(old_att["sessions_json"]):
+                            if s.get("date"):
+                                old_sessions_map[s["date"]] = s.get("status", "")
+                    except Exception:
+                        pass
+
+                new_sessions = att.get("sessions", [])
+                db.upsert_attendance(
+                    tid,
+                    cid,
+                    att_id,
+                    taken_sessions=att.get("taken_sessions", 0),
+                    total_sessions=att.get("total_sessions", 0),
+                    present_count=att.get("present_count", 0),
+                    absent_count=att.get("absent_count", 0),
+                    late_count=att.get("late_count", 0),
+                    excused_count=att.get("excused_count", 0),
+                    points_str=att.get("points_str", ""),
+                    percentage_str=att.get("percentage_str", ""),
+                    sessions_json=json.dumps(new_sessions, ensure_ascii=False),
+                    url=att.get("url", ""),
+                )
+
+                if not is_first_att_seed and user.get("notify_attendance", 1):
+                    changed_sessions = []
+                    for s in new_sessions:
+                        s_date = s.get("date", "")
+                        s_status = s.get("status", "")
+                        if not s_date or not s_status:
+                            continue
+                        prev_st = old_sessions_map.get(s_date)
+                        if prev_st != s_status:
+                            changed_sessions.append((s, prev_st))
+
+                    for s, prev_st in changed_sessions:
+                        st_low = s.get("status", "").lower()
+                        if any(k in st_low for k in ("present", "حاضر", "موجود")):
+                            st_badge = "✅ حاضر (Present)"
+                        elif any(k in st_low for k in ("absent", "غائب", "غياب")):
+                            st_badge = "❌ غائب (Absent)"
+                        elif any(k in st_low for k in ("late", "متأخر", "تأخير")):
+                            st_badge = "⏳ متأخر (Late)"
+                        elif any(k in st_low for k in ("excused", "معذور", "عذر")):
+                            st_badge = "📝 معذور (Excused)"
+                        else:
+                            st_badge = f"📌 {s.get('status', '')}"
+
+                        att_lines = [
+                            "📋 *تحديث سجل الحضور والغياب في LMS!*",
+                            "━━━━━━━━━━━━━━━━━━━━━━",
+                            f"📖 المادة: *{_esc(cname)}*",
+                            f"📅 تاريخ المحاضرة: `{_esc(s.get('date', ''))}`",
+                            f"📌 الحالة المسجلة: *{st_badge}*",
+                        ]
+                        if prev_st:
+                            att_lines.append(f"🔄 _(تغيرت من: {_esc(prev_st)})_")
+                        if s.get("points"):
+                            att_lines.append(f"🎯 النقاط: `{_esc(s['points'])}`")
+                        if s.get("remarks"):
+                            att_lines.append(f"💬 ملاحظات: _{_esc(s['remarks'])}_")
+
+                        att_lines.append(
+                            f"\n📊 *ملخص حضورك في المادة:*\n"
+                            f"✅ حاضر: `{att.get('present_count', 0)}`  |  "
+                            f"❌ غائب: `{att.get('absent_count', 0)}`  |  "
+                            f"📈 النسبة: `{_esc(att.get('percentage_str') or '—')}`"
+                        )
+                        if att.get("url"):
+                            att_lines.append(f"🔗 [فتح سجل الحضور في LMS]({att['url']})")
+                        await self._send(tid, "\n".join(att_lines))
+        except Exception as atte:
+            logger.warning(f"Error checking attendance for course {cid} (user {tid}): {atte}")
 
         return events, True
 
