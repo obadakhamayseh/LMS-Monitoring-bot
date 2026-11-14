@@ -162,6 +162,10 @@ class MonitorEngine:
                 return
             if complete:
                 db.update_last_check(tid)
+                try:
+                    db.append_sync_log(tid, "فحص دوري ناجح", f"تم فحص {len(courses)} مقررات" + (f" · {count} تحديث جديد" if count > 0 else " · لا تحديثات جديدة"))
+                except Exception:
+                    pass
             else:
                 logger.warning(f"Scan incomplete for {tid}; it will be retried soon")
 
@@ -752,5 +756,9 @@ class MonitorEngine:
                 return count, "انتهت جلسة LMS؛ أعد تسجيل الدخول لاستئناف المراقبة"
             if complete:
                 db.update_last_check(tid)
+                try:
+                    db.append_sync_log(tid, "فحص فوري (تيليجرام)", f"تم فحص {len(courses)} مقررات" + (f" · {count} تحديث جديد" if count > 0 else " · لا تحديثات جديدة"))
+                except Exception:
+                    pass
                 return count, "ok"
             return count, "تعذر إكمال الفحص؛ ستتم إعادة المحاولة"

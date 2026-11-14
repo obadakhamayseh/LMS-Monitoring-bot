@@ -1,4 +1,5 @@
 import os
+import json
 import time
 import sqlite3
 import logging
@@ -363,6 +364,7 @@ def init_db():
                 db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_grade INTEGER DEFAULT 1")
                 db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_announcement INTEGER DEFAULT 1")
                 db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_attendance INTEGER DEFAULT 1")
+                db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS user_meta TEXT DEFAULT '{}'")
             else:
                 cols = [r["name"] for r in db.fetchall("PRAGMA table_info(reminders)")]
                 if "is_submitted" not in cols:
@@ -377,6 +379,8 @@ def init_db():
                     db.execute("ALTER TABLE users ADD COLUMN notify_announcement INTEGER DEFAULT 1")
                 if "notify_attendance" not in ucols:
                     db.execute("ALTER TABLE users ADD COLUMN notify_attendance INTEGER DEFAULT 1")
+                if "user_meta" not in ucols:
+                    db.execute("ALTER TABLE users ADD COLUMN user_meta TEXT DEFAULT '{}'")
         except Exception as e:
             logger.debug(f"Migration for new columns: {e}")
 
@@ -457,6 +461,49 @@ def update_last_check(telegram_id):
             "UPDATE users SET last_check=? WHERE telegram_id=?",
             (now_str, telegram_id)
         )
+
+def get_user_meta(telegram_id) -> dict:
+    with DBContext() as db:
+        row = db.fetchone("SELECT user_meta FROM users WHERE telegram_id=?", (telegram_id,))
+        if not row or not row.get("user_meta"):
+            return {}
+        try:
+            data = json.loads(row["user_meta"])
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+def update_user_meta(telegram_id, patch: dict) -> dict:
+    with DBContext() as db:
+        row = db.fetchone("SELECT user_meta FROM users WHERE telegram_id=?", (telegram_id,))
+        current = {}
+        if row and row.get("user_meta"):
+            try:
+                parsed = json.loads(row["user_meta"])
+                if isinstance(parsed, dict):
+                    current = parsed
+            except Exception:
+                current = {}
+        for k, v in (patch or {}).items():
+            if isinstance(v, dict) and isinstance(current.get(k), dict) and k in ("notes", "course_meta"):
+                current[k].update(v)
+            else:
+                current[k] = v
+        db.execute(
+            "UPDATE users SET user_meta=? WHERE telegram_id=?",
+            (json.dumps(current, ensure_ascii=False), telegram_id)
+        )
+        return current
+
+def append_sync_log(telegram_id, status: str, detail: str):
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
+    meta = get_user_meta(telegram_id)
+    logs = meta.get("sync_logs")
+    if not isinstance(logs, list):
+        logs = []
+    logs.insert(0, {"time": now_str, "status": status, "detail": detail})
+    logs = logs[:15]
+    update_user_meta(telegram_id, {"sync_logs": logs})
 
 def delete_user(telegram_id):
     with DBContext() as db:

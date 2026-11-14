@@ -1,1672 +1,2151 @@
-<!DOCTYPE html>
-<html lang="ar" dir="rtl" class="dark">
+<!doctype html>
+<html lang="ar" dir="rtl">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>بوابة المتابعة الأكاديمية — جامعة مؤتة</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    fontFamily: {
-                        sans: ['"IBM Plex Sans Arabic"', 'sans-serif'],
-                        mono: ['"JetBrains Mono"', 'monospace'],
-                    }
-                }
-            }
-        }
-    </script>
-    <style>
-        * {
-            -webkit-tap-highlight-color: transparent;
-            box-sizing: border-box;
-        }
-        body {
-            font-family: 'IBM Plex Sans Arabic', sans-serif;
-            background-color: #0A0B0E;
-            color: #ECEEF2;
-            overflow-x: hidden;
-        }
-        .font-mono-num {
-            font-family: 'JetBrains Mono', monospace;
-            font-variant-numeric: tabular-nums;
-        }
-        .panel {
-            background-color: #111318;
-            border: 1px solid #1E222B;
-        }
-        .panel-inset {
-            background-color: #0C0E12;
-            border: 1px solid #181C24;
-        }
-        .row-divider > * + * {
-            border-top: 1px solid #1A1D26;
-        }
-        .top-bar {
-            background-color: rgba(10, 11, 14, 0.92);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border-bottom: 1px solid #1A1E26;
-        }
-        .bottom-dock {
-            background-color: rgba(13, 15, 20, 0.96);
-            backdrop-filter: blur(14px);
-            -webkit-backdrop-filter: blur(14px);
-            border-top: 1px solid #1E222B;
-            padding-bottom: calc(0.4rem + env(safe-area-inset-bottom, 0px));
-        }
-        ::-webkit-scrollbar {
-            width: 4px;
-            height: 4px;
-        }
-        ::-webkit-scrollbar-track {
-            background: #0A0B0E;
-        }
-        ::-webkit-scrollbar-thumb {
-            background: #262B36;
-            border-radius: 2px;
-        }
-    </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#2457a7">
+<title>دفتر الطالب | جامعة مؤتة</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root{--paper:#f4f7fb;--surface:#fff;--ink:#1e2d43;--muted:#718096;--line:#e3e9f2;--teal:#2457a7;--teal-pale:#eaf1fc;--amber:#a66a12;--amber-pale:#fff4df;--red:#b54746;--red-pale:#fceeed;--shadow:0 8px 24px rgba(37,65,110,.055)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:'IBM Plex Sans Arabic',sans-serif;font-size:14px;-webkit-tap-highlight-color:transparent}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer}
+.shell{max-width:1260px;margin:auto;padding:0 25px}
+.top{height:70px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.94);display:flex;align-items:center;position:sticky;top:0;z-index:10;backdrop-filter:blur(12px)}
+.top-inner{display:flex;align-items:center;justify-content:space-between;width:100%}
+.brand{display:flex;align-items:center;gap:11px;cursor:pointer}
+.mark{width:38px;height:38px;border-radius:11px;background:var(--teal);color:#fff;display:grid;place-items:center;font-size:18px;font-weight:700;flex-shrink:0}
+.brand strong{display:block;font-size:15px}
+.brand small{display:block;color:var(--muted);font-size:10px}
+.right-head{display:flex;align-items:center;gap:9px}
+.sync{font-size:11px;color:var(--muted);margin-inline:7px}
+.sync b{color:var(--teal)}
+.sync.paused b{color:var(--red)}
+.btn,.icon-btn{border:1px solid var(--line);background:#fff;border-radius:8px;padding:8px 11px;font-size:12px;font-weight:600;transition:background .15s,border-color .15s}
+.btn:hover,.icon-btn:hover{background:#f8fafd}
+.btn:disabled,.icon-btn:disabled{opacity:.6;cursor:not-allowed}
+.btn-primary{background:var(--teal);border-color:var(--teal);color:#fff}
+.btn-primary:hover{background:#1d488c}
+.btn-danger{background:var(--red-pale);border-color:#f3d2d1;color:var(--red)}
+.icon-btn{width:35px;height:35px;padding:0;font-size:17px;position:relative;display:inline-grid;place-items:center}
+.avatar{width:34px;height:34px;border-radius:50%;background:#e7eef9;color:#365b94;display:grid;place-items:center;font-weight:700;cursor:pointer;user-select:none}
+.layout{display:grid;grid-template-columns:205px minmax(0,1fr);gap:29px;padding-top:23px;padding-bottom:65px}
+.side{position:sticky;top:90px;align-self:start;max-height:calc(100vh - 110px);overflow:auto}
+.side-label{font-size:10px;color:#9aa19e;letter-spacing:.06em;margin:4px 12px 9px}
+.nav{display:grid;gap:3px}
+.nav button{border:0;background:transparent;text-align:right;padding:9px 11px;border-radius:8px;color:#65716f;display:flex;align-items:center;gap:9px;width:100%;font-size:12px}
+.nav button:hover{background:#eef3f9}
+.nav button.active{background:var(--teal-pale);color:var(--teal);font-weight:600}
+.nav .ico{width:18px;text-align:center;font-size:15px}
+.nav .count{margin-right:auto;background:#f0f3ef;padding:2px 6px;border-radius:20px;font-size:10px}
+.semester{margin-top:18px;padding:12px;border:1px solid var(--line);border-radius:10px;background:#ffffff8c}
+.semester small{color:var(--muted);font-size:10px}
+.semester strong{display:block;font-size:12px;margin-top:4px}
+.content{min-width:0}
+.page{display:none}
+.page.active{display:block;animation:appear .16s ease}
+@keyframes appear{from{opacity:.6;transform:translateY(3px)}to{opacity:1;transform:none}}
+@keyframes spin{to{transform:rotate(360deg)}}
+.spin{display:inline-block;animation:spin .8s linear infinite}
+.welcome{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:18px;gap:10px;flex-wrap:wrap}
+.welcome h1,.page-title h1{font-size:23px;letter-spacing:-.3px;margin:0 0 3px;font-weight:600}
+.welcome p,.page-title p{margin:0;color:var(--muted);font-size:12px}
+.today{color:var(--muted);font-size:11px;padding-bottom:4px}
+.page-title{margin-bottom:16px}
+.page-title p{line-height:1.7}
+.card{background:#fff;border:1px solid var(--line);border-radius:11px;padding:15px;box-shadow:var(--shadow)}
+.urgent{border-color:#eee6d8;position:relative;overflow:hidden;display:grid;grid-template-columns:1fr auto;align-items:center;gap:10px}
+.urgent:before{content:"";position:absolute;right:0;top:0;bottom:0;width:3px;background:#d99b3e}
+.eyebrow{font-size:10px;color:var(--amber);font-weight:600;margin-bottom:5px}
+.urgent h2{font-size:15px;margin:0 0 3px;font-weight:600}
+.urgent p{font-size:11px;color:var(--muted);margin:0}
+.due{display:inline-flex;align-items:center;gap:5px;margin-top:9px;color:#805619;background:var(--amber-pale);padding:4px 8px;border-radius:6px;font-size:10px}
+.due.late{background:var(--red-pale);color:var(--red)}
+.section-head{display:flex;justify-content:space-between;align-items:center;margin:20px 0 10px;gap:8px}
+.section-head h2{font-size:15px;margin:0;font-weight:600}
+.section-head button,.text-link{font-size:11px;color:var(--teal);text-decoration:none;background:none;border:0;padding:0;text-align:right}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}
+.stat{padding:12px;background:#fff;border:1px solid var(--line);border-radius:10px;cursor:pointer;transition:border-color .15s}
+.stat:hover{border-color:#c6d5ec}
+.stat-top{display:flex;align-items:center;justify-content:space-between;color:var(--muted);font-size:10px}
+.stat-icon{color:var(--teal);background:var(--teal-pale);width:25px;height:25px;border-radius:7px;display:grid;place-items:center}
+.stat strong{font-size:20px;display:block;margin:5px 0 1px;font-weight:600}
+.stat small{color:var(--muted);font-size:10px}
+.course-list,.task-list,.notice-list,.file-list,.generic-list{display:grid;gap:8px}
+.course,.task,.notice,.file-row,.generic-row{background:#fff;border:1px solid var(--line);border-radius:9px;padding:11px 13px;display:grid;grid-template-columns:1fr auto;align-items:center;gap:10px}
+.course-title,.item-title{font-size:12px;font-weight:600;line-height:1.5;word-break:break-word}
+.course-meta,.item-meta{font-size:10px;color:var(--muted);margin-top:3px;line-height:1.6;word-break:break-word}
+.course-end{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.pill{font-size:9px;padding:4px 7px;border-radius:20px;background:var(--teal-pale);color:var(--teal);white-space:nowrap;font-weight:600}
+.pill.warn{background:var(--amber-pale);color:var(--amber)}
+.pill.red{background:var(--red-pale);color:var(--red)}
+.pill.good{background:#e8f5ed;color:#28724b}
+.pill.purple{background:#f2edfc;color:#6847a5}
+.pill.neutral{background:#f0f2f5;color:#64748b}
+.chev{color:#98a29f;font-size:16px}
+.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0}
+.field{background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:0;font-size:12px}
+.search{flex:1}
+.progress{height:5px;background:#edf0ed;border-radius:9px;overflow:hidden;margin-top:8px}
+.progress i{height:100%;display:block;background:var(--teal);border-radius:9px}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:11px}
+.empty{background:#fff;padding:24px;text-align:center;border:1px dashed #d9dfda;border-radius:10px;color:var(--muted);font-size:12px}
+.notice{align-items:start;grid-template-columns:30px 1fr auto}
+.notice.unread{border-right:3px solid var(--teal)}
+.notice-mark{width:29px;height:29px;border-radius:8px;background:var(--teal-pale);color:var(--teal);display:grid;place-items:center;font-weight:700}
+.setting{display:flex;justify-content:space-between;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line);gap:14px;background:white}
+.setting:first-child{border-radius:10px 10px 0 0}
+.setting:last-child{border:0;border-radius:0 0 10px 10px}
+.setting strong{font-size:12px}
+.setting p{margin:3px 0 0;color:var(--muted);font-size:10px}
+.switch{accent-color:var(--teal);width:17px;height:17px;cursor:pointer}
+.calendar{display:grid;grid-template-columns:repeat(7,minmax(105px,1fr));overflow:auto;gap:7px;padding-bottom:4px}
+.day{background:#fff;border:1px solid var(--line);border-radius:9px;padding:9px;min-height:155px}
+.day.today-col{border-color:var(--teal);background:#fbfdff}
+.day h3{margin:0 0 8px;font-size:11px;display:flex;justify-content:space-between;align-items:center}
+.event{background:var(--teal-pale);color:#365b94;border-radius:6px;padding:6px;margin:5px 0;font-size:10px;line-height:1.5;width:100%;text-align:right;border:0;display:block}
+.event.assignment{background:var(--amber-pale);color:#805619;cursor:pointer}
+.event.done-ev{background:#e8f5ed;color:#28724b;cursor:pointer}
+.event small{display:block;font-size:9px;opacity:.85}
+.table-wrap{overflow-x:auto;border-radius:10px;border:1px solid var(--line);background:#fff}
+.table{width:100%;border-collapse:collapse;background:#fff;font-size:11px}
+.table th,.table td{text-align:right;padding:10px;border-bottom:1px solid var(--line)}
+.table th{color:var(--muted);font-weight:500;background:#fafbf9;white-space:nowrap}
+.table tr:last-child td{border:0}
+.callout{background:#f9f7f0;border:1px solid #ece7d7;color:#6c5a36;border-radius:9px;padding:10px 12px;font-size:11px;line-height:1.7;margin:10px 0}
+.callout.info{background:var(--teal-pale);border-color:#d5e1f2;color:#365b94}
+.modal-back{position:fixed;inset:0;background:#15211f66;z-index:30;display:none;align-items:center;justify-content:center;padding:18px;backdrop-filter:blur(2px)}
+.modal{background:#fff;border-radius:13px;width:min(530px,100%);max-height:85vh;overflow:auto;padding:20px;box-shadow:0 20px 60px #0002}
+.modal-head{display:flex;justify-content:space-between;align-items:start;gap:10px}
+.modal h2{font-size:17px;margin:0;line-height:1.4}
+.close{border:0;background:#f1f3ef;border-radius:7px;width:30px;height:30px;flex-shrink:0;font-size:16px}
+.actions{display:flex;flex-wrap:wrap;gap:7px;margin-top:10px;align-items:center}
+.toast{position:fixed;bottom:82px;left:50%;transform:translateX(-50%);background:#203655;color:#fff;padding:10px 15px;border-radius:9px;box-shadow:var(--shadow);display:none;z-index:40;font-size:11px;max-width:90%;text-align:center}
+.help-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.help-card{background:white;border:1px solid var(--line);border-radius:9px;padding:12px}
+.help-card strong{font-size:12px}
+.help-card p{font-size:10px;line-height:1.7;color:var(--muted);margin:5px 0 0}
+.bottom{display:none}
+.footnote{font-size:10px;color:#919a96;margin-top:14px;line-height:1.7}
+.tag{font-size:9px;border-radius:20px;padding:3px 8px;background:#f1f3ef;color:#64716c;display:inline-flex;align-items:center;gap:4px}
+.form-grid{display:grid;gap:10px;margin-top:10px}
+.form-grid label{font-size:11px;font-weight:600;display:block;margin-bottom:4px;color:var(--ink)}
+@media(max-width:900px){
+  .layout{grid-template-columns:175px minmax(0,1fr);gap:18px}
+  .stats{grid-template-columns:repeat(2,1fr)}
+}
+@media(max-width:690px){
+  .shell{padding:0 15px}
+  .top{height:61px}
+  .layout{display:block;padding-top:19px;padding-bottom:95px}
+  .side{display:none}
+  .welcome h1,.page-title h1{font-size:20px}
+  .welcome{align-items:flex-start}
+  .today{display:none}
+  .stats{gap:7px}
+  .stat{padding:10px}
+  .stat strong{font-size:18px}
+  .urgent{padding:13px;grid-template-columns:1fr}
+  .bottom{display:flex;position:fixed;bottom:0;inset-inline:0;background:rgba(255,255,255,.97);border-top:1px solid var(--line);justify-content:space-around;padding:7px 3px calc(7px + env(safe-area-inset-bottom));z-index:10;backdrop-filter:blur(12px)}
+  .bottom button{border:0;background:none;color:#79837f;display:grid;justify-items:center;gap:2px;font-size:9px;padding:2px;position:relative}
+  .bottom button.active{color:var(--teal);font-weight:600}
+  .bottom span:first-child{font-size:15px}
+  .sync{font-size:9px;margin:0}
+  .sync .sync-long{display:none}
+  .right-head{gap:5px}
+  .grid2{grid-template-columns:1fr}
+  .calendar{grid-template-columns:repeat(7,118px)}
+  .table th,.table td{padding:8px 6px}
+  .help-grid{grid-template-columns:1fr}
+  .toolbar .search{flex-basis:100%}
+  .toast{bottom:75px}
+  .course,.task{grid-template-columns:1fr;gap:8px}
+  .course-end{justify-content:space-between;width:100%;border-top:1px solid #f1f4f9;padding-top:7px}
+}
+@media(max-width:380px){
+  .brand small{font-size:9px}
+  .stats{grid-template-columns:1fr 1fr}
+  .sync{display:none}
+  .course-end{gap:5px}
+  .pill{font-size:8.5px}
+  .btn{padding:7px 8px}
+}
+</style>
 </head>
-<body class="min-h-screen pb-28 selection:bg-sky-500/20 selection:text-sky-300">
+<body>
+<header class="top">
+  <div class="shell top-inner">
+    <div class="brand" onclick="go('home')">
+      <div class="mark">م</div>
+      <div>
+        <strong>دفتر الطالب</strong>
+        <small>جامعة مؤتة · المتابعة الأكاديمية</small>
+      </div>
+    </div>
+    <div class="right-head">
+      <div class="sync" id="syncBox">● <b id="syncState">مزامنة نشطة</b> <span id="syncLong" class="sync-long">· آخر فحص <span id="syncWhen">الآن</span></span></div>
+      <button class="icon-btn" title="مركز الإشعارات" onclick="go('notifications')">♧<sup id="bellCount" style="font-size:8px;color:#a14f49;font-weight:700"></sup></button>
+      <button class="icon-btn" id="btnSyncTop" title="مزامنة الآن من LMS" onclick="syncNow()">↻</button>
+      <div class="avatar" id="userAvatar" title="الإعدادات والحساب" onclick="go('settings')">ط</div>
+    </div>
+  </div>
+</header>
 
-    <!-- ==================== STICKY HEADER ==================== -->
-    <header class="sticky top-0 z-40 top-bar px-3.5 py-2.5">
-        <div class="max-w-xl mx-auto flex items-center justify-between gap-2">
-            <div class="flex items-center gap-2.5 min-w-0 flex-1">
-                <div id="userAvatar" class="w-9 h-9 rounded-lg bg-[#171A22] border border-[#262B36] flex items-center justify-center font-bold text-xs text-sky-400 shrink-0">
-                    --
-                </div>
-                <div class="min-w-0 flex-1">
-                    <div class="flex items-center flex-wrap gap-1.5">
-                        <h1 id="userFullName" class="text-xs font-bold text-zinc-100 leading-tight break-words">جاري التحميل...</h1>
-                        <span id="userStdId" class="font-mono-num text-[10px] px-1.5 py-0.5 rounded bg-[#161922] text-zinc-400 border border-[#232834] shrink-0">---</span>
-                    </div>
-                    <div class="flex items-center flex-wrap gap-x-1.5 gap-y-0.5 mt-0.5 text-[10px] text-zinc-400">
-                        <span>جامعة مؤتة</span>
-                        <span>•</span>
-                        <span id="lastCheckHeader" class="break-words">آخر فحص: --</span>
-                    </div>
-                </div>
-            </div>
+<div class="shell layout">
+  <aside class="side">
+    <div class="side-label">مساحة الطالب</div>
+    <nav class="nav" id="sideNav"></nav>
+    <div class="semester">
+      <small>الفصل الدراسي</small>
+      <strong>الأول · ٢٠٢٦ / ٢٠٢٧</strong>
+    </div>
+    <p class="footnote" id="sideStatusNote">متصل بنظام التعليم الإلكتروني (Moodle LMS) لجامعة مؤتة</p>
+  </aside>
+  <main class="content" id="content">
+    <div class="empty">جارٍ تحميل بياناتك الأكاديمية...</div>
+  </main>
+</div>
 
-            <div class="flex items-center gap-1.5 shrink-0">
-                <button onclick="refreshData()" class="p-2 rounded-lg bg-[#151821] hover:bg-[#1C202B] text-zinc-300 border border-[#232834] transition-colors" title="تحديث البيانات">
-                    <svg id="refreshIcon" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
-                    </svg>
-                </button>
-                <button onclick="triggerToggleMonitor()" id="monitoringBadge" class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 transition-all">
-                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                    <span>نشط</span>
-                </button>
-            </div>
+<nav class="bottom" id="bottomNav"></nav>
+<div class="toast" id="toast"></div>
+<div class="modal-back" id="modalBack" onclick="if(event.target===this)closeModal()">
+  <div class="modal" id="modal"></div>
+</div>
+
+<script>
+const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+if (tg) {
+  try {
+    tg.ready();
+    tg.expand();
+    if (tg.setHeaderColor) tg.setHeaderColor('#ffffff');
+    if (tg.setBackgroundColor) tg.setBackgroundColor('#f4f7fb');
+  } catch (e) {}
+}
+
+function getTelegramId() {
+  if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id) {
+    return String(tg.initDataUnsafe.user.id);
+  }
+  const p = new URLSearchParams(window.location.search);
+  return p.get('tid') || '';
+}
+
+const navItems = [
+  ['home', '⌂', 'الرئيسية'],
+  ['week', '▦', 'الأسبوع'],
+  ['courses', '▤', 'المقررات'],
+  ['tasks', '☷', 'المهام'],
+  ['grades', '▥', 'العلامات'],
+  ['attendance', '✓', 'الحضور'],
+  ['announcements', '♧', 'الإعلانات'],
+  ['files', '▧', 'الملفات'],
+  ['notifications', '◉', 'الإشعارات'],
+  ['settings', '⚙', 'الإعدادات'],
+  ['help', '?', 'المساعدة']
+];
+
+// State
+let active = 'home';
+let selectedCourse = null;
+let weekOffset = 0;
+let isSyncing = false;
+let isLoggedIn = false;
+let userProfile = {
+  full_name: 'طالب جامعة مؤتة',
+  lms_username: '',
+  is_monitoring: true,
+  check_interval: 10,
+  last_check: 'لم يتم بعد',
+  notify_assign: true,
+  notify_quiz: true,
+  notify_resource: true,
+  notify_grade: true,
+  notify_announcement: true,
+  notify_attendance: true
+};
+
+let courses = [];
+let tasks = [];
+let grades = [];
+let attendanceList = [];
+let announcements = [];
+let files = [];
+
+// Local + Server synced personal workspace state
+const savedLocal = JSON.parse(localStorage.getItem('mutahStudentNotebook') || '{}');
+let doneSet = new Set(savedLocal.done || []);
+let readSet = new Set(savedLocal.read || []);
+let notes = savedLocal.notes || {};
+let reminders = savedLocal.reminders || [];
+let courseMeta = savedLocal.courseMeta || {};
+let limit = Number(savedLocal.limit) || 20;
+let syncLogs = savedLocal.logs || [];
+
+// Task / Grade / File filter state
+let taskFilterState = { state: 'all', course: 'all', type: 'all' };
+let gradeFilterState = { course: 'all', filter: 'all' };
+let newsFilterState = { filter: 'all', course: 'all' };
+let fileFilterState = { course: 'all', q: '' };
+let courseSearchQuery = '';
+
+function escapeHTML(s) {
+  return String(s ?? '').replace(/[&<>"']/g, m => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  }[m]));
+}
+
+function persist(syncServer = true) {
+  const payload = {
+    done: [...doneSet],
+    read: [...readSet],
+    notes,
+    reminders,
+    courseMeta,
+    limit,
+    logs: syncLogs
+  };
+  localStorage.setItem('mutahStudentNotebook', JSON.stringify(payload));
+  if (syncServer && isLoggedIn) {
+    fetch('/api/user-meta', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tid: getTelegramId(),
+        initData: tg?.initData || '',
+        meta: {
+          notes,
+          personal_reminders: reminders,
+          read_announcements: [...readSet],
+          absence_limit: limit,
+          course_meta: courseMeta,
+          sync_logs: syncLogs.slice(0, 15)
+        }
+      })
+    }).catch(() => {});
+  }
+}
+
+function extractTeacher(name) {
+  const m = String(name || '').match(/(د\.\s*[^\-\(\)|]+|أ\.\s*[^\-\(\)|]+)/);
+  return m ? m[1].trim() : 'هيئة التدريس';
+}
+
+function parseLmsDate(str, ts) {
+  if (ts && Number(ts) > 0) return new Date(Number(ts) * 1000);
+  if (!str) return null;
+  const cleaned = String(str).replace(/^(Due|Closes|Closed|Opened|Opens)\s*:\s*/i, '').trim();
+  const d = new Date(cleaned);
+  if (!isNaN(d.getTime())) return d;
+  return null;
+}
+
+function fmtDate(dInput, fallbackStr) {
+  if (!dInput && !fallbackStr) return 'بدون موعد محدد';
+  const d = dInput instanceof Date ? dInput : (dInput ? new Date(dInput) : null);
+  if (d && !isNaN(d.getTime())) {
+    try {
+      return d.toLocaleString('ar-JO', {
+        weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit'
+      });
+    } catch (e) {
+      return fallbackStr || d.toLocaleDateString();
+    }
+  }
+  return fallbackStr || 'بدون موعد محدد';
+}
+
+function course(id) {
+  return courses.find(c => String(c.id) === String(id)) || {
+    id: id, name: 'مقرر دراسي', code: `ID ${id}`, teacher: 'هيئة التدريس', room: 'LMS', time: '', attendance: 0, absent: 0, total: 0, grade: null
+  };
+}
+
+function isTaskDone(t) {
+  return Boolean(t.done || doneSet.has(String(t.id)));
+}
+
+function dueInfo(t) {
+  if (isTaskDone(t)) return ['مكتمل في LMS', 'pill good'];
+  if (!t.dueDateObj) return ['قيد الحل', 'pill warn'];
+  const diff = t.dueDateObj.getTime() - Date.now();
+  const days = Math.ceil(diff / 86400000);
+  if (diff < 0) return ['متأخر / مغلق', 'pill red'];
+  if (days <= 2) {
+    const lbl = days <= 0 ? 'اليوم' : days === 1 ? 'غداً' : 'خلال يومين';
+    return ['قريب · ' + lbl, 'pill warn'];
+  }
+  return [t.time_remaining ? `متبقي ${t.time_remaining}` : 'قادم', 'pill'];
+}
+
+function unreadCount() {
+  return announcements.filter(a => !readSet.has(String(a.id))).length;
+}
+
+function updateTopBar() {
+  const stEl = document.getElementById('syncState');
+  const whEl = document.getElementById('syncWhen');
+  const boxEl = document.getElementById('syncBox');
+  const avEl = document.getElementById('userAvatar');
+
+  if (!isLoggedIn) {
+    stEl.textContent = 'غير مربوط';
+    whEl.textContent = 'سجل دخولك';
+    boxEl.classList.add('paused');
+    avEl.textContent = '؟';
+    return;
+  }
+
+  if (userProfile.is_monitoring) {
+    stEl.textContent = 'مزامنة نشطة';
+    boxEl.classList.remove('paused');
+  } else {
+    stEl.textContent = 'مراقبة متوقفة';
+    boxEl.classList.add('paused');
+  }
+  whEl.textContent = userProfile.last_check || 'لم يتم بعد';
+
+  const cleanName = String(userProfile.full_name || 'طالب').trim();
+  avEl.textContent = cleanName ? cleanName.charAt(0) : 'ط';
+}
+
+async function fetchUserData() {
+  try {
+    const tid = getTelegramId();
+    const qs = new URLSearchParams({
+      tid: tid,
+      initData: tg?.initData || '',
+      _t: Date.now()
+    });
+    const res = await fetch('/api/user-data?' + qs.toString());
+    const data = await res.json();
+
+    if (!data.success || data.not_registered) {
+      isLoggedIn = false;
+      updateTopBar();
+      render();
+      return;
+    }
+
+    isLoggedIn = true;
+    userProfile = data.user || userProfile;
+
+    // Merge server user_meta if present
+    if (data.user_meta && typeof data.user_meta === 'object') {
+      const m = data.user_meta;
+      if (m.notes && typeof m.notes === 'object') notes = { ...notes, ...m.notes };
+      if (Array.isArray(m.personal_reminders) && m.personal_reminders.length) reminders = m.personal_reminders;
+      if (Array.isArray(m.read_announcements)) m.read_announcements.forEach(id => readSet.add(String(id)));
+      if (m.absence_limit) limit = Number(m.absence_limit) || 20;
+      if (m.course_meta && typeof m.course_meta === 'object') courseMeta = { ...courseMeta, ...m.course_meta };
+      if (Array.isArray(m.sync_logs) && m.sync_logs.length) syncLogs = m.sync_logs;
+      persist(false);
+    }
+
+    attendanceList = data.attendance || [];
+    const attByCourse = {};
+    attendanceList.forEach(a => {
+      attByCourse[String(a.course_id)] = a;
+    });
+
+    grades = (data.grades || []).map(g => ({
+      id: g.item_id,
+      course_id: String(g.course_id),
+      course_name: g.course_name || 'مقرر',
+      item_name: g.item_name || 'تقييم',
+      grade_val: g.grade_val || '',
+      grade_max: g.grade_max || '',
+      percentage: g.percentage || '',
+      feedback: g.feedback || '',
+      url: g.url || '',
+      updated_at: g.updated_at ? String(g.updated_at).slice(0, 10) : 'مرصود'
+    }));
+
+    const gradeByItem = {};
+    grades.forEach(g => {
+      if (g.id && g.grade_val) {
+        gradeByItem[String(g.id).replace('mod_', '')] = g;
+      }
+    });
+
+    courses = (data.courses || []).map(c => {
+      const cid = String(c.id);
+      const meta = courseMeta[cid] || {};
+      const att = attByCourse[cid];
+      const present = att ? (Number(att.present_count) || 0) + (Number(att.late_count) || 0) + (Number(att.excused_count) || 0) : 0;
+      const absent = att ? (Number(att.absent_count) || 0) : 0;
+      const taken = att ? (Number(att.taken_sessions) || (present + absent)) : 0;
+
+      // Calculate average grade if numeric percentages exist for this course
+      const cGrades = grades.filter(g => g.course_id === cid && g.grade_val);
+      let avgPct = null;
+      const pctNums = [];
+      cGrades.forEach(g => {
+        const pm = String(g.percentage || '').match(/(\d+(?:\.\d+)?)/);
+        if (pm) pctNums.push( parseFloat(pm[1]) );
+      });
+      if (pctNums.length > 0) {
+        avgPct = Math.round(pctNums.reduce((a, b) => a + b, 0) / pctNums.length);
+      }
+
+      return {
+        id: cid,
+        name: c.name,
+        url: c.url || `https://mulms.mutah.edu.jo/course/view.php?id=${cid}`,
+        is_monitored: Boolean(c.is_monitored),
+        code: meta.code || `ID ${cid}`,
+        teacher: meta.teacher || extractTeacher(c.name),
+        room: meta.room || 'بوابة التعليم الإلكتروني',
+        time: meta.time || '',
+        attendance: present,
+        absent: absent,
+        total: taken,
+        att_points: att ? (att.points_str || '') : '',
+        att_pct_str: att ? (att.percentage_str || '') : '',
+        att_sessions: att ? (att.sessions || []) : [],
+        att_url: att ? (att.att_url || '') : '',
+        grade: avgPct,
+        graded_count: cGrades.length,
+        stats: c.stats || { assignments: 0, quizzes: 0, resources: 0, tasks_total: 0, tasks_done: 0 }
+      };
+    });
+
+    if (!selectedCourse && courses.length > 0) {
+      selectedCourse = courses[0].id;
+    }
+
+    tasks = (data.deadlines || []).map(d => {
+      const cidStr = String(d.content_id || d.id);
+      const rawCmid = cidStr.replace(/^(assign_|quiz_)/, '');
+      const isQuiz = d.content_type === 'quiz' || cidStr.startsWith('quiz_');
+      const dueObj = parseLmsDate(d.due_str, d.due_ts);
+      const matchedGrade = gradeByItem[rawCmid] || null;
+      const isSub = Boolean(d.is_submitted);
+      if (isSub) doneSet.add(cidStr);
+
+      return {
+        id: cidStr,
+        title: d.content_name || 'مهمة دراسية',
+        course: String(d.course_id || ''),
+        course_name: d.course_name || course(d.course_id).name,
+        type: isQuiz ? 'اختبار قصير' : 'واجب',
+        raw_type: isQuiz ? 'quiz' : 'assign',
+        due: dueObj ? dueObj.toISOString() : '',
+        dueDateObj: dueObj,
+        due_str: d.due_str || '',
+        time_remaining: d.time_remaining || '',
+        desc: isQuiz
+          ? 'اختبار إلكتروني عبر منصة جامعة مؤتة (Moodle LMS).'
+          : 'واجب تسليم إلكتروني عبر منصة جامعة مؤتة (Moodle LMS).',
+        url: d.content_url || `https://mulms.mutah.edu.jo/course/view.php?id=${d.course_id}`,
+        done: isSub,
+        grade: matchedGrade
+      };
+    });
+
+    announcements = (data.announcements || []).map(a => ({
+      id: String(a.discuss_id || a.id),
+      course: String(a.course_id || ''),
+      course_name: a.course_name || course(a.course_id).name,
+      title: a.title || 'إعلان دراسي',
+      author: a.author || '',
+      date: a.posted_date || (a.first_seen ? String(a.first_seen).slice(0, 10) : 'حديثاً'),
+      body: a.body_text || a.forum_name || 'إعلان منشور في منتدى المقرر على نظام LMS.',
+      url: a.url || ''
+    }));
+
+    files = (data.files || []).map(f => ({
+      id: String(f.id || ''),
+      name: f.name || 'ملف دراسي',
+      course_id: String(f.course_id || ''),
+      course: f.course || 'مقرر دراسي',
+      kind: f.kind || 'ملف',
+      date: f.date ? String(f.date).slice(0, 10) : 'مرصود',
+      url: f.url || ''
+    }));
+
+    updateTopBar();
+    render();
+  } catch (err) {
+    console.error('Error fetching data:', err);
+    toast('تعذر تحديث البيانات من الخادم');
+  }
+}
+
+function openExternalLink(url) {
+  if (!url) {
+    toast('الرابط غير متوفر');
+    return;
+  }
+  if (tg && tg.openLink) {
+    try {
+      tg.openLink(url);
+      return;
+    } catch (e) {}
+  }
+  window.open(url, '_blank', 'noopener');
+}
+
+function header(title, sub) {
+  return `<div class="page-title"><h1>${escapeHTML(title)}</h1><p>${escapeHTML(sub)}</p></div>`;
+}
+
+function courseCard(c) {
+  const missRate = c.total ? Math.round((c.absent / c.total) * 100) : 0;
+  const alert = c.total > 0 && missRate >= limit;
+  const hasUrgentTask = tasks.some(t => t.course === c.id && !isTaskDone(t) && t.dueDateObj && (t.dueDateObj.getTime() - Date.now() <= 172800000) && (t.dueDateObj.getTime() >= Date.now()));
+  let pillClass = '';
+  let pillText = 'محدّث';
+  if (!c.is_monitored) {
+    pillClass = 'neutral';
+    pillText = 'متوقف مؤقتاً';
+  } else if (alert) {
+    pillClass = 'red';
+    pillText = 'اقتراب من حد الغياب';
+  } else if (hasUrgentTask) {
+    pillClass = 'warn';
+    pillText = 'واجب قريب';
+  }
+
+  const tasksInfo = c.stats && c.stats.tasks_total > 0
+    ? ` · المهام: ${c.stats.tasks_done}/${c.stats.tasks_total} منجز`
+    : '';
+  const filesInfo = c.stats && c.stats.resources > 0
+    ? ` · ${c.stats.resources} ملف`
+    : '';
+
+  return `<article class="course">
+    <div>
+      <button class="text-link course-title" onclick="openCourse('${escapeHTML(c.id)}')">${escapeHTML(c.name)}</button>
+      <div class="course-meta">${escapeHTML(c.code)} · ${escapeHTML(c.teacher)}${escapeHTML(tasksInfo)}${escapeHTML(filesInfo)}${c.time ? ' · ' + escapeHTML(c.time) : ''}</div>
+    </div>
+    <div class="course-end">
+      <span class="pill ${pillClass}">${pillText}</span>
+      <button class="text-link" onclick="openCourse('${escapeHTML(c.id)}')">تفاصيل ‹</button>
+    </div>
+  </article>`;
+}
+
+function taskCard(t) {
+  const [label, cl] = dueInfo(t);
+  const done = isTaskDone(t);
+  const dueDisplay = fmtDate(t.dueDateObj, t.due_str);
+  const hasNote = Boolean(notes[t.id] && notes[t.id].trim());
+
+  return `<article class="task">
+    <div>
+      <button class="text-link item-title" onclick="taskDetail('${escapeHTML(t.id)}')">${escapeHTML(t.title)}</button>
+      <div class="item-meta">${escapeHTML(t.course_name)} · ${escapeHTML(t.type)} · ${escapeHTML(dueDisplay)}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+        ${!done && t.dueDateObj ? `<span class="due ${cl === 'pill red' ? 'late' : ''}">◷ ${escapeHTML(label)}</span>` : ''}
+        ${t.grade ? `<span class="due" style="background:#e8f5ed;color:#28724b">الدرجة: ${escapeHTML(t.grade.grade_val)}${t.grade.grade_max ? ' / ' + escapeHTML(t.grade.grade_max) : ''}</span>` : ''}
+        ${hasNote ? `<span class="tag" style="margin-top:9px">✎ ملاحظة مسجلة</span>` : ''}
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+      <span class="${cl}">${escapeHTML(label)}</span>
+      <button class="btn" onclick="toggleDone('${escapeHTML(t.id)}')">${done ? 'إلغاء الإنجاز' : 'إنجاز ✓'}</button>
+    </div>
+  </article>`;
+}
+
+function announceCard(a) {
+  const read = readSet.has(String(a.id));
+  return `<article class="notice ${read ? '' : 'unread'}">
+    <div class="notice-mark">${read ? '✓' : '!'}</div>
+    <div>
+      <button class="text-link item-title" onclick="openAnnouncementModal('${escapeHTML(a.id)}')">${escapeHTML(a.title)}</button>
+      <div class="item-meta">${escapeHTML(a.course_name)}${a.author ? ' · ' + escapeHTML(a.author) : ''} · ${escapeHTML(a.date)}</div>
+      <p class="item-meta">${escapeHTML(a.body)}</p>
+    </div>
+    <button class="btn" onclick="readAnnouncement('${escapeHTML(a.id)}')">${read ? 'مقروء' : 'تمييز كمقروء'}</button>
+  </article>`;
+}
+
+function fileCard(f) {
+  return `<article class="file-row">
+    <div>
+      <strong class="item-title">▧ ${escapeHTML(f.name)}</strong>
+      <div class="item-meta">${escapeHTML(f.course)} · ${escapeHTML(f.kind)} · رُصد: ${escapeHTML(f.date)}</div>
+    </div>
+    <button class="btn" onclick="openExternalLink('${escapeHTML(f.url)}')">فتح / تنزيل ↗</button>
+  </article>`;
+}
+
+function render() {
+  document.getElementById('sideNav').innerHTML = navItems.map(n => `
+    <button class="${active === n[0] ? 'active' : ''}" onclick="go('${n[0]}')">
+      <span class="ico">${n[1]}</span>${n[2]}
+      ${n[0] === 'notifications' && unreadCount() > 0 ? `<span class="count">${unreadCount()}</span>` : ''}
+      ${n[0] === 'tasks' && tasks.filter(t => !isTaskDone(t)).length > 0 ? `<span class="count">${tasks.filter(t => !isTaskDone(t)).length}</span>` : ''}
+    </button>
+  `).join('');
+
+  const mobilePrimary = [navItems[0], navItems[2], navItems[3], navItems[4], navItems[8]];
+  document.getElementById('bottomNav').innerHTML = mobilePrimary.map(n => `
+    <button class="${active === n[0] ? 'active' : ''}" onclick="go('${n[0]}')">
+      <span>${n[1]}</span>${n[2]}
+    </button>
+  `).join('') + `
+    <button class="${!mobilePrimary.some(m => m[0] === active) ? 'active' : ''}" onclick="openMoreMenuModal()">
+      <span>☰</span>المزيد
+    </button>
+  `;
+
+  document.getElementById('bellCount').textContent = unreadCount() ? ` ${unreadCount()}` : '';
+
+  const el = document.getElementById('content');
+  const pages = {
+    home: homePage,
+    week: weekPage,
+    courses: coursesPage,
+    tasks: tasksPage,
+    grades: gradesPage,
+    attendance: attendancePage,
+    announcements: announcementsPage,
+    files: filesPage,
+    notifications: notificationsPage,
+    settings: settingsPage,
+    help: helpPage,
+    courseDetail: courseDetailPage
+  };
+  el.innerHTML = (pages[active] || homePage)();
+  if (active === 'grades') filterGrades();
+}
+
+function go(p) {
+  active = p;
+  render();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function openMoreMenuModal() {
+  document.getElementById('modal').innerHTML = `
+    <div class="modal-head">
+      <h2>أقسام دفتر الطالب</h2>
+      <button class="close" onclick="closeModal()">×</button>
+    </div>
+    <p class="item-meta">انتقل لأي قسم من أقسام المتابعة الأكاديمية:</p>
+    <div class="help-grid" style="margin-top:12px">
+      ${navItems.map(n => `
+        <button class="btn ${active === n[0] ? 'btn-primary' : ''}" style="display:flex;align-items:center;gap:8px;justify-content:flex-start;padding:11px" onclick="closeModal();go('${n[0]}')">
+          <span style="font-size:16px">${n[1]}</span>
+          <span>${n[2]}</span>
+        </button>
+      `).join('')}
+    </div>
+  `;
+  document.getElementById('modalBack').style.display = 'flex';
+}
+
+function loginBannerCard() {
+  return `<section class="card" style="margin-bottom:18px;border-color:#c6d5ec">
+    <div class="eyebrow" style="color:var(--teal)">ربط الحساب الأكاديمي · جامعة مؤتة</div>
+    <h2 style="font-size:16px;margin:0 0 4px">سجّل دخولك إلى نظام التعليم الإلكتروني (LMS)</h2>
+    <p class="item-meta">أدخل رقمك الجامعي وكلمة مرور المودل لمزامنة مقرراتك وواجباتك وعلاماتك وحضورك.</p>
+    <div class="form-grid" style="max-width:420px">
+      <div>
+        <label>الرقم الجامعي (Student ID)</label>
+        <input id="loginUser" class="field" style="width:100%" placeholder="مثال: 120242222083" dir="ltr">
+      </div>
+      <div>
+        <label>كلمة المرور (Password)</label>
+        <input id="loginPass" type="password" class="field" style="width:100%" placeholder="••••••••" dir="ltr">
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" id="btnDoLogin" onclick="submitLogin()">تسجيل الدخول وربط الحساب</button>
+      </div>
+    </div>
+  </section>`;
+}
+
+async function submitLogin() {
+  const u = document.getElementById('loginUser')?.value?.trim();
+  const p = document.getElementById('loginPass')?.value?.trim();
+  if (!u || !p) {
+    toast('يرجى إدخال الرقم الجامعي وكلمة المرور');
+    return;
+  }
+  const btn = document.getElementById('btnDoLogin');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'جارٍ التحقق والاتصال بجامعة مؤتة...';
+  }
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '', username: u, password: p })
+    });
+    const d = await res.json();
+    if (d.success) {
+      toast('تم تسجيل الدخول بنجاح! يمكنك الآن إضافة أو استيراد مقرراتك.');
+      await fetchUserData();
+    } else {
+      toast(d.error || 'فشل تسجيل الدخول إلى LMS');
+    }
+  } catch (e) {
+    toast('حدث خطأ في الاتصال بالخادم');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'تسجيل الدخول وربط الحساب';
+    }
+  }
+}
+
+function homePage() {
+  const hour = new Date().getHours();
+  const greet = hour < 12 ? 'صباح الخير' : 'مساء الخير';
+  const firstName = String(userProfile.full_name || 'طالبنا').trim().split(/\s+/)[0];
+  const todayStr = new Date().toLocaleDateString('ar-JO', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+
+  const remaining = tasks
+    .filter(t => !isTaskDone(t))
+    .sort((a, b) => {
+      if (a.dueDateObj && b.dueDateObj) return a.dueDateObj - b.dueDateObj;
+      if (a.dueDateObj) return -1;
+      if (b.dueDateObj) return 1;
+      return 0;
+    });
+
+  const upcoming = remaining.find(t => !t.dueDateObj || t.dueDateObj.getTime() >= Date.now() - 86400000) || remaining[0];
+
+  const urgent = upcoming
+    ? `<section class="card urgent">
+        <div>
+          <div class="eyebrow">يستحق انتباهك · ${escapeHTML(upcoming.type)}</div>
+          <h2>${escapeHTML(upcoming.title)}</h2>
+          <p>${escapeHTML(upcoming.course_name)} · الموعد: ${escapeHTML(fmtDate(upcoming.dueDateObj, upcoming.due_str))}</p>
+          <span class="due ${dueInfo(upcoming)[1] === 'pill red' ? 'late' : ''}">◷ ${escapeHTML(dueInfo(upcoming)[0])}</span>
         </div>
-    </header>
+        <button class="btn" onclick="taskDetail('${escapeHTML(upcoming.id)}')">التفاصيل ←</button>
+      </section>`
+    : `<section class="card callout info">لا توجد مهام غير منجزة حالياً. أحسنت، جميع واجباتك واختباراتك مكتملة.</section>`;
 
-    <!-- ==================== MAIN WORKSPACE ==================== -->
-    <main class="max-w-xl mx-auto px-3 pt-3 space-y-3">
+  // Overall attendance rate across courses with recorded sessions
+  const attCourses = courses.filter(c => c.total > 0);
+  let attAvgText = '—';
+  if (attCourses.length > 0) {
+    const sumRate = attCourses.reduce((acc, c) => acc + Math.round((c.attendance / c.total) * 100), 0);
+    attAvgText = Math.round(sumRate / attCourses.length) + '٪';
+  }
 
-        <!-- Toast Notification Banner -->
-        <div id="statusToast" class="hidden rounded-lg px-3.5 py-2.5 text-xs font-medium border"></div>
-
-        <!-- Executive Telemetry Grid (2x2 on phones, 4x1 on larger screens) -->
-        <section class="panel rounded-xl p-3 space-y-3">
-            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                <div class="panel-inset rounded-lg p-2.5">
-                    <div class="flex items-center justify-between gap-1 text-[10.5px] text-zinc-400">
-                        <span>المقررات</span>
-                        <span id="metricMonitoredSub" class="font-mono-num text-[10px] text-emerald-400 font-semibold">0 نشط</span>
-                    </div>
-                    <p id="metricCoursesCount" class="font-mono-num text-lg font-bold text-zinc-100 mt-1">0</p>
-                    <p class="text-[10.5px] text-zinc-400 mt-0.5">مادة مسجلة</p>
-                </div>
-
-                <div class="panel-inset rounded-lg p-2.5">
-                    <div class="flex items-center justify-between gap-1 text-[10.5px] text-zinc-400">
-                        <span>إنجاز المهام</span>
-                        <span id="metricTasksPct" class="font-mono-num text-[10px] text-sky-400 font-semibold">0%</span>
-                    </div>
-                    <p id="metricTasksRatio" class="font-mono-num text-lg font-bold text-zinc-100 mt-1">0/0</p>
-                    <p id="metricPendingCount" class="text-[10.5px] text-zinc-400 mt-0.5">0 قيد الحل</p>
-                </div>
-
-                <div class="panel-inset rounded-lg p-2.5">
-                    <div class="flex items-center justify-between gap-1 text-[10.5px] text-zinc-400">
-                        <span>الحضور</span>
-                        <span id="metricAttSessions" class="font-mono-num text-[10px] text-zinc-300">0 محاضرة</span>
-                    </div>
-                    <p id="metricAttRate" class="font-mono-num text-lg font-bold text-zinc-100 mt-1">--</p>
-                    <p id="metricAttDetail" class="text-[10.5px] text-zinc-400 mt-0.5 break-words">سجل الحضور</p>
-                </div>
-
-                <div class="panel-inset rounded-lg p-2.5">
-                    <div class="flex items-center justify-between gap-1 text-[10.5px] text-zinc-400">
-                        <span>المحتوى والفحص</span>
-                        <span id="metricInterval" class="font-mono-num text-[10px] text-sky-400 font-semibold">10د</span>
-                    </div>
-                    <p id="metricItemsCount" class="font-mono-num text-lg font-bold text-zinc-100 mt-1">0</p>
-                    <p id="metricItemsBreakdown" class="text-[10.5px] text-zinc-400 mt-0.5 break-words">عنصر مرصود</p>
-                </div>
-            </div>
-
-            <!-- Overall Completion Bar & Action Strip -->
-            <div class="pt-0.5 space-y-2.5">
-                <div class="flex flex-wrap items-center justify-between gap-1 text-[11px]">
-                    <span class="text-zinc-400">مؤشر إنجاز الواجبات والاختبارات الفصلية</span>
-                    <span id="progressSummaryLabel" class="font-mono-num text-zinc-200 font-semibold">0 من 0 مكتمل</span>
-                </div>
-                <div class="w-full h-1.5 bg-[#181C24] rounded-full overflow-hidden">
-                    <div id="overallProgressBar" class="h-full bg-sky-500 rounded-full transition-all duration-300" style="width: 0%"></div>
-                </div>
-
-                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-0.5">
-                    <button onclick="triggerForceCheck()" id="btnForceCheck" class="w-full py-2.5 px-3 rounded-lg bg-[#161922] hover:bg-[#1D212D] active:scale-[0.99] text-zinc-100 border border-[#252A37] text-xs font-semibold flex items-center justify-center gap-2 transition-all">
-                        <svg class="w-3.5 h-3.5 text-sky-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
-                        </svg>
-                        <span>فحص فوري ومزامنة من LMS</span>
-                    </button>
-
-                    <button onclick="triggerToggleMonitor()" id="btnToggleMonitor" class="w-full py-2.5 px-3 rounded-lg bg-[#161922] hover:bg-[#1D212D] active:scale-[0.99] text-zinc-100 border border-[#252A37] text-xs font-semibold flex items-center justify-center gap-2 transition-all">
-                        <span id="btnToggleDot" class="w-2 h-2 rounded-full bg-emerald-400 shrink-0"></span>
-                        <span id="btnToggleMonitorText">المراقبة: مفعلة</span>
-                    </button>
-                </div>
-            </div>
-        </section>
-
-        <!-- ==================== TAB 1: COURSES ==================== -->
-        <section id="tab-courses" class="space-y-3">
-            <!-- Toolbar: Search + Add Course -->
-            <div class="panel rounded-xl p-3 space-y-2.5">
-                <div class="flex items-start justify-between gap-2">
-                    <div>
-                        <h2 class="text-xs font-bold text-zinc-100">إدارة المقررات الدراسية المراقَبة</h2>
-                        <p class="text-[10.5px] text-zinc-400 mt-0.5 leading-relaxed">أضف المواد التي ترغب بمراقبتها عبر رقم المادة (Course ID) أو رابط المقرر</p>
-                    </div>
-                    <button onclick="triggerClearAllCourses()" class="px-2.5 py-1.5 rounded-lg bg-[#171A22] hover:bg-rose-950/40 text-rose-400 border border-[#252A37] text-[10.5px] font-semibold shrink-0 transition-colors">
-                        مسح الكل
-                    </button>
-                </div>
-
-                <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                    <input type="text" id="addCourseInput" placeholder="رقم المادة (مثال: 71177) أو رابط المادة من LMS..." class="flex-1 bg-[#0C0E12] border border-[#1F2430] rounded-lg px-3 py-2 text-xs text-zinc-200 placeholder-zinc-500 focus:outline-none focus:border-sky-500/60 transition-colors">
-                    <button onclick="triggerAddCourse()" id="btnAddCourse" class="px-3.5 py-2 rounded-lg bg-sky-500 hover:bg-sky-400 text-zinc-950 text-xs font-bold shrink-0 transition-colors">
-                        + إضافة مقرر للمراقبة
-                    </button>
-                </div>
-
-                <div class="relative">
-                    <input type="text" id="courseSearchInput" oninput="filterCourses()" placeholder="تصفية المقررات بالاسم أو الرقم..." class="w-full bg-[#0C0E12] border border-[#1A1E28] rounded-lg px-3 py-2 text-xs text-zinc-300 placeholder-zinc-500 focus:outline-none focus:border-zinc-600 transition-colors">
-                </div>
-            </div>
-
-            <!-- Courses Container -->
-            <div id="coursesListContainer" class="space-y-2.5">
-                <div class="p-8 text-center text-xs text-zinc-500 panel rounded-xl">
-                    جاري تحميل بيانات المقررات...
-                </div>
-            </div>
-        </section>
-
-        <!-- ==================== TAB 2: DEADLINES & TASKS ==================== -->
-        <section id="tab-deadlines" class="space-y-3 hidden">
-            <div class="panel rounded-xl p-3 space-y-2.5">
-                <div class="flex items-start justify-between gap-2">
-                    <div>
-                        <h2 class="text-xs font-bold text-zinc-100">الواجبات والاختبارات القصيرة (حسب المادة)</h2>
-                        <p class="text-[10.5px] text-zinc-400 mt-0.5 leading-relaxed">اضغط على أي مادة لفتح قائمتها المنسدلة واستعراض حالة إنجاز مهامها</p>
-                    </div>
-                    <button onclick="toggleAllGroupAccordions('dl-course-')" class="px-2.5 py-1.5 rounded-lg bg-[#161922] hover:bg-[#1E222E] text-zinc-200 border border-[#252A37] text-[10.5px] font-semibold shrink-0 transition-colors">
-                        فتح / طي الكل
-                    </button>
-                </div>
-
-                <!-- Filter Bar (Responsive wrap/grid) -->
-                <div class="grid grid-cols-3 sm:grid-cols-5 gap-1.5 bg-[#0C0E12] p-1.5 rounded-lg border border-[#1A1E28] text-[11px]">
-                    <button onclick="setDeadlinesFilter('all')" id="btnFilterAll" class="py-1.5 rounded font-semibold bg-[#1C202B] text-zinc-100">الكل</button>
-                    <button onclick="setDeadlinesFilter('pending')" id="btnFilterPending" class="py-1.5 rounded font-medium text-zinc-400 hover:text-zinc-200">قيد الحل</button>
-                    <button onclick="setDeadlinesFilter('submitted')" id="btnFilterSubmitted" class="py-1.5 rounded font-medium text-zinc-400 hover:text-zinc-200">المنجزة</button>
-                    <button onclick="setDeadlinesFilter('assign')" id="btnFilterAssign" class="py-1.5 rounded font-medium text-zinc-400 hover:text-zinc-200">الواجبات</button>
-                    <button onclick="setDeadlinesFilter('quiz')" id="btnFilterQuiz" class="py-1.5 rounded font-medium text-zinc-400 hover:text-zinc-200">الكويزات</button>
-                </div>
-            </div>
-
-            <div id="deadlinesListContainer" class="space-y-2.5"></div>
-        </section>
-
-        <!-- ==================== TAB 3: GRADES ==================== -->
-        <section id="tab-grades" class="space-y-3 hidden">
-            <div class="panel rounded-xl p-3 space-y-2.5">
-                <div class="flex items-start justify-between gap-2">
-                    <div>
-                        <h2 class="text-xs font-bold text-zinc-100">سجل العلامات والتقييمات الأكاديمية</h2>
-                        <p class="text-[10.5px] text-zinc-400 mt-0.5 leading-relaxed">قائمة منسدلة لكل مقرر تعرض الدرجات المرصودة وبنود التقييم والمدى وملاحظات المدرس</p>
-                    </div>
-                    <button onclick="toggleAllGroupAccordions('gr-course-')" class="px-2.5 py-1.5 rounded-lg bg-[#161922] hover:bg-[#1E222E] text-zinc-200 border border-[#252A37] text-[10.5px] font-semibold shrink-0 transition-colors">
-                        فتح / طي الكل
-                    </button>
-                </div>
-
-                <div class="flex flex-wrap items-center justify-between gap-2 pt-0.5">
-                    <div class="flex flex-1 items-center gap-1 bg-[#0C0E12] p-1 rounded-lg border border-[#1A1E28] text-[10.5px]">
-                        <button onclick="setGradesFilter('all')" id="btnGradeFilterAll" class="flex-1 py-1.5 px-2 rounded font-semibold bg-[#1C202B] text-zinc-100 text-center">جميع بنود التقييم</button>
-                        <button onclick="setGradesFilter('graded')" id="btnGradeFilterGraded" class="flex-1 py-1.5 px-2 rounded font-medium text-zinc-400 hover:text-zinc-200 text-center">المرصودة فقط</button>
-                    </div>
-                    <button onclick="triggerForceCheck()" class="px-3 py-2 rounded-lg bg-[#161922] hover:bg-[#1E222E] text-sky-400 border border-[#252A37] text-[10.5px] font-semibold shrink-0 transition-colors">
-                        تحديث السجل
-                    </button>
-                </div>
-            </div>
-
-            <div id="gradesListContainer" class="space-y-2.5"></div>
-        </section>
-
-        <!-- ==================== TAB 4: ATTENDANCE ==================== -->
-        <section id="tab-attendance" class="space-y-3 hidden">
-            <div class="panel rounded-xl p-3 space-y-2.5">
-                <div class="flex items-start justify-between gap-2">
-                    <div>
-                        <h2 class="text-xs font-bold text-zinc-100">سجل الحضور والغياب (Attendance)</h2>
-                        <p class="text-[10.5px] text-zinc-400 mt-0.5 leading-relaxed">رصد تلقائي للمحاضرات المسجلة وعدد مرات الحضور والغياب والنسبة المئوية لكل مادة</p>
-                    </div>
-                </div>
-                <div class="flex items-center gap-2">
-                    <button onclick="toggleAllGroupAccordions('att-course-')" class="flex-1 py-2 px-3 rounded-lg bg-[#161922] hover:bg-[#1E222E] text-zinc-200 border border-[#252A37] text-[11px] font-semibold transition-colors">
-                        فتح / طي سجلات المحاضرات
-                    </button>
-                    <button onclick="triggerForceCheck()" class="py-2 px-3.5 rounded-lg bg-[#161922] hover:bg-[#1E222E] text-sky-400 border border-[#252A37] text-[11px] font-semibold shrink-0 transition-colors">
-                        تحديث من LMS
-                    </button>
-                </div>
-            </div>
-
-            <div id="attendanceListContainer" class="space-y-2.5"></div>
-        </section>
-
-        <!-- ==================== TAB 5: ANNOUNCEMENTS ==================== -->
-        <section id="tab-announcements" class="space-y-3 hidden">
-            <div class="panel rounded-xl p-3 flex items-center justify-between gap-2">
-                <div>
-                    <h2 class="text-xs font-bold text-zinc-100">إعلانات المدرسين ومنتديات المقررات</h2>
-                    <p class="text-[10px] text-zinc-500 mt-0.5">متابعة مباشرة لجميع المنشورات والتنبيهات الصادرة داخل منتديات الأخبار</p>
-                </div>
-                <button onclick="triggerForceCheck()" class="px-2.5 py-1.5 rounded-lg bg-[#161922] hover:bg-[#1E222E] text-sky-400 border border-[#252A37] text-[10.5px] font-semibold shrink-0 transition-colors">
-                    فحص الإعلانات
-                </button>
-            </div>
-
-            <div id="announcementsListContainer" class="space-y-2.5"></div>
-        </section>
-
-        <!-- ==================== TAB 6: SETTINGS ==================== -->
-        <section id="tab-settings" class="space-y-3 hidden">
-            <div class="panel rounded-xl p-3">
-                <h2 class="text-xs font-bold text-zinc-100">ضبط التنبيهات الفورية ودورة الفحص</h2>
-                <p class="text-[10px] text-zinc-500 mt-0.5">تحكم في أنواع الإشعارات التي يرسلها البوت مباشرة في محادثة تيليجرام</p>
-            </div>
-
-            <div class="panel rounded-xl row-divider">
-                <div class="p-3.5 flex items-center justify-between gap-3">
-                    <div>
-                        <p class="text-xs font-semibold text-zinc-100">إشعارات الواجبات والتكاليف</p>
-                        <p class="text-[11px] text-zinc-500 mt-0.5">تنبيه عند نشر واجب جديد أو تعديل موعد التسليم أو رصد إنجازه</p>
-                    </div>
-                    <label class="relative inline-flex items-center cursor-pointer shrink-0">
-                        <input type="checkbox" id="toggleAssign" onchange="saveNotificationSettings()" class="sr-only peer">
-                        <div class="w-9 h-5 bg-zinc-800 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-500"></div>
-                    </label>
-                </div>
-
-                <div class="p-3.5 flex items-center justify-between gap-3">
-                    <div>
-                        <p class="text-xs font-semibold text-zinc-100">إشعارات الاختبارات القصيرة (Quizzes)</p>
-                        <p class="text-[11px] text-zinc-500 mt-0.5">تنبيه بمواعيد الكويزات وتأكيد حالة تقديم الاختبار تلقائياً</p>
-                    </div>
-                    <label class="relative inline-flex items-center cursor-pointer shrink-0">
-                        <input type="checkbox" id="toggleQuiz" onchange="saveNotificationSettings()" class="sr-only peer">
-                        <div class="w-9 h-5 bg-zinc-800 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-500"></div>
-                    </label>
-                </div>
-
-                <div class="p-3.5 flex items-center justify-between gap-3">
-                    <div>
-                        <p class="text-xs font-semibold text-zinc-100">إشعارات الملفات والمحاضرات</p>
-                        <p class="text-[11px] text-zinc-500 mt-0.5">إرسال ملفات PDF والعروض التقديمية مباشرة إلى شات البوت فور رفعها</p>
-                    </div>
-                    <label class="relative inline-flex items-center cursor-pointer shrink-0">
-                        <input type="checkbox" id="toggleResource" onchange="saveNotificationSettings()" class="sr-only peer">
-                        <div class="w-9 h-5 bg-zinc-800 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-500"></div>
-                    </label>
-                </div>
-
-                <div class="p-3.5 flex items-center justify-between gap-3">
-                    <div>
-                        <p class="text-xs font-semibold text-zinc-100">رادار العلامات والتقييمات</p>
-                        <p class="text-[11px] text-zinc-500 mt-0.5">إشعار فوري عند رصد أو تعديل أي درجة في كشف العلامات</p>
-                    </div>
-                    <label class="relative inline-flex items-center cursor-pointer shrink-0">
-                        <input type="checkbox" id="toggleGrade" onchange="saveNotificationSettings()" class="sr-only peer">
-                        <div class="w-9 h-5 bg-zinc-800 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-500"></div>
-                    </label>
-                </div>
-
-                <div class="p-3.5 flex items-center justify-between gap-3">
-                    <div>
-                        <p class="text-xs font-semibold text-zinc-100">رادار الحضور والغياب (Attendance)</p>
-                        <p class="text-[11px] text-zinc-500 mt-0.5">إشعار فوري عند تسجيل حضور أو غياب لمحاضرة جديدة في أي مقرر</p>
-                    </div>
-                    <label class="relative inline-flex items-center cursor-pointer shrink-0">
-                        <input type="checkbox" id="toggleAttendance" onchange="saveNotificationSettings()" class="sr-only peer">
-                        <div class="w-9 h-5 bg-zinc-800 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-500"></div>
-                    </label>
-                </div>
-
-                <div class="p-3.5 flex items-center justify-between gap-3">
-                    <div>
-                        <p class="text-xs font-semibold text-zinc-100">رادار إعلانات المدرسين</p>
-                        <p class="text-[11px] text-zinc-500 mt-0.5">إرسال نص الإعلانات المنشورة في منتديات المقررات فور صدورها</p>
-                    </div>
-                    <label class="relative inline-flex items-center cursor-pointer shrink-0">
-                        <input type="checkbox" id="toggleAnnouncement" onchange="saveNotificationSettings()" class="sr-only peer">
-                        <div class="w-9 h-5 bg-zinc-800 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-sky-500"></div>
-                    </label>
-                </div>
-            </div>
-
-            <!-- Interval Selection -->
-            <div class="panel rounded-xl p-3.5 space-y-2.5">
-                <div>
-                    <p class="text-xs font-semibold text-zinc-100">الفاصل الزمني للفحص التلقائي</p>
-                    <p class="text-[11px] text-zinc-500">المدة بين كل عملية فحص دورية لنظام الجامعة</p>
-                </div>
-                <div class="grid grid-cols-4 gap-2">
-                    <button onclick="setCheckInterval(5)" id="btnInterval5" class="py-2 rounded-lg text-xs font-semibold border border-[#232834] bg-[#151821] text-zinc-300 transition-all">5 دقائق</button>
-                    <button onclick="setCheckInterval(10)" id="btnInterval10" class="py-2 rounded-lg text-xs font-semibold border border-[#232834] bg-[#151821] text-zinc-300 transition-all">10 دقائق</button>
-                    <button onclick="setCheckInterval(30)" id="btnInterval30" class="py-2 rounded-lg text-xs font-semibold border border-[#232834] bg-[#151821] text-zinc-300 transition-all">30 دقيقة</button>
-                    <button onclick="setCheckInterval(60)" id="btnInterval60" class="py-2 rounded-lg text-xs font-semibold border border-[#232834] bg-[#151821] text-zinc-300 transition-all">60 دقيقة</button>
-                </div>
-            </div>
-
-            <!-- Session Logout -->
-            <div class="panel rounded-xl p-3.5 flex items-center justify-between gap-3">
-                <div>
-                    <p class="text-xs font-semibold text-rose-400">إنهاء الجلسة وتسجيل الخروج</p>
-                    <p class="text-[11px] text-zinc-500 mt-0.5">إغلاق جلسة LMS الحالية وحذف بيانات الربط من النظام</p>
-                </div>
-                <button onclick="triggerLogout()" id="btnLogout" class="px-3.5 py-2 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/25 text-xs font-semibold shrink-0 transition-colors">
-                    تسجيل الخروج
-                </button>
-            </div>
-        </section>
-
-    </main>
-
-    <!-- ==================== FIXED BOTTOM NAVIGATION DOCK ==================== -->
-    <nav class="fixed bottom-0 inset-x-0 z-50 bottom-dock px-2 py-1.5">
-        <div class="max-w-xl mx-auto grid grid-cols-6 gap-1">
-            <button onclick="switchTab('tab-courses')" id="tabBtn-courses" class="flex flex-col items-center justify-center py-1.5 px-1 rounded-lg bg-[#1A1E29] text-sky-400 transition-all">
-                <div class="relative">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"></path>
-                    </svg>
-                    <span id="coursesBadge" class="font-mono-num absolute -top-1.5 -left-2.5 px-1 min-w-[14px] h-[14px] rounded-full bg-zinc-800 text-zinc-300 text-[9px] flex items-center justify-center border border-zinc-700">0</span>
-                </div>
-                <span class="text-[10px] font-semibold mt-1">المقررات</span>
-            </button>
-
-            <button onclick="switchTab('tab-deadlines')" id="tabBtn-deadlines" class="flex flex-col items-center justify-center py-1.5 px-1 rounded-lg text-zinc-400 hover:text-zinc-200 transition-all">
-                <div class="relative">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"></path>
-                    </svg>
-                    <span id="deadlinesBadge" class="font-mono-num absolute -top-1.5 -left-2.5 px-1 min-w-[14px] h-[14px] rounded-full bg-zinc-800 text-zinc-300 text-[9px] flex items-center justify-center border border-zinc-700">0</span>
-                </div>
-                <span class="text-[10px] font-medium mt-1">الواجبات</span>
-            </button>
-
-            <button onclick="switchTab('tab-grades')" id="tabBtn-grades" class="flex flex-col items-center justify-center py-1.5 px-1 rounded-lg text-zinc-400 hover:text-zinc-200 transition-all">
-                <div class="relative">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path>
-                    </svg>
-                    <span id="gradesBadge" class="font-mono-num absolute -top-1.5 -left-2.5 px-1 min-w-[14px] h-[14px] rounded-full bg-zinc-800 text-zinc-300 text-[9px] flex items-center justify-center border border-zinc-700">0</span>
-                </div>
-                <span class="text-[10px] font-medium mt-1">العلامات</span>
-            </button>
-
-            <button onclick="switchTab('tab-attendance')" id="tabBtn-attendance" class="flex flex-col items-center justify-center py-1.5 px-1 rounded-lg text-zinc-400 hover:text-zinc-200 transition-all">
-                <div class="relative">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
-                    </svg>
-                    <span id="attendanceBadge" class="font-mono-num absolute -top-1.5 -left-2.5 px-1 min-w-[14px] h-[14px] rounded-full bg-zinc-800 text-zinc-300 text-[9px] flex items-center justify-center border border-zinc-700">0</span>
-                </div>
-                <span class="text-[10px] font-medium mt-1">الحضور</span>
-            </button>
-
-            <button onclick="switchTab('tab-announcements')" id="tabBtn-announcements" class="flex flex-col items-center justify-center py-1.5 px-1 rounded-lg text-zinc-400 hover:text-zinc-200 transition-all">
-                <div class="relative">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6M5.436 13.683A4.001 4.001 0 017 6h1.832c4.1 0 7.625-1.234 9.168-3v14c-1.543-1.766-5.067-3-9.168-3H7a3.988 3.988 0 01-1.564-.317z"></path>
-                    </svg>
-                    <span id="announcementsBadge" class="font-mono-num absolute -top-1.5 -left-2.5 px-1 min-w-[14px] h-[14px] rounded-full bg-zinc-800 text-zinc-300 text-[9px] flex items-center justify-center border border-zinc-700">0</span>
-                </div>
-                <span class="text-[10px] font-medium mt-1">الإعلانات</span>
-            </button>
-
-            <button onclick="switchTab('tab-settings')" id="tabBtn-settings" class="flex flex-col items-center justify-center py-1.5 px-1 rounded-lg text-zinc-400 hover:text-zinc-200 transition-all">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
-                </svg>
-                <span class="text-[10px] font-medium mt-1">الإعدادات</span>
-            </button>
+  return `
+    <div class="welcome">
+      <div>
+        <h1>${greet}، ${escapeHTML(firstName)}</h1>
+        <p>موجزك الأكاديمي لليوم · ${escapeHTML(todayStr)}</p>
+      </div>
+      <span class="tag">الفصل الأول ٢٠٢٦/٢٧</span>
+    </div>
+    ${!isLoggedIn ? loginBannerCard() : urgent}
+    <div class="section-head">
+      <h2>ملخص اليوم</h2>
+      <button onclick="go('week')">عرض الأسبوع ←</button>
+    </div>
+    <div class="stats">
+      <article class="stat" onclick="go('courses')">
+        <div class="stat-top">مقرراتي <span class="stat-icon">▤</span></div>
+        <strong>${courses.length}</strong>
+        <small>${courses.filter(c => c.is_monitored).length} قيد المتابعة</small>
+      </article>
+      <article class="stat" onclick="go('tasks')">
+        <div class="stat-top">مهام مفتوحة <span class="stat-icon">☷</span></div>
+        <strong>${remaining.length}</strong>
+        <small>من أصل ${tasks.length} مهام</small>
+      </article>
+      <article class="stat" onclick="go('attendance')">
+        <div class="stat-top">الحضور <span class="stat-icon">✓</span></div>
+        <strong>${attAvgText}</strong>
+        <small>${attCourses.length ? `عبر ${attCourses.length} مقررات مسجلة` : 'لا يوجد سجل حضور بعد'}</small>
+      </article>
+      <article class="stat" onclick="go('announcements')">
+        <div class="stat-top">جديد الإعلانات <span class="stat-icon">♧</span></div>
+        <strong>${unreadCount()}</strong>
+        <small>${files.length} ملفات دراسية مرصودة</small>
+      </article>
+    </div>
+    <div class="grid2">
+      <div>
+        <div class="section-head">
+          <h2>المهام القادمة</h2>
+          <button onclick="go('tasks')">كل المهام (${tasks.length}) ←</button>
         </div>
-    </nav>
-
-    <!-- ==================== CLIENT APPLICATION SCRIPT ==================== -->
-    <script>
-        const tg = window.Telegram?.WebApp;
-        if (tg) {
-            tg.ready();
-            tg.expand();
-            try {
-                tg.setHeaderColor('#0A0B0E');
-                tg.setBackgroundColor('#0A0B0E');
-            } catch (e) {}
-        }
-
-        let appData = null;
-        let activeTab = 'tab-courses';
-        let deadlinesFilter = 'all';
-        let gradesFilter = 'all';
-        let courseSubFilter = {}; // courseId -> 'all' | 'tasks' | 'files'
-        let openAccordions = new Set();
-
-        function getTelegramId() {
-            const urlParams = new URLSearchParams(window.location.search);
-            const qTid = urlParams.get('tid');
-            if (qTid && qTid.trim()) return qTid.trim();
-            if (tg?.initDataUnsafe?.user?.id) return tg.initDataUnsafe.user.id;
-            return null;
-        }
-
-        function haptic(type = 'light') {
-            try {
-                if (tg?.HapticFeedback) {
-                    if (type === 'light') tg.HapticFeedback.impactOccurred('light');
-                    else if (type === 'medium') tg.HapticFeedback.impactOccurred('medium');
-                    else if (type === 'success') tg.HapticFeedback.notificationOccurred('success');
-                }
-            } catch (e) {}
-        }
-
-        function showToast(msg, isError = false) {
-            const el = document.getElementById('statusToast');
-            if (!el) return;
-            el.className = isError
-                ? 'rounded-lg px-3.5 py-2.5 text-xs font-medium border border-rose-500/30 bg-rose-500/10 text-rose-300'
-                : 'rounded-lg px-3.5 py-2.5 text-xs font-medium border border-emerald-500/30 bg-emerald-500/10 text-emerald-300';
-            el.innerText = msg;
-            el.classList.remove('hidden');
-            setTimeout(() => { el.classList.add('hidden'); }, 4000);
-        }
-
-        function formatShortDate(raw) {
-            if (!raw) return '';
-            const s = String(raw).trim();
-            return s.length > 22 ? s.slice(0, 19) : s;
-        }
-
-        async function fetchUserData() {
-            const tid = getTelegramId();
-            const initData = tg?.initData || '';
-            const refreshIcon = document.getElementById('refreshIcon');
-            if (refreshIcon) refreshIcon.classList.add('animate-spin');
-
-            try {
-                const url = `/api/user-data?tid=${tid || ''}&initData=${encodeURIComponent(initData)}`;
-                const res = await fetch(url);
-                const data = await res.json();
-
-                if (data.success) {
-                    appData = data;
-                    renderApp();
-                } else {
-                    document.getElementById('userFullName').innerText = 'تسجيل الدخول مطلوب';
-                    document.getElementById('userStdId').innerText = 'LMS';
-                    renderLoginView(data.error);
-                }
-            } catch (err) {
-                console.error('Fetch error:', err);
-                document.getElementById('userFullName').innerText = 'خطأ في الاتصال بالخادم';
-            } finally {
-                if (refreshIcon) refreshIcon.classList.remove('animate-spin');
-            }
-        }
-
-        function renderLoginView(errMsg) {
-            const container = document.getElementById('coursesListContainer');
-            if (!container) return;
-            container.innerHTML = `
-                <div class="panel rounded-xl p-5 space-y-4">
-                    <div>
-                        <h3 class="text-sm font-bold text-zinc-100">ربط الحساب الأكاديمي — جامعة مؤتة</h3>
-                        <p class="text-[11px] text-zinc-400 mt-1">${escapeHtml(errMsg || 'أدخل الرقم الجامعي وكلمة المرور لتفعيل الرصد المباشر.')}</p>
-                    </div>
-                    <div class="space-y-3">
-                        <div>
-                            <label class="block text-[11px] text-zinc-400 mb-1">الرقم الجامعي (Student ID)</label>
-                            <input type="text" id="loginUsername" placeholder="120242222083" class="w-full bg-[#0C0E12] border border-[#1F2430] rounded-lg px-3.5 py-2.5 text-xs text-zinc-100 focus:outline-none focus:border-sky-500">
-                        </div>
-                        <div>
-                            <label class="block text-[11px] text-zinc-400 mb-1">كلمة المرور (Password)</label>
-                            <input type="password" id="loginPassword" placeholder="••••••••" class="w-full bg-[#0C0E12] border border-[#1F2430] rounded-lg px-3.5 py-2.5 text-xs text-zinc-100 focus:outline-none focus:border-sky-500">
-                        </div>
-                    </div>
-                    <div id="loginErrorBox" class="hidden text-[11px] text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-lg px-3 py-2"></div>
-                    <button onclick="submitMiniAppLogin()" id="btnSubmitLogin" class="w-full py-2.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-zinc-950 font-bold text-xs transition-all">
-                        تسجيل الدخول
-                    </button>
-                </div>
-            `;
-        }
-
-        async function submitMiniAppLogin() {
-            haptic('medium');
-            const uInput = document.getElementById('loginUsername')?.value?.trim();
-            const pInput = document.getElementById('loginPassword')?.value?.trim();
-            const errBox = document.getElementById('loginErrorBox');
-            const btn = document.getElementById('btnSubmitLogin');
-            if (!uInput || !pInput) {
-                if (errBox) {
-                    errBox.innerText = 'يرجى إدخال الرقم الجامعي وكلمة المرور';
-                    errBox.classList.remove('hidden');
-                }
-                return;
-            }
-            if (errBox) errBox.classList.add('hidden');
-            if (btn) {
-                btn.disabled = true;
-                btn.innerText = 'جاري التحقق من الحساب...';
-            }
-            try {
-                const res = await fetch('/api/login', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        tid: getTelegramId(),
-                        initData: tg?.initData || '',
-                        username: uInput,
-                        password: pInput
-                    })
-                });
-                const d = await res.json();
-                if (d.success) {
-                    haptic('success');
-                    await fetchUserData();
-                    showToast('تم تسجيل الدخول بنجاح — أضف المواد التي تريد مراقبتها');
-                } else if (errBox) {
-                    errBox.innerText = d.error || 'تعذر تسجيل الدخول؛ تحقق من البيانات';
-                    errBox.classList.remove('hidden');
-                }
-            } catch (e) {
-                if (errBox) {
-                    errBox.innerText = 'حدث خطأ في الاتصال بالخادم';
-                    errBox.classList.remove('hidden');
-                }
-            } finally {
-                if (btn) {
-                    btn.disabled = false;
-                    btn.innerText = 'تسجيل الدخول';
-                }
-            }
-        }
-
-        function renderApp() {
-            if (!appData) return;
-            const u = appData.user;
-            const courses = appData.courses || [];
-            const deadlines = appData.deadlines || [];
-            const allGrades = appData.grades || [];
-            const gradedOnly = allGrades.filter(g => g.grade_val && !['-', '—', ''].includes(String(g.grade_val).trim()));
-            const attendanceList = appData.attendance || [];
-            const announcementsList = appData.announcements || [];
-
-            // Header Info
-            document.getElementById('userFullName').innerText = u.full_name || 'طالب';
-            document.getElementById('userStdId').innerText = u.lms_username || '';
-            document.getElementById('lastCheckHeader').innerText = `آخر فحص: ${formatShortDate(u.last_check) || 'لم يتم بعد'}`;
-
-            const parts = (u.full_name || 'طالب').trim().split(/\s+/);
-            document.getElementById('userAvatar').innerText = parts.length >= 2 ? (parts[0][0] + parts[1][0]) : parts[0][0];
-
-            // Monitoring status
-            const badge = document.getElementById('monitoringBadge');
-            const btnText = document.getElementById('btnToggleMonitorText');
-            const btnDot = document.getElementById('btnToggleDot');
-            if (u.is_monitoring) {
-                badge.className = 'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 transition-all';
-                badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span><span>نشط</span>';
-                btnText.innerText = 'المراقبة: نشطة';
-                if (btnDot) btnDot.className = 'w-2 h-2 rounded-full bg-emerald-400';
-            } else {
-                badge.className = 'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold bg-zinc-800/80 text-zinc-400 border border-zinc-700 transition-all';
-                badge.innerHTML = '<span class="w-1.5 h-1.5 rounded-full bg-zinc-500"></span><span>متوقفة</span>';
-                btnText.innerText = 'تشغيل المراقبة';
-                if (btnDot) btnDot.className = 'w-2 h-2 rounded-full bg-zinc-500';
-            }
-
-            // Telemetry KPIs
-            const activeCoursesCount = courses.filter(c => c.is_monitored).length;
-            document.getElementById('metricCoursesCount').innerText = courses.length;
-            document.getElementById('metricMonitoredSub').innerText = `${activeCoursesCount} مراقب`;
-
-            const totalTasks = deadlines.length;
-            const doneTasks = deadlines.filter(d => d.is_submitted).length;
-            const pendingTasks = totalTasks - doneTasks;
-            const pct = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 100;
-
-            document.getElementById('metricTasksPct').innerText = `${pct}%`;
-            document.getElementById('metricTasksRatio').innerText = `${doneTasks}/${totalTasks}`;
-            document.getElementById('metricPendingCount').innerText = pendingTasks > 0 ? `${pendingTasks} قيد الحل` : 'مكتمل بالكامل';
-            document.getElementById('progressSummaryLabel').innerText = `${doneTasks} منجز • ${pendingTasks} قيد الحل (من أصل ${totalTasks})`;
-            document.getElementById('overallProgressBar').style.width = `${pct}%`;
-
-            // Attendance KPI
-            let totalTaken = 0, totalPres = 0, totalAbs = 0;
-            attendanceList.forEach(a => {
-                totalTaken += (a.taken_sessions || 0);
-                totalPres += (a.present_count || 0);
-                totalAbs += (a.absent_count || 0);
-            });
-            const attRateStr = totalTaken > 0 ? `${((totalPres / totalTaken) * 100).toFixed(1)}%` : '--';
-            document.getElementById('metricAttRate').innerText = attRateStr;
-            document.getElementById('metricAttSessions').innerText = `${totalTaken} محاضرة`;
-            document.getElementById('metricAttDetail').innerText = totalTaken > 0 ? `حاضر ${totalPres} • غائب ${totalAbs}` : 'لا توجد جلسات بعد';
-
-            // Content Breakdown KPI
-            let sumAssign = 0, sumQuiz = 0, sumRes = 0;
-            courses.forEach(c => {
-                sumAssign += (c.stats?.assignments || 0);
-                sumQuiz += (c.stats?.quizzes || 0);
-                sumRes += (c.stats?.resources || 0);
-            });
-            const totalItems = sumAssign + sumQuiz + sumRes;
-            document.getElementById('metricItemsCount').innerText = totalItems;
-            document.getElementById('metricItemsBreakdown').innerText = `${sumAssign} واجب • ${sumQuiz} كويز • ${sumRes} ملف`;
-            document.getElementById('metricInterval').innerText = `${u.check_interval}د`;
-
-            // Navigation Badges
-            document.getElementById('coursesBadge').innerText = courses.length;
-            document.getElementById('deadlinesBadge').innerText = pendingTasks > 0 ? pendingTasks : totalTasks;
-            document.getElementById('gradesBadge').innerText = gradedOnly.length > 0 ? gradedOnly.length : allGrades.length;
-            document.getElementById('attendanceBadge').innerText = attendanceList.length;
-            document.getElementById('announcementsBadge').innerText = announcementsList.length;
-
-            // Render Sections
-            renderCoursesList(courses);
-            renderDeadlinesList(deadlines);
-            renderGradesList(allGrades);
-            renderAttendanceList(attendanceList);
-            renderAnnouncementsList(announcementsList);
-
-            // Sync Settings
-            document.getElementById('toggleAssign').checked = u.notify_assign;
-            document.getElementById('toggleQuiz').checked = u.notify_quiz;
-            document.getElementById('toggleResource').checked = u.notify_resource;
-            document.getElementById('toggleGrade').checked = u.notify_grade !== false;
-            document.getElementById('toggleAnnouncement').checked = u.notify_announcement !== false;
-            const toggleAtt = document.getElementById('toggleAttendance');
-            if (toggleAtt) toggleAtt.checked = u.notify_attendance !== false;
-            highlightIntervalButton(u.check_interval);
-        }
-
-        function renderCoursesList(courses) {
-            const container = document.getElementById('coursesListContainer');
-            if (!courses.length) {
-                container.innerHTML = `
-                    <div class="p-8 text-center panel rounded-xl space-y-1.5">
-                        <p class="text-xs font-semibold text-zinc-300">لا توجد مقررات مضافة للمراقبة حالياً</p>
-                        <p class="text-[11px] text-zinc-500">أدخل رقم المادة (Course ID) أو رابطها في الحقل أعلاه للبدء برصدها</p>
-                    </div>`;
-                return;
-            }
-
-            const attByCourse = {};
-            if (appData && appData.attendance) {
-                appData.attendance.forEach(a => { attByCourse[a.course_id] = a; });
-            }
-
-            container.innerHTML = courses.map(c => {
-                const assigns = c.stats.assignments || 0;
-                const quizzes = c.stats.quizzes || 0;
-                const resources = c.stats.resources || 0;
-                const items = c.items || [];
-                const tasksTotal = assigns + quizzes;
-                const tasksDone = items.filter(i => (i.content_type === 'assign' || i.content_type === 'quiz') && i.is_submitted).length;
-                const tasksPct = tasksTotal > 0 ? Math.round((tasksDone / tasksTotal) * 100) : 100;
-                const attRec = attByCourse[c.id];
-                const accId = `acc-${c.id}`;
-                const isOpen = openAccordions.has(accId);
-                const subFilter = courseSubFilter[c.id] || 'all';
-
-                return `
-                <div class="panel rounded-xl overflow-hidden">
-                    <div class="p-3.5 space-y-3">
-                        <div class="flex flex-wrap items-start justify-between gap-2.5">
-                            <div class="min-w-0 flex-1">
-                                <div class="flex items-center flex-wrap gap-1.5">
-                                    <span class="font-mono-num text-[10px] text-zinc-400 bg-[#161922] px-2 py-0.5 rounded border border-[#232834]">ID: ${c.id}</span>
-                                    <span class="text-[10px] font-semibold px-2 py-0.5 rounded border ${c.is_monitored ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-zinc-800 text-zinc-400 border-zinc-700'}">
-                                        ${c.is_monitored ? 'قيد المراقبة' : 'متوقف مؤقتاً'}
-                                    </span>
-                                    ${attRec && attRec.taken_sessions > 0 ? `
-                                        <span class="font-mono-num text-[10px] font-semibold px-2 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20">
-                                            الحضور: ${escapeHtml(attRec.percentage_str || '0%')}
-                                        </span>
-                                    ` : ''}
-                                </div>
-                                <h3 class="text-xs font-bold text-zinc-100 mt-1.5 leading-relaxed break-words">${escapeHtml(c.name)}</h3>
-                            </div>
-
-                            <div class="flex items-center gap-1.5 shrink-0">
-                                <button onclick="toggleCourseMonitoring(${c.id})" class="text-[10.5px] font-semibold px-2.5 py-1 rounded-lg border border-[#252A37] bg-[#161922] text-zinc-300 hover:text-white transition-colors">
-                                    ${c.is_monitored ? 'إيقاف' : 'تفعيل'}
-                                </button>
-                                <button onclick="deleteCourse(${c.id})" class="p-1.5 rounded-lg border border-[#252A37] bg-[#161922] text-zinc-400 hover:text-rose-400 transition-colors" title="حذف المادة">
-                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-                                    </svg>
-                                </button>
-                            </div>
-                        </div>
-
-                        <!-- Telemetry Pills & Course Task Progress -->
-                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-center text-[10.5px]">
-                            <div class="panel-inset rounded-lg py-1.5 px-2 flex items-center justify-between sm:block">
-                                <span class="text-zinc-400 text-[10px]">الواجبات</span>
-                                <span class="font-mono-num font-bold text-zinc-100">${assigns}</span>
-                            </div>
-                            <div class="panel-inset rounded-lg py-1.5 px-2 flex items-center justify-between sm:block">
-                                <span class="text-zinc-400 text-[10px]">الكويزات</span>
-                                <span class="font-mono-num font-bold text-zinc-100">${quizzes}</span>
-                            </div>
-                            <div class="panel-inset rounded-lg py-1.5 px-2 flex items-center justify-between sm:block">
-                                <span class="text-zinc-400 text-[10px]">الملفات</span>
-                                <span class="font-mono-num font-bold text-zinc-100">${resources}</span>
-                            </div>
-                            <div class="panel-inset rounded-lg py-1.5 px-2 flex items-center justify-between sm:block">
-                                <span class="text-zinc-400 text-[10px]">إنجاز المهام</span>
-                                <span class="font-mono-num font-bold ${tasksDone === tasksTotal && tasksTotal > 0 ? 'text-emerald-400' : 'text-sky-400'}">${tasksDone}/${tasksTotal}</span>
-                            </div>
-                        </div>
-
-                        ${tasksTotal > 0 ? `
-                        <div class="w-full h-1 bg-[#181C24] rounded-full overflow-hidden">
-                            <div class="h-full ${tasksPct === 100 ? 'bg-emerald-500' : 'bg-sky-500'} rounded-full" style="width: ${tasksPct}%"></div>
-                        </div>` : ''}
-                    </div>
-
-                    <!-- Accordion Trigger Bar -->
-                    <div class="border-t border-[#1A1E28] bg-[#0D0F14] px-3.5 py-2 flex flex-wrap items-center justify-between gap-2 text-[11px]">
-                        <button onclick="toggleAccordion('${accId}')" class="text-zinc-300 hover:text-white flex items-center gap-1.5 font-semibold transition-colors">
-                            <span>تصفح محتويات المادة (${items.length})</span>
-                            <svg id="${accId}-icon" class="w-3.5 h-3.5 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
-                            </svg>
-                        </button>
-                        <a href="${c.url}" target="_blank" onclick="haptic('light')" class="text-sky-400 hover:underline flex items-center gap-1 font-medium">
-                            <span>فتح في LMS</span>
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
-                            </svg>
-                        </a>
-                    </div>
-
-                    <!-- Accordion Content Drawer -->
-                    <div id="${accId}" class="${isOpen ? '' : 'hidden'} border-t border-[#1A1E28] bg-[#0B0D12] px-3.5 py-2.5 text-xs space-y-2">
-                        <div class="flex items-center gap-1 bg-[#11141C] p-1 rounded-lg border border-[#1C202C] text-[10px]">
-                            <button onclick="setCourseSubFilter(${c.id}, 'all')" class="flex-1 py-1 rounded ${subFilter === 'all' ? 'bg-[#1F2433] text-zinc-100 font-semibold' : 'text-zinc-400'}">الكل (${items.length})</button>
-                            <button onclick="setCourseSubFilter(${c.id}, 'tasks')" class="flex-1 py-1 rounded ${subFilter === 'tasks' ? 'bg-[#1F2433] text-zinc-100 font-semibold' : 'text-zinc-400'}">المهام (${tasksTotal})</button>
-                            <button onclick="setCourseSubFilter(${c.id}, 'files')" class="flex-1 py-1 rounded ${subFilter === 'files' ? 'bg-[#1F2433] text-zinc-100 font-semibold' : 'text-zinc-400'}">الملفات (${resources})</button>
-                        </div>
-                        <div class="row-divider">
-                            ${renderCourseItems(items, subFilter)}
-                        </div>
-                    </div>
-                </div>`;
-            }).join('');
-        }
-
-        function setCourseSubFilter(courseId, filterVal) {
-            haptic('light');
-            courseSubFilter[courseId] = filterVal;
-            openAccordions.add(`acc-${courseId}`);
-            if (appData) renderCoursesList(appData.courses);
-        }
-
-        function renderCourseItems(items, subFilter = 'all') {
-            let list = items || [];
-            if (subFilter === 'tasks') list = list.filter(i => i.content_type === 'assign' || i.content_type === 'quiz');
-            if (subFilter === 'files') list = list.filter(i => i.content_type === 'resource');
-
-            if (!list.length) {
-                return '<div class="py-4 text-center text-zinc-500 text-[11px]">لا توجد عناصر مسجلة ضمن هذا التصنيف</div>';
-            }
-            return list.map(item => {
-                const isAssign = item.content_type === 'assign';
-                const isQuiz = item.content_type === 'quiz';
-                const isTask = isAssign || isQuiz;
-                const isDone = Boolean(item.is_submitted);
-
-                let typeBadge = '<span class="text-[9.5px] font-semibold px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700">ملف / مورد</span>';
-                if (isAssign) typeBadge = '<span class="text-[9.5px] font-semibold px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20">واجب</span>';
-                if (isQuiz) typeBadge = '<span class="text-[9.5px] font-semibold px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 border border-violet-500/20">كويز</span>';
-
-                return `
-                <div class="py-2.5 flex items-start justify-between gap-2.5">
-                    <div class="min-w-0 space-y-1">
-                        <div class="flex items-center flex-wrap gap-1.5">
-                            ${typeBadge}
-                            <span class="font-semibold text-zinc-200 text-[11.5px] leading-snug break-words">${escapeHtml(item.content_name || 'عنصر مقرر')}</span>
-                        </div>
-                        <div class="flex items-center flex-wrap gap-2 text-[10px] text-zinc-500 font-mono-num">
-                            ${item.due_date ? `<span>الموعد: ${escapeHtml(item.due_date)}</span>` : ''}
-                            ${item.first_seen ? `<span>رُصد: ${escapeHtml(formatShortDate(item.first_seen))}</span>` : ''}
-                        </div>
-                    </div>
-                    <div class="flex items-center gap-1.5 shrink-0">
-                        ${isTask ? `
-                            <span class="text-[10px] font-semibold px-2 py-0.5 rounded border ${isDone ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25' : 'bg-amber-500/10 text-amber-400 border-amber-500/25'}">
-                                ${isDone ? 'منجز' : 'قيد الحل'}
-                            </span>
-                        ` : ''}
-                        <a href="${item.content_url || '#'}" target="_blank" class="p-1.5 rounded-lg bg-[#151822] hover:bg-[#1E2230] text-sky-400 border border-[#232836]" title="فتح في LMS">
-                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
-                            </svg>
-                        </a>
-                    </div>
-                </div>`;
-            }).join('');
-        }
-
-        function toggleAccordion(id) {
-            haptic('light');
-            const el = document.getElementById(id);
-            if (!el) return;
-            const icon = document.getElementById(id + '-icon') || document.getElementById(id.replace('acc-', 'acc-icon-'));
-            if (el.classList.contains('hidden')) {
-                el.classList.remove('hidden');
-                openAccordions.add(id);
-                if (icon) icon.classList.add('rotate-180');
-            } else {
-                el.classList.add('hidden');
-                openAccordions.delete(id);
-                if (icon) icon.classList.remove('rotate-180');
-            }
-        }
-
-        function toggleAllGroupAccordions(prefix) {
-            haptic('light');
-            const nodes = Array.from(document.querySelectorAll(`[id^="${prefix}"]`)).filter(el => !el.id.endsWith('-icon'));
-            if (!nodes.length) return;
-            const anyHidden = nodes.some(el => el.classList.contains('hidden'));
-            nodes.forEach(el => {
-                const icon = document.getElementById(el.id + '-icon');
-                if (anyHidden) {
-                    el.classList.remove('hidden');
-                    openAccordions.add(el.id);
-                    if (icon) icon.classList.add('rotate-180');
-                } else {
-                    el.classList.add('hidden');
-                    openAccordions.delete(el.id);
-                    if (icon) icon.classList.remove('rotate-180');
-                }
-            });
-        }
-
-        function filterCourses() {
-            const query = document.getElementById('courseSearchInput').value.trim().toLowerCase();
-            if (!appData) return;
-            const filtered = appData.courses.filter(c =>
-                c.name.toLowerCase().includes(query) || String(c.id).includes(query)
-            );
-            renderCoursesList(filtered);
-        }
-
-        function renderDeadlinesList(deadlines) {
-            const container = document.getElementById('deadlinesListContainer');
-            let filtered = deadlines || [];
-            if (deadlinesFilter === 'pending') filtered = filtered.filter(d => !d.is_submitted);
-            if (deadlinesFilter === 'submitted') filtered = filtered.filter(d => d.is_submitted);
-            if (deadlinesFilter === 'assign') filtered = filtered.filter(d => d.content_type === 'assign' && !String(d.content_id || '').startsWith('quiz_'));
-            if (deadlinesFilter === 'quiz') filtered = filtered.filter(d => d.content_type === 'quiz' || String(d.content_id || '').startsWith('quiz_'));
-
-            if (!filtered.length) {
-                container.innerHTML = `
-                    <div class="p-8 text-center panel rounded-xl space-y-1">
-                        <p class="text-xs font-semibold text-zinc-300">لا توجد واجبات أو اختبارات ضمن هذا الفلتر</p>
-                        <p class="text-[11px] text-zinc-500">يمكنك التبديل بين الفلاتر أعلاه لاستعراض بقية المهام</p>
-                    </div>`;
-                return;
-            }
-
-            // Build lookup for grades by module ID so we can show if a task also has a recorded grade!
-            const gradeByItem = {};
-            if (appData && appData.grades) {
-                appData.grades.forEach(g => {
-                    if (g.item_id && g.grade_val) {
-                        gradeByItem[g.item_id.replace('mod_', '')] = g;
-                    }
-                });
-            }
-
-            const courseGroups = new Map();
-            if (appData && appData.courses) {
-                appData.courses.forEach(c => {
-                    courseGroups.set(c.name, { id: c.id, name: c.name, tasks: [] });
-                });
-            }
-            filtered.forEach(d => {
-                const cname = d.course_name || 'مقرر دراسي';
-                if (!courseGroups.has(cname)) {
-                    courseGroups.set(cname, { id: d.course_id || '', name: cname, tasks: [] });
-                }
-                courseGroups.get(cname).tasks.push(d);
-            });
-
-            const nonEmptyGroups = Array.from(courseGroups.values()).filter(g => g.tasks.length > 0);
-
-            container.innerHTML = nonEmptyGroups.map((group, idx) => {
-                const doneCount = group.tasks.filter(t => t.is_submitted).length;
-                const pendingCount = group.tasks.length - doneCount;
-                const pct = Math.round((doneCount / group.tasks.length) * 100);
-                const dropId = `dl-course-${idx}`;
-                const isOpen = openAccordions.has(dropId);
-
-                const tasksHtml = group.tasks.map(d => {
-                    const isQuiz = d.content_type === 'quiz' || String(d.content_id || '').startsWith('quiz_');
-                    const cmid = String(d.content_id || '').replace(/^(assign_|quiz_)/, '');
-                    const matchedGrade = gradeByItem[cmid];
-
-                    const typeBadge = isQuiz
-                        ? '<span class="text-[9.5px] font-semibold px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 border border-violet-500/20">اختبار قصير (Quiz)</span>'
-                        : '<span class="text-[9.5px] font-semibold px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20">واجب تسليم (Assignment)</span>';
-
-                    return `
-                    <div class="py-3 space-y-2">
-                        <div class="flex items-start justify-between gap-2.5">
-                            <div class="space-y-1 min-w-0">
-                                <div class="flex items-center flex-wrap gap-1.5">
-                                    ${typeBadge}
-                                    ${d.time_remaining && !d.is_submitted ? `<span class="font-mono-num text-[9.5px] font-semibold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400 border border-amber-500/20">المتبقي: ${escapeHtml(d.time_remaining)}</span>` : ''}
-                                    ${matchedGrade ? `<span class="font-mono-num text-[9.5px] font-semibold px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">الدرجة: ${escapeHtml(matchedGrade.grade_val)}${matchedGrade.grade_max ? ' / ' + escapeHtml(matchedGrade.grade_max) : ''}</span>` : ''}
-                                </div>
-                                <h4 class="text-xs font-bold text-zinc-100 leading-snug break-words">${escapeHtml(d.content_name)}</h4>
-                            </div>
-
-                            <span class="text-[10px] font-semibold px-2 py-0.5 rounded border shrink-0 ${d.is_submitted ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25' : 'bg-rose-500/10 text-rose-400 border-rose-500/25'}">
-                                ${d.is_submitted ? 'منجز في LMS' : 'قيد الحل'}
-                            </span>
-                        </div>
-
-                        <div class="flex flex-wrap items-center justify-between gap-2 text-[10.5px] text-zinc-400 pt-0.5">
-                            <div class="flex items-center flex-wrap gap-2 font-mono-num text-[10px] text-zinc-400">
-                                <span>${d.due_str ? `الموعد: ${escapeHtml(d.due_str)}` : 'بدون تاريخ إغلاق محدد'}</span>
-                                ${d.first_seen ? `<span>• رُصد: ${escapeHtml(formatShortDate(d.first_seen))}</span>` : ''}
-                            </div>
-                            <div class="flex items-center gap-2 shrink-0">
-                                ${!d.is_submitted ? `
-                                    <button onclick="markAsSubmitted('${escapeHtml(d.content_id)}')" class="text-[10px] text-zinc-300 hover:text-emerald-400 px-2 py-0.5 rounded border border-[#232834] bg-[#141720] transition-colors">
-                                        تحديد كمنجز
-                                    </button>
-                                ` : ''}
-                                <a href="${d.content_url}" target="_blank" onclick="haptic('light')" class="text-sky-400 hover:underline font-semibold flex items-center gap-1">
-                                    <span>فتح في LMS</span>
-                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
-                                    </svg>
-                                </a>
-                            </div>
-                        </div>
-                    </div>`;
-                }).join('');
-
-                return `
-                <div class="panel rounded-xl overflow-hidden">
-                    <button onclick="toggleAccordion('${dropId}')" class="w-full p-3.5 text-right space-y-2.5 hover:bg-white/[0.015] transition-colors">
-                        <div class="flex items-start justify-between gap-2.5">
-                            <div class="space-y-1.5 min-w-0 flex-1">
-                                <div class="flex items-start gap-1.5">
-                                    ${group.id ? `<span class="font-mono-num text-[9.5px] text-zinc-400 bg-[#161922] px-1.5 py-0.5 rounded border border-[#232834] shrink-0 mt-0.5">#${group.id}</span>` : ''}
-                                    <h3 class="text-xs font-bold text-zinc-100 leading-relaxed break-words">${escapeHtml(group.name)}</h3>
-                                </div>
-                                <div class="flex items-center flex-wrap gap-1.5 text-[10px] font-semibold">
-                                    <span class="px-2 py-0.5 rounded bg-[#161922] text-zinc-300 border border-[#232834]">المجموع: ${group.tasks.length}</span>
-                                    <span class="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">منجز: ${doneCount}</span>
-                                    ${pendingCount > 0
-                                        ? `<span class="px-2 py-0.5 rounded bg-rose-500/10 text-rose-400 border border-rose-500/20">قيد الحل: ${pendingCount}</span>`
-                                        : `<span class="px-2 py-0.5 rounded bg-sky-500/10 text-sky-400 border border-sky-500/20">مكتملة 100%</span>`
-                                    }
-                                </div>
-                            </div>
-
-                            <div class="flex items-center gap-1.5 text-[10.5px] text-zinc-300 shrink-0 bg-[#161922] px-2.5 py-1.5 rounded-lg border border-[#252A37]">
-                                <span class="font-mono-num font-bold text-sky-400">${pct}%</span>
-                                <svg id="${dropId}-icon" class="w-3.5 h-3.5 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
-                                </svg>
-                            </div>
-                        </div>
-
-                        <div class="w-full h-1 bg-[#181C24] rounded-full overflow-hidden">
-                            <div class="h-full ${pct === 100 ? 'bg-emerald-500' : 'bg-sky-500'} rounded-full" style="width: ${pct}%"></div>
-                        </div>
-                    </button>
-
-                    <div id="${dropId}" class="${isOpen ? '' : 'hidden'} border-t border-[#1A1E28] bg-[#0B0D12] px-3.5 py-1 row-divider">
-                        ${tasksHtml}
-                    </div>
-                </div>`;
-            }).join('');
-        }
-
-        function setDeadlinesFilter(f) {
-            haptic('light');
-            deadlinesFilter = f;
-            const map = {
-                all: 'btnFilterAll',
-                pending: 'btnFilterPending',
-                submitted: 'btnFilterSubmitted',
-                assign: 'btnFilterAssign',
-                quiz: 'btnFilterQuiz',
-            };
-            Object.entries(map).forEach(([key, btnId]) => {
-                const btn = document.getElementById(btnId);
-                if (!btn) return;
-                btn.className = (key === f)
-                    ? 'py-1.5 rounded font-semibold bg-[#1C202B] text-zinc-100'
-                    : 'py-1.5 rounded font-medium text-zinc-400 hover:text-zinc-200';
-            });
-            if (appData) renderDeadlinesList(appData.deadlines);
-        }
-
-        function setGradesFilter(f) {
-            haptic('light');
-            gradesFilter = f;
-            const bAll = document.getElementById('btnGradeFilterAll');
-            const bGraded = document.getElementById('btnGradeFilterGraded');
-            if (bAll && bGraded) {
-                if (f === 'all') {
-                    bAll.className = 'flex-1 py-1.5 px-2 rounded font-semibold bg-[#1C202B] text-zinc-100 text-center';
-                    bGraded.className = 'flex-1 py-1.5 px-2 rounded font-medium text-zinc-400 hover:text-zinc-200 text-center';
-                } else {
-                    bGraded.className = 'flex-1 py-1.5 px-2 rounded font-semibold bg-[#1C202B] text-zinc-100 text-center';
-                    bAll.className = 'flex-1 py-1.5 px-2 rounded font-medium text-zinc-400 hover:text-zinc-200 text-center';
-                }
-            }
-            if (appData) renderGradesList(appData.grades || []);
-        }
-
-        function renderGradesList(allGrades) {
-            const container = document.getElementById('gradesListContainer');
-            const courses = (appData && appData.courses) ? appData.courses : [];
-            const rawList = allGrades || [];
-
-            const gradeGroups = new Map();
-            courses.forEach(c => {
-                gradeGroups.set(c.name, { id: c.id, name: c.name, items: [] });
-            });
-            rawList.forEach(g => {
-                const cname = g.course_name || 'مقرر دراسي';
-                if (!gradeGroups.has(cname)) {
-                    gradeGroups.set(cname, { id: g.course_id || '', name: cname, items: [] });
-                }
-                const hasVal = Boolean(g.grade_val && !['-', '—', ''].includes(String(g.grade_val).trim()));
-                if (gradesFilter === 'graded' && !hasVal) return;
-                gradeGroups.get(cname).items.push(g);
-            });
-
-            const groupsArr = Array.from(gradeGroups.values());
-            if (!groupsArr.length) {
-                container.innerHTML = `
-                    <div class="p-8 text-center panel rounded-xl space-y-1">
-                        <p class="text-xs font-semibold text-zinc-300">لا توجد سجلات علامات متاحة حالياً</p>
-                        <p class="text-[11px] text-zinc-500">سيتم إشعارك فور رصد أي علامة جديدة في LMS</p>
-                    </div>`;
-                return;
-            }
-
-            container.innerHTML = groupsArr.map((group, idx) => {
-                const totalItems = group.items.length;
-                const gradedItems = group.items.filter(g => g.grade_val && !['-', '—', ''].includes(String(g.grade_val).trim()));
-                const gradedCount = gradedItems.length;
-                const dropId = `gr-course-${idx}`;
-                const isOpen = openAccordions.has(dropId);
-
-                const rowsHtml = totalItems > 0 ? group.items.map(g => {
-                    const hasVal = Boolean(g.grade_val && !['-', '—', ''].includes(String(g.grade_val).trim()));
-                    const rangeTxt = g.grade_max ? `المدى: ${escapeHtml(g.grade_max)}` : '';
-                    return `
-                    <div class="py-3 space-y-2">
-                        <div class="flex items-start justify-between gap-2.5">
-                            <div class="min-w-0 space-y-1">
-                                <div class="flex items-center flex-wrap gap-1.5">
-                                    <span class="text-[9.5px] font-semibold px-1.5 py-0.5 rounded border ${hasVal ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-zinc-800/80 text-zinc-400 border-zinc-700'}">
-                                        ${hasVal ? 'مرصودة' : 'بانتظار الرصد'}
-                                    </span>
-                                    ${rangeTxt ? `<span class="font-mono-num text-[10px] text-zinc-400 bg-[#151821] px-1.5 py-0.5 rounded border border-[#232834]">${rangeTxt}</span>` : ''}
-                                    ${g.percentage ? `<span class="font-mono-num text-[10px] text-sky-400 bg-sky-500/10 px-1.5 py-0.5 rounded border border-sky-500/20">${escapeHtml(g.percentage)}</span>` : ''}
-                                </div>
-                                <h4 class="text-xs font-bold text-zinc-100 leading-snug break-words">${escapeHtml(g.item_name || 'بند تقييم')}</h4>
-                            </div>
-
-                            <div class="text-left shrink-0">
-                                <span class="font-mono-num text-xs font-bold px-2.5 py-1 rounded-lg border inline-block ${hasVal ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25' : 'bg-[#151821] text-zinc-500 border-[#232834]'}">
-                                    ${hasVal ? escapeHtml(g.grade_val) : '—'}
-                                </span>
-                            </div>
-                        </div>
-
-                        ${g.feedback ? `
-                        <div class="text-[11px] text-zinc-300 bg-[#12151E] rounded-lg p-2.5 border border-[#1E2330]">
-                            <span class="text-zinc-400 font-semibold">ملاحظات المدرس:</span> ${escapeHtml(g.feedback)}
-                        </div>` : ''}
-
-                        <div class="flex items-center justify-between text-[10px] text-zinc-500">
-                            <span class="font-mono-num">${g.updated_at ? `آخر تحديث: ${escapeHtml(formatShortDate(g.updated_at))}` : ''}</span>
-                            ${g.url ? `
-                            <a href="${g.url}" target="_blank" onclick="haptic('light')" class="text-sky-400 hover:underline font-medium">
-                                فتح التقييم في LMS ↗
-                            </a>` : ''}
-                        </div>
-                    </div>`;
-                }).join('') : `
-                    <div class="py-4 text-center text-[11px] text-zinc-500">
-                        ${gradesFilter === 'graded' ? 'لا توجد علامات مرصودة لهذه المادة حتى الآن (اضغط "جميع بنود التقييم" لعرض البنود المنتظرة)' : 'لا توجد بنود تقييم مسجلة في كشف علامات هذه المادة'}
-                    </div>`;
-
-                return `
-                <div class="panel rounded-xl overflow-hidden">
-                    <button onclick="toggleAccordion('${dropId}')" class="w-full p-3.5 text-right flex items-start justify-between gap-2.5 hover:bg-white/[0.015] transition-colors">
-                        <div class="space-y-1.5 min-w-0 flex-1">
-                            <div class="flex items-start gap-1.5">
-                                ${group.id ? `<span class="font-mono-num text-[9.5px] text-zinc-400 bg-[#161922] px-1.5 py-0.5 rounded border border-[#232834] shrink-0 mt-0.5">#${group.id}</span>` : ''}
-                                <h3 class="text-xs font-bold text-zinc-100 leading-relaxed break-words">${escapeHtml(group.name)}</h3>
-                            </div>
-                            <div class="flex items-center flex-wrap gap-1.5 text-[10px] font-semibold">
-                                <span class="px-2 py-0.5 rounded ${gradedCount > 0 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-[#161922] text-zinc-400 border border-[#232834]'}">
-                                    الدرجات المرصودة: ${gradedCount}
-                                </span>
-                                <span class="px-2 py-0.5 rounded bg-[#161922] text-zinc-400 border border-[#232834]">
-                                    إجمالي التقييمات: ${totalItems}
-                                </span>
-                            </div>
-                        </div>
-
-                        <div class="flex items-center gap-1.5 text-[10.5px] text-zinc-300 shrink-0 bg-[#161922] px-2.5 py-1.5 rounded-lg border border-[#252A37]">
-                            <span>الدرجات</span>
-                            <svg id="${dropId}-icon" class="w-3.5 h-3.5 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
-                            </svg>
-                        </div>
-                    </button>
-
-                    <div id="${dropId}" class="${isOpen ? '' : 'hidden'} border-t border-[#1A1E28] bg-[#0B0D12] px-3.5 py-1 row-divider">
-                        ${rowsHtml}
-                    </div>
-                </div>`;
-            }).join('');
-        }
-
-        function renderAttendanceList(attendance) {
-            const container = document.getElementById('attendanceListContainer');
-            if (!container) return;
-            const list = attendance || [];
-            if (!list.length) {
-                container.innerHTML = `
-                    <div class="p-8 text-center panel rounded-xl space-y-1">
-                        <p class="text-xs font-semibold text-zinc-300">لا توجد سجلات حضور وغياب (Attendance) حالياً</p>
-                        <p class="text-[11px] text-zinc-500">يقوم النظام تلقائياً باكتشاف وحفظ أي سجل حضور وغياب في مقرراتك</p>
-                    </div>`;
-                return;
-            }
-
-            container.innerHTML = list.map((att, idx) => {
-                const dropId = `att-course-${idx}`;
-                const isOpen = openAccordions.has(dropId);
-                const sessions = att.sessions || [];
-                const taken = att.taken_sessions || 0;
-                const total = att.total_sessions || 0;
-                const remaining = Math.max(0, total - taken);
-                const present = att.present_count || 0;
-                const absent = att.absent_count || 0;
-                const late = att.late_count || 0;
-                const excused = att.excused_count || 0;
-                const pctStr = att.percentage_str || (taken > 0 ? `${((present / taken) * 100).toFixed(1)}%` : '0.0%');
-                const pctNum = parseFloat(String(pctStr).replace('%', '')) || 0;
-
-                const pctBadgeColor = taken === 0
-                    ? 'bg-[#161922] text-zinc-400 border-[#252A37]'
-                    : (pctNum >= 80
-                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25'
-                        : (pctNum >= 60 ? 'bg-amber-500/10 text-amber-400 border-amber-500/25' : 'bg-rose-500/10 text-rose-400 border-rose-500/25'));
-
-                const barColor = pctNum >= 80 ? 'bg-emerald-500' : (pctNum >= 60 ? 'bg-amber-500' : 'bg-rose-500');
-
-                const sessionsHtml = sessions.length > 0 ? sessions.map((s, sIdx) => {
-                    const stLow = String(s.status || '').toLowerCase();
-                    let badgeCls = 'bg-zinc-800 text-zinc-300 border-zinc-700';
-                    let badgeTxt = s.status || 'مسجل';
-                    if (stLow.includes('present') || stLow.includes('حاضر')) {
-                        badgeCls = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/25';
-                        badgeTxt = 'حاضر (Present)';
-                    } else if (stLow.includes('absent') || stLow.includes('غائب')) {
-                        badgeCls = 'bg-rose-500/10 text-rose-400 border-rose-500/25';
-                        badgeTxt = 'غائب (Absent)';
-                    } else if (stLow.includes('late') || stLow.includes('متأخر')) {
-                        badgeCls = 'bg-amber-500/10 text-amber-400 border-amber-500/25';
-                        badgeTxt = 'متأخر (Late)';
-                    } else if (stLow.includes('excused') || stLow.includes('معذور')) {
-                        badgeCls = 'bg-sky-500/10 text-sky-400 border-sky-500/25';
-                        badgeTxt = 'معذور (Excused)';
-                    }
-
-                    return `
-                    <div class="py-2.5 flex flex-wrap sm:flex-nowrap items-start sm:items-center justify-between gap-2">
-                        <div class="flex items-start gap-2 min-w-0 flex-1">
-                            <span class="font-mono-num text-[10px] text-zinc-400 bg-[#141720] px-1.5 py-0.5 rounded border border-[#222734] shrink-0 mt-0.5">#${sIdx + 1}</span>
-                            <div class="min-w-0 flex-1">
-                                <p class="font-mono-num text-[11px] font-semibold text-zinc-100 break-words">${escapeHtml(s.date || '')}</p>
-                                <div class="flex items-center flex-wrap gap-2 text-[10px] text-zinc-400 mt-0.5">
-                                    <span>${escapeHtml(s.description || 'محاضرة دراسية')}</span>
-                                    ${s.points ? `<span class="font-mono-num text-zinc-300">• النقاط: ${escapeHtml(s.points)}</span>` : ''}
-                                    ${s.remarks ? `<span class="text-amber-400">• ملاحظة: ${escapeHtml(s.remarks)}</span>` : ''}
-                                </div>
-                            </div>
-                        </div>
-                        <span class="text-[10px] font-semibold px-2 py-0.5 rounded border shrink-0 ${badgeCls}">
-                            ${escapeHtml(badgeTxt)}
-                        </span>
-                    </div>`;
-                }).join('') : `
-                    <div class="py-4 text-center text-[11px] text-zinc-500">
-                        لم يتم رصد محاضرات في هذا السجل حتى الآن
-                    </div>`;
-
-                return `
-                <div class="panel rounded-xl overflow-hidden">
-                    <div class="p-3.5 space-y-3">
-                        <div class="flex items-start justify-between gap-2.5">
-                            <div class="min-w-0 flex-1">
-                                <div class="flex items-center flex-wrap gap-1.5">
-                                    <span class="font-mono-num text-[9.5px] text-zinc-400 bg-[#161922] px-1.5 py-0.5 rounded border border-[#232834]">#${att.course_id}</span>
-                                    <span class="text-[10px] text-zinc-400">${escapeHtml(formatShortDate(att.updated_at) ? 'تحديث: ' + formatShortDate(att.updated_at) : 'سجل الحضور')}</span>
-                                </div>
-                                <h4 class="text-xs font-bold text-zinc-100 mt-1 leading-relaxed break-words">${escapeHtml(att.course_name || 'مقرر دراسي')}</h4>
-                            </div>
-                            <div class="text-left shrink-0">
-                                <span class="font-mono-num text-xs font-bold px-2.5 py-1 rounded-lg border inline-block ${pctBadgeColor}">
-                                    ${escapeHtml(pctStr)}
-                                </span>
-                            </div>
-                        </div>
-
-                        <!-- Responsive Telemetry Grid (2x2 on mobile, 4x1 on larger screens) -->
-                        <div class="grid grid-cols-2 sm:grid-cols-4 gap-1.5 text-center text-[10.5px]">
-                            <div class="panel-inset rounded-lg py-2 px-2.5 flex items-center justify-between sm:block">
-                                <p class="text-[10px] text-zinc-400">المنعقدة</p>
-                                <p class="font-mono-num font-bold text-zinc-100 sm:mt-0.5">${taken} / ${total}</p>
-                            </div>
-                            <div class="bg-emerald-500/5 rounded-lg py-2 px-2.5 border border-emerald-500/15 flex items-center justify-between sm:block">
-                                <p class="text-[10px] text-emerald-400/90">مرات الحضور</p>
-                                <p class="font-mono-num font-bold text-emerald-400 sm:mt-0.5">${present}</p>
-                            </div>
-                            <div class="bg-rose-500/5 rounded-lg py-2 px-2.5 border border-rose-500/15 flex items-center justify-between sm:block">
-                                <p class="text-[10px] text-rose-400/90">مرات الغياب</p>
-                                <p class="font-mono-num font-bold text-rose-400 sm:mt-0.5">${absent}</p>
-                            </div>
-                            <div class="panel-inset rounded-lg py-2 px-2.5 flex items-center justify-between sm:block">
-                                <p class="text-[10px] text-zinc-400">النقاط</p>
-                                <p class="font-mono-num font-bold text-sky-400 sm:mt-0.5">${escapeHtml(att.points_str || '0 / 0')}</p>
-                            </div>
-                        </div>
-
-                        ${taken > 0 ? `
-                        <div class="space-y-1">
-                            <div class="w-full h-1.5 bg-[#181C24] rounded-full overflow-hidden">
-                                <div class="h-full ${barColor} rounded-full transition-all" style="width: ${Math.min(100, pctNum)}%"></div>
-                            </div>
-                            <div class="flex items-center justify-between text-[10px] text-zinc-500">
-                                <span>متبقي في جدول الفصل: <strong class="font-mono-num text-zinc-300">${remaining}</strong> محاضرة</span>
-                                ${(late > 0 || excused > 0) ? `<span>تأخير: ${late} • عذر: ${excused}</span>` : `<span>الغيابات المسجلة: <strong class="font-mono-num ${absent > 0 ? 'text-rose-400' : 'text-zinc-300'}">${absent}</strong></span>`}
-                            </div>
-                        </div>` : ''}
-                    </div>
-
-                    <!-- Expandable Lecture Log Dropdown -->
-                    <div class="border-t border-[#1A1E28] bg-[#0D0F14] px-3.5 py-2 flex items-center justify-between text-[11px]">
-                        <button onclick="toggleAccordion('${dropId}')" class="text-zinc-300 hover:text-white flex items-center gap-1.5 font-semibold transition-colors">
-                            <span>جدول المحاضرات والتواريخ المسجلة (${sessions.length})</span>
-                            <svg id="${dropId}-icon" class="w-3.5 h-3.5 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
-                            </svg>
-                        </button>
-                        ${att.url ? `
-                        <a href="${att.url}" target="_blank" onclick="haptic('light')" class="text-sky-400 hover:underline font-medium">
-                            فتح السجل في LMS ↗
-                        </a>` : ''}
-                    </div>
-
-                    <div id="${dropId}" class="${isOpen ? '' : 'hidden'} border-t border-[#1A1E28] bg-[#0B0D12] px-3.5 py-1 row-divider">
-                        ${sessionsHtml}
-                    </div>
-                </div>`;
-            }).join('');
-        }
-
-        function renderAnnouncementsList(announcements) {
-            const container = document.getElementById('announcementsListContainer');
-            if (!announcements || !announcements.length) {
-                container.innerHTML = `
-                    <div class="p-8 text-center panel rounded-xl space-y-1">
-                        <p class="text-xs font-semibold text-zinc-300">لا توجد إعلانات منشورة حالياً</p>
-                        <p class="text-[11px] text-zinc-500">يتم فحص منتديات المقررات تلقائياً وإرسال أي إعلان جديد فور نشره</p>
-                    </div>`;
-                return;
-            }
-
-            container.innerHTML = announcements.map(a => `
-                <div class="panel rounded-xl p-3.5 space-y-2.5">
-                    <div class="flex items-start justify-between gap-2">
-                        <div class="space-y-1">
-                            <span class="text-[10px] font-semibold text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded border border-sky-500/20">${escapeHtml(a.course_name || a.forum_name || 'منتدى المقرر')}</span>
-                            <h4 class="text-xs font-bold text-zinc-100 mt-1">${escapeHtml(a.title || 'إعلان مقرر')}</h4>
-                        </div>
-                        ${(a.posted_date || a.posted_at) ? `<span class="font-mono-num text-[10px] text-zinc-500 shrink-0">${escapeHtml(a.posted_date || a.posted_at)}</span>` : ''}
-                    </div>
-                    ${a.author ? `<p class="text-[11px] text-zinc-400">الناشر: <span class="text-zinc-200 font-medium">${escapeHtml(a.author)}</span></p>` : ''}
-                    ${(a.body_text || a.content_text) ? `<div class="text-[11px] text-zinc-300 leading-relaxed panel-inset p-3 rounded-lg whitespace-pre-line">${escapeHtml(a.body_text || a.content_text)}</div>` : ''}
-                    ${a.url ? `
-                    <div class="border-t border-[#1A1E28] pt-2 flex justify-end">
-                        <a href="${a.url}" target="_blank" onclick="haptic('light')" class="text-[11px] text-sky-400 hover:underline font-semibold">
-                            فتح الموضوع في LMS ↗
-                        </a>
-                    </div>` : ''}
-                </div>
-            `).join('');
-        }
-
-        function switchTab(tabId) {
-            haptic('light');
-            activeTab = tabId;
-            ['tab-courses', 'tab-deadlines', 'tab-grades', 'tab-attendance', 'tab-announcements', 'tab-settings'].forEach(id => {
-                const section = document.getElementById(id);
-                const btn = document.getElementById('tabBtn-' + id.replace('tab-', ''));
-                if (!section || !btn) return;
-                if (id === tabId) {
-                    section.classList.remove('hidden');
-                    btn.className = 'flex flex-col items-center justify-center py-1.5 px-1 rounded-lg bg-[#1A1E29] text-sky-400 transition-all';
-                } else {
-                    section.classList.add('hidden');
-                    btn.className = 'flex flex-col items-center justify-center py-1.5 px-1 rounded-lg text-zinc-400 hover:text-zinc-200 transition-all';
-                }
-            });
-            window.scrollTo({ top: 0, behavior: 'smooth' });
-        }
-
-        // Operational Actions
-        async function triggerToggleMonitor() {
-            haptic('medium');
-            try {
-                const res = await fetch('/api/toggle-monitor', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '' })
-                });
-                const d = await res.json();
-                if (d.success && appData) {
-                    appData.user.is_monitoring = d.is_monitoring;
-                    renderApp();
-                    showToast(d.is_monitoring ? 'تم تفعيل المراقبة الدورية' : 'تم إيقاف المراقبة مؤقتاً');
-                }
-            } catch (e) { console.error(e); }
-        }
-
-        let isForceChecking = false;
-        async function triggerForceCheck() {
-            if (isForceChecking) return;
-            isForceChecking = true;
-            haptic('medium');
-            const btns = document.querySelectorAll('button[onclick*="triggerForceCheck"]');
-            btns.forEach(b => {
-                b.dataset.origHtml = b.innerHTML;
-                b.innerHTML = '<span class="animate-spin text-sky-400 inline-block">↻</span><span>جاري الفحص...</span>';
-                b.disabled = true;
-            });
-            showToast('🔄 جارٍ فحص وتحديث كافة المقررات والواجبات في LMS...');
-            try {
-                const res = await fetch('/api/force-check', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '' })
-                });
-                const d = await res.json();
-                await fetchUserData();
-                if (d.success) {
-                    showToast(d.new_items > 0 ? `اكتمل الفحص: تم رصد ${d.new_items} عنصر جديد` : 'اكتمل الفحص الفوري — جميع المهام والبيانات محدّثة');
-                } else {
-                    showToast(d.error || 'تعذر إكمال الفحص الفوري', true);
-                }
-            } catch (e) {
-                showToast('حدث خطأ أثناء الاتصال بالخادم', true);
-            } finally {
-                btns.forEach(b => {
-                    if (b.dataset.origHtml) b.innerHTML = b.dataset.origHtml;
-                    b.disabled = false;
-                });
-                isForceChecking = false;
-            }
-        }
-
-        async function deleteCourse(cid) {
-            haptic('medium');
-            try {
-                const res = await fetch('/api/delete-course', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ tid: getTelegramId(), course_id: cid, initData: tg?.initData || '' })
-                });
-                const d = await res.json();
-                if (d.success) {
-                    await fetchUserData();
-                    showToast('تم إزالة المقرر من قائمة المراقبة');
-                }
-            } catch (e) { console.error(e); }
-        }
-
-        async function triggerClearAllCourses() {
-            haptic('medium');
-            if (!appData || !appData.courses || !appData.courses.length) {
-                showToast('لا توجد مقررات لحذفها');
-                return;
-            }
-            try {
-                const res = await fetch('/api/delete-course', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ tid: getTelegramId(), clear_all: true, initData: tg?.initData || '' })
-                });
-                const d = await res.json();
-                if (d.success) {
-                    await fetchUserData();
-                    showToast('تم مسح جميع المقررات المسجلة');
-                }
-            } catch (e) { console.error(e); }
-        }
-
-        async function triggerLogout() {
-            haptic('medium');
-            const btn = document.getElementById('btnLogout');
-            if (btn) btn.innerText = 'جاري الخروج...';
-            try {
-                const res = await fetch('/api/logout', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '' })
-                });
-                const d = await res.json();
-                if (d.success) {
-                    appData = null;
-                    await fetchUserData();
-                }
-            } catch (e) {
-                console.error(e);
-            } finally {
-                if (btn) btn.innerText = 'تسجيل الخروج';
-            }
-        }
-
-        async function triggerAddCourse() {
-            haptic('medium');
-            const input = document.getElementById('addCourseInput');
-            const val = input ? input.value.trim() : '';
-            if (!val) {
-                showToast('أدخل رقم المادة (Course ID) أو رابطها أولاً', true);
-                return;
-            }
-            const btn = document.getElementById('btnAddCourse');
-            if (btn) btn.innerText = 'جاري الإضافة...';
-            try {
-                const res = await fetch('/api/add-course', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ tid: getTelegramId(), course_id: val, initData: tg?.initData || '' })
-                });
-                const d = await res.json();
-                if (d.success) {
-                    if (input) input.value = '';
-                    await fetchUserData();
-                    showToast(`تمت إضافة المقرر: ${d.course_name}`);
-                } else {
-                    showToast(d.error || 'تعذر العثور على المقرر', true);
-                }
-            } catch (e) {
-                showToast('تعذر الاتصال بالخادم', true);
-            } finally {
-                if (btn) btn.innerText = 'إضافة مقرر';
-            }
-        }
-
-        async function toggleCourseMonitoring(cid) {
-            haptic('medium');
-            try {
-                const res = await fetch('/api/toggle-course', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ tid: getTelegramId(), course_id: cid, initData: tg?.initData || '' })
-                });
-                const d = await res.json();
-                if (d.success && appData) {
-                    const c = appData.courses.find(x => x.id === cid);
-                    if (c) c.is_monitored = d.is_monitored;
-                    renderApp();
-                }
-            } catch (e) { console.error(e); }
-        }
-
-        async function markAsSubmitted(contentId) {
-            haptic('success');
-            try {
-                const res = await fetch('/api/mark-submitted', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ tid: getTelegramId(), content_id: contentId, is_submitted: 1, initData: tg?.initData || '' })
-                });
-                const d = await res.json();
-                if (d.success && appData) {
-                    const dl = appData.deadlines.find(x => x.content_id === contentId);
-                    if (dl) dl.is_submitted = true;
-                    renderApp();
-                    showToast('تم تحديث حالة المهمة إلى منجزة');
-                }
-            } catch (e) { console.error(e); }
-        }
-
-        async function saveNotificationSettings() {
-            haptic('light');
-            const assign = document.getElementById('toggleAssign').checked;
-            const quiz = document.getElementById('toggleQuiz').checked;
-            const resource = document.getElementById('toggleResource').checked;
-            const grade = document.getElementById('toggleGrade').checked;
-            const announcement = document.getElementById('toggleAnnouncement').checked;
-            const attendance = document.getElementById('toggleAttendance') ? document.getElementById('toggleAttendance').checked : true;
-            try {
-                await fetch('/api/update-settings', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        tid: getTelegramId(),
-                        notify_assign: assign ? 1 : 0,
-                        notify_quiz: quiz ? 1 : 0,
-                        notify_resource: resource ? 1 : 0,
-                        notify_grade: grade ? 1 : 0,
-                        notify_announcement: announcement ? 1 : 0,
-                        notify_attendance: attendance ? 1 : 0,
-                        initData: tg?.initData || ''
-                    })
-                });
-            } catch (e) { console.error(e); }
-        }
-
-        async function setCheckInterval(minutes) {
-            haptic('medium');
-            highlightIntervalButton(minutes);
-            try {
-                await fetch('/api/update-settings', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ tid: getTelegramId(), check_interval: minutes, initData: tg?.initData || '' })
-                });
-                if (appData) appData.user.check_interval = minutes;
-                renderApp();
-                showToast(`تم ضبط الفحص الدوري كل ${minutes} دقيقة`);
-            } catch (e) { console.error(e); }
-        }
-
-        function highlightIntervalButton(min) {
-            [5, 10, 30, 60].forEach(m => {
-                const btn = document.getElementById('btnInterval' + m);
-                if (!btn) return;
-                if (m === min) {
-                    btn.className = 'py-2 rounded-lg text-xs font-bold bg-sky-500/15 text-sky-400 border border-sky-500/40 transition-all';
-                } else {
-                    btn.className = 'py-2 rounded-lg text-xs font-semibold border border-[#232834] bg-[#151821] text-zinc-300 transition-all';
-                }
-            });
-        }
-
-        function refreshData() {
-            haptic('light');
-            fetchUserData();
-        }
-
-        function escapeHtml(str) {
-            if (!str) return '';
-            return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-        }
-
-        window.addEventListener('DOMContentLoaded', () => {
-            fetchUserData();
+        <div class="task-list">
+          ${remaining.slice(0, 4).map(taskCard).join('') || '<div class="empty">لا توجد مهام معلقة حالياً.</div>'}
+        </div>
+      </div>
+      <div>
+        <div class="section-head">
+          <h2>إعلانات المقررات</h2>
+          <button onclick="go('announcements')">كل الإعلانات (${announcements.length}) ←</button>
+        </div>
+        <div class="notice-list">
+          ${announcements.slice(0, 3).map(announceCard).join('') || '<div class="empty">لا توجد إعلانات منشورة من المدرسين حتى الآن.</div>'}
+        </div>
+      </div>
+    </div>
+    <div class="section-head">
+      <h2>مقرراتك الدراسية</h2>
+      <button onclick="go('courses')">إدارة المقررات (${courses.length}) ←</button>
+    </div>
+    <div class="course-list">
+      ${courses.slice(0, 4).map(courseCard).join('') || '<div class="empty">لم تقم بإضافة أي مقررات للمراقبة بعد. اضغط على «المقررات» لإضافة أو استيراد موادك.</div>'}
+    </div>
+    <p class="footnote">تتم مزامنة الواجبات والكويزات والعلامات والحضور والملفات تلقائياً مع منصة جامعة مؤتة (mulms.mutah.edu.jo).</p>
+  `;
+}
+
+function getWeekBounds(offset) {
+  const now = new Date();
+  const dayOfWeek = now.getDay(); // 0 = Sunday .. 6 = Saturday
+  const sunday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dayOfWeek + (offset * 7));
+  const saturday = new Date(sunday.getFullYear(), sunday.getMonth(), sunday.getDate() + 6);
+  return { sunday, saturday };
+}
+
+function changeWeek(delta, reset = false) {
+  if (reset) weekOffset = 0;
+  else weekOffset += delta;
+  render();
+}
+
+function weekCourseEvents(dayName) {
+  return courses
+    .filter(c => c.time && c.time.includes(dayName))
+    .map(c => `<div class="event" onclick="openCourse('${escapeHTML(c.id)}')" style="cursor:pointer">${escapeHTML(c.name)}<small>${escapeHTML(c.time.split('·').slice(-1)[0] || 'محاضرة')}</small></div>`)
+    .join('');
+}
+
+function weekPage() {
+  const days = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+  const { sunday, saturday } = getWeekBounds(weekOffset);
+  const rangeStr = `${sunday.toLocaleDateString('ar-JO', { day: 'numeric', month: 'short' })} – ${saturday.toLocaleDateString('ar-JO', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+  const todayStr = new Date().toDateString();
+
+  return `
+    ${header('المخطط الأسبوعي', 'نظرة واحدة على المحاضرات ومواعيد تسليم الواجبات والاختبارات خلال الأسبوع. انقر على أي مهمة لعرض تفاصيلها.')}
+    <div class="toolbar">
+      <button class="btn" onclick="changeWeek(-1)">‹ الأسبوع السابق</button>
+      <span class="tag">${escapeHTML(rangeStr)}</span>
+      ${weekOffset !== 0 ? `<button class="btn" onclick="changeWeek(0, true)">الأسبوع الحالي</button>` : ''}
+      <button class="btn" onclick="changeWeek(1)">الأسبوع التالي ›</button>
+      <button class="btn" style="margin-right:auto" onclick="openScheduleModal()">✎ ضبط مواعيد المحاضرات</button>
+    </div>
+    <div class="calendar">
+      ${days.map((dName, i) => {
+        const curDate = new Date(sunday.getFullYear(), sunday.getMonth(), sunday.getDate() + i);
+        const isToday = curDate.toDateString() === todayStr;
+        const ev = weekCourseEvents(dName);
+        const dayTasks = tasks.filter(t => {
+          if (!t.dueDateObj) return false;
+          return t.dueDateObj.getFullYear() === curDate.getFullYear() &&
+                 t.dueDateObj.getMonth() === curDate.getMonth() &&
+                 t.dueDateObj.getDate() === curDate.getDate();
         });
-    </script>
+        const tev = dayTasks.map(t => {
+          const done = isTaskDone(t);
+          return `<button class="event ${done ? 'done-ev' : 'assignment'}" onclick="taskDetail('${escapeHTML(t.id)}')">
+            ${done ? '✓ ' : '◷ '}${escapeHTML(t.title)}
+            <small>${escapeHTML(t.course_name)} · ${done ? 'مكتمل' : 'موعد تسليم'}</small>
+          </button>`;
+        }).join('');
+        return `<div class="day ${isToday ? 'today-col' : ''}">
+          <h3><span>${dName} · ${curDate.getDate()}</span>${isToday ? '<span class="pill">اليوم</span>' : ''}</h3>
+          ${ev}${tev || ''}
+        </div>`;
+      }).join('')}
+    </div>
+    <p class="footnote">تظهر مواعيد تسليم الواجبات والكويزات تلقائياً في أيام استحقاقها المرصودة من LMS. يمكنك أيضاً إضافة أوقات محاضراتك من زر «ضبط مواعيد المحاضرات».</p>
+  `;
+}
+
+function openScheduleModal() {
+  if (!courses.length) {
+    toast('أضف مقرراتك أولاً لضبط مواعيد المحاضرات');
+    return;
+  }
+  document.getElementById('modal').innerHTML = `
+    <div class="modal-head">
+      <h2>ضبط أوقات وقاعات المحاضرات</h2>
+      <button class="close" onclick="closeModal()">×</button>
+    </div>
+    <p class="item-meta">حدّد أيام وأوقات المحاضرات لكل مقرر ليتم عرضها تلقائياً في المخطط الأسبوعي (مثال: الأحد والثلاثاء · ١٠:٠٠):</p>
+    <div class="form-grid" style="margin-top:12px">
+      ${courses.map(c => `
+        <div class="card" style="padding:10px">
+          <strong style="font-size:12px;display:block;margin-bottom:6px">${escapeHTML(c.name)}</strong>
+          <div class="grid2" style="gap:7px">
+            <input class="field" id="sched_time_${escapeHTML(c.id)}" value="${escapeHTML(c.time)}" placeholder="الأيام والوقت (الأحد والثلاثاء · ١٠:٠٠)">
+            <input class="field" id="sched_room_${escapeHTML(c.id)}" value="${escapeHTML(c.room === 'بوابة التعليم الإلكتروني' ? '' : c.room)}" placeholder="القاعة / المختبر (مثال: قاعة ٢٠١)">
+          </div>
+        </div>
+      `).join('')}
+    </div>
+    <div class="actions" style="margin-top:14px">
+      <button class="btn btn-primary" onclick="saveAllSchedules()">حفظ الجدول الدراسي</button>
+      <button class="btn" onclick="closeModal()">إلغاء</button>
+    </div>
+  `;
+  document.getElementById('modalBack').style.display = 'flex';
+}
+
+function saveAllSchedules() {
+  courses.forEach(c => {
+    const tVal = document.getElementById(`sched_time_${c.id}`)?.value?.trim() || '';
+    const rVal = document.getElementById(`sched_room_${c.id}`)?.value?.trim() || '';
+    if (!courseMeta[c.id]) courseMeta[c.id] = {};
+    courseMeta[c.id].time = tVal;
+    if (rVal) courseMeta[c.id].room = rVal;
+    c.time = tVal;
+    if (rVal) c.room = rVal;
+  });
+  persist(true);
+  closeModal();
+  render();
+  toast('تم حفظ مواعيد المحاضرات في المخطط الأسبوعي');
+}
+
+function coursesPage() {
+  const filtered = courses.filter(c =>
+    (c.name + ' ' + c.code + ' ' + c.teacher).toLowerCase().includes(courseSearchQuery.toLowerCase())
+  );
+  return `
+    ${header('المقررات الدراسية', 'افتح أي مقرر لعرض مهامه وعلاماته وحضوره وإعلاناته وملفاته بالتفصيل، أو أضف مقررات جديدة للمراقبة.')}
+    <div class="toolbar">
+      <input class="field search" id="courseSearch" value="${escapeHTML(courseSearchQuery)}" placeholder="ابحث باسم المقرر أو رمزه أو المدرس..." oninput="filterCourses(this.value)">
+      <button class="btn btn-primary" onclick="openAddCourseModal()">＋ إضافة مقرر</button>
+      <button class="btn" onclick="syncAllCoursesFromLms()">استيراد من LMS</button>
+    </div>
+    <div class="course-list" id="courseList">
+      ${filtered.map(courseCard).join('') || '<div class="empty">لا توجد مقررات مطابقة أو مضافة حالياً. اضغط على «＋ إضافة مقرر» لإضافة موادك.</div>'}
+    </div>
+  `;
+}
+
+function filterCourses(val) {
+  courseSearchQuery = val || '';
+  const listEl = document.getElementById('courseList');
+  if (!listEl) return;
+  const filtered = courses.filter(c =>
+    (c.name + ' ' + c.code + ' ' + c.teacher).toLowerCase().includes(courseSearchQuery.toLowerCase())
+  );
+  listEl.innerHTML = filtered.map(courseCard).join('') || '<div class="empty">لا توجد مقررات مطابقة لبحثك.</div>';
+}
+
+function openAddCourseModal() {
+  if (!isLoggedIn) {
+    toast('يرجى تسجيل الدخول بحساب الجامعة أولاً');
+    go('settings');
+    return;
+  }
+  document.getElementById('modal').innerHTML = `
+    <div class="modal-head">
+      <h2>إضافة مقرر دراسي للمراقبة</h2>
+      <button class="close" onclick="closeModal()">×</button>
+    </div>
+    <p class="item-meta">أدخل رقم المقرر (Course ID) أو الصق رابط صفحة المقرر من موقع جامعة مؤتة LMS:</p>
+    <div class="form-grid">
+      <div>
+        <label>رقم المقرر أو الرابط (Course ID / URL)</label>
+        <input id="newCourseInput" class="field" style="width:100%" placeholder="مثال: 71177 أو https://mulms.mutah.edu.jo/course/view.php?id=71177" dir="ltr">
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" id="btnAddCourseSubmit" onclick="submitAddCourse()">＋ ربط المقرر وفحص محتواه</button>
+        <button class="btn" onclick="closeModal();syncAllCoursesFromLms()">استيراد كافة مقرراتي تلقائياً</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('modalBack').style.display = 'flex';
+}
+
+async function submitAddCourse() {
+  const val = document.getElementById('newCourseInput')?.value?.trim();
+  if (!val) {
+    toast('يرجى إدخال رقم المقرر أو رابطه');
+    return;
+  }
+  const btn = document.getElementById('btnAddCourseSubmit');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'جارٍ جلب المقرر ومزامنته من LMS...';
+  }
+  try {
+    const res = await fetch('/api/add-course', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '', course_id: val })
+    });
+    const d = await res.json();
+    if (d.success) {
+      closeModal();
+      toast(`تمت إضافة المقرر: ${d.course_name}`);
+      await fetchUserData();
+    } else {
+      toast(d.error || 'تعذر إضافة المقرر');
+    }
+  } catch (e) {
+    toast('حدث خطأ أثناء الاتصال بالخادم');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '＋ ربط المقرر وفحص محتواه';
+    }
+  }
+}
+
+async function syncAllCoursesFromLms() {
+  if (!isLoggedIn) {
+    toast('سجّل دخولك أولاً من الإعدادات');
+    go('settings');
+    return;
+  }
+  toast('جارٍ استيراد وفحص مقرراتك المسجلة من LMS...');
+  try {
+    const res = await fetch('/api/sync-courses', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '' })
+    });
+    const d = await res.json();
+    if (d.success) {
+      await fetchUserData();
+      toast(`تم استيراد ومزامنة ${d.synced_count} مقررات بنجاح`);
+    } else {
+      toast(d.error || 'تعذر استيراد المقررات');
+    }
+  } catch (e) {
+    toast('حدث خطأ أثناء الاتصال بالخادم');
+  }
+}
+
+function openCourse(id) {
+  selectedCourse = String(id);
+  active = 'courseDetail';
+  render();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function openEditCourseMetaModal(cid) {
+  const c = course(cid);
+  document.getElementById('modal').innerHTML = `
+    <div class="modal-head">
+      <h2>بيانات المقرر: ${escapeHTML(c.name)}</h2>
+      <button class="close" onclick="closeModal()">×</button>
+    </div>
+    <div class="form-grid" style="margin-top:12px">
+      <div>
+        <label>رمز المقرر (Course Code)</label>
+        <input id="metaCode" class="field" style="width:100%" value="${escapeHTML(c.code)}">
+      </div>
+      <div>
+        <label>اسم المدرس</label>
+        <input id="metaTeacher" class="field" style="width:100%" value="${escapeHTML(c.teacher)}">
+      </div>
+      <div>
+        <label>القاعة / المختبر</label>
+        <input id="metaRoom" class="field" style="width:100%" value="${escapeHTML(c.room)}">
+      </div>
+      <div>
+        <label>أيام ووقت المحاضرة (يظهر في المخطط الأسبوعي)</label>
+        <input id="metaTime" class="field" style="width:100%" placeholder="مثال: الأحد والثلاثاء · ١٠:٠٠" value="${escapeHTML(c.time)}">
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" onclick="saveSingleCourseMeta('${escapeHTML(c.id)}')">حفظ التعديلات</button>
+        <button class="btn" onclick="closeModal()">إلغاء</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('modalBack').style.display = 'flex';
+}
+
+function saveSingleCourseMeta(cid) {
+  const c = course(cid);
+  const meta = {
+    code: document.getElementById('metaCode')?.value?.trim() || `ID ${cid}`,
+    teacher: document.getElementById('metaTeacher')?.value?.trim() || 'هيئة التدريس',
+    room: document.getElementById('metaRoom')?.value?.trim() || 'LMS',
+    time: document.getElementById('metaTime')?.value?.trim() || ''
+  };
+  courseMeta[cid] = meta;
+  Object.assign(c, meta);
+  persist(true);
+  closeModal();
+  render();
+  toast('تم حفظ بيانات المقرر');
+}
+
+async function toggleCourseMonitoring(cid) {
+  try {
+    const res = await fetch('/api/toggle-course', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '', course_id: cid })
+    });
+    const d = await res.json();
+    if (d.success) {
+      await fetchUserData();
+      toast(d.is_monitored ? 'تم تفعيل مراقبة المقرر' : 'تم إيقاف مراقبة المقرر مؤقتاً');
+    }
+  } catch (e) {
+    toast('تعذر تحديث حالة مراقبة المقرر');
+  }
+}
+
+async function removeCourseById(cid) {
+  if (!confirm('هل أنت متأكد من إزالة هذا المقرر من قائمة المراقبة؟')) return;
+  try {
+    const res = await fetch('/api/delete-course', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '', course_id: cid })
+    });
+    const d = await res.json();
+    if (d.success) {
+      selectedCourse = null;
+      await fetchUserData();
+      go('courses');
+      toast('تم حذف المقرر من قائمة المراقبة');
+    }
+  } catch (e) {
+    toast('حدث خطأ أثناء حذف المقرر');
+  }
+}
+
+function courseDetailPage() {
+  const c = course(selectedCourse);
+  if (!c || !courses.some(x => x.id === c.id)) return coursesPage();
+
+  const ts = tasks.filter(t => t.course === c.id);
+  const as = announcements.filter(a => a.course === c.id);
+  const gs = grades.filter(g => g.course_id === c.id);
+  const fs = files.filter(f => String(f.course_id) === c.id || f.course === c.name);
+  const rate = c.total ? Math.round((c.attendance / c.total) * 100) : 0;
+
+  return `
+    ${header(c.name, `${c.code} · ${c.teacher} · ${c.room}${c.time ? ' · ' + c.time : ''}`)}
+    <div class="toolbar">
+      <button class="btn" onclick="go('courses')">← كل المقررات</button>
+      <span class="tag">آخر فحص: ${escapeHTML(userProfile.last_check)}</span>
+      <button class="btn" onclick="openEditCourseMetaModal('${escapeHTML(c.id)}')">✎ تعديل بيانات المحاضرة</button>
+      <button class="btn" onclick="openExternalLink('${escapeHTML(c.url)}')">فتح المقرر في LMS ↗</button>
+      <button class="btn" onclick="toggleCourseMonitoring('${escapeHTML(c.id)}')">${c.is_monitored ? 'إيقاف المراقبة' : 'تفعيل المراقبة'}</button>
+      <button class="btn btn-danger" onclick="removeCourseById('${escapeHTML(c.id)}')">حذف المقرر</button>
+    </div>
+    <div class="stats">
+      <article class="stat" onclick="go('attendance')">
+        <div class="stat-top">الحضور <span class="stat-icon">✓</span></div>
+        <strong>${c.total ? rate + '٪' : '—'}</strong>
+        <small>${c.attendance} حضور · ${c.absent} غياب</small>
+      </article>
+      <article class="stat" onclick="go('grades')">
+        <div class="stat-top">العلامات المرصودة <span class="stat-icon">▥</span></div>
+        <strong>${c.grade !== null ? c.grade + '٪' : gs.filter(g => g.grade_val).length}</strong>
+        <small>${gs.length} بند تقييم مسجل</small>
+      </article>
+      <article class="stat" onclick="go('tasks')">
+        <div class="stat-top">المهام <span class="stat-icon">☷</span></div>
+        <strong>${ts.length}</strong>
+        <small>${ts.filter(isTaskDone).length} مكتمل · ${ts.filter(t => !isTaskDone(t)).length} قيد الحل</small>
+      </article>
+      <article class="stat" onclick="go('files')">
+        <div class="stat-top">الملفات والإعلانات <span class="stat-icon">▧</span></div>
+        <strong>${fs.length}</strong>
+        <small>${as.length} إعلانات منشورة</small>
+      </article>
+    </div>
+
+    <div class="section-head">
+      <h2>مهام المقرر (${ts.length})</h2>
+      <button onclick="go('tasks')">كل المهام</button>
+    </div>
+    <div class="task-list">
+      ${ts.map(taskCard).join('') || '<div class="empty">لا توجد واجبات أو اختبارات مسجلة لهذا المقرر.</div>'}
+    </div>
+
+    <div class="section-head">
+      <h2>علامات المقرر (${gs.length})</h2>
+      <button onclick="go('grades')">السجل الكامل</button>
+    </div>
+    ${gs.length ? `
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th>بند التقييم</th><th>الدرجة</th><th>العظمى</th><th>النسبة / ملاحظات</th></tr></thead>
+          <tbody>
+            ${gs.map(g => `
+              <tr>
+                <td><b>${escapeHTML(g.item_name)}</b></td>
+                <td><b>${escapeHTML(g.grade_val || '—')}</b></td>
+                <td>${escapeHTML(g.grade_max || '—')}</td>
+                <td>${escapeHTML(g.percentage || g.feedback || '—')}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    ` : '<div class="empty">لا توجد علامات مرصودة لهذا المقرر حتى الآن.</div>'}
+
+    <div class="section-head">
+      <h2>حضور المحاضرات</h2>
+      <button onclick="go('attendance')">السجل الكامل</button>
+    </div>
+    <div class="card">
+      <div class="item-meta">
+        ${c.total ? `${c.attendance} حضور · ${c.absent} غياب · من إجمالي ${c.total} محاضرة مسجلة` : 'لا يوجد سجل حضور مسجل لهذا المقرر في LMS'}
+        ${c.att_points ? ` · النقاط: ${escapeHTML(c.att_points)}` : ''}
+      </div>
+      <div class="progress"><i style="width:${rate}%"></i></div>
+    </div>
+
+    <div class="section-head">
+      <h2>إعلانات المقرر (${as.length})</h2>
+      <button onclick="go('announcements')">كل الإعلانات</button>
+    </div>
+    <div class="notice-list">
+      ${as.map(announceCard).join('') || '<div class="empty">لا توجد إعلانات مسجلة لهذا المقرر.</div>'}
+    </div>
+
+    <div class="section-head">
+      <h2>ملفات وموارد المقرر (${fs.length})</h2>
+      <button onclick="go('files')">مكتبة الملفات</button>
+    </div>
+    <div class="file-list">
+      ${fs.map(fileCard).join('') || '<div class="empty">لا توجد ملفات مسجلة لهذا المقرر.</div>'}
+    </div>
+  `;
+}
+
+function getFilteredTasks() {
+  const s = taskFilterState.state;
+  const c = taskFilterState.course;
+  const y = taskFilterState.type;
+
+  return tasks
+    .filter(t => {
+      const done = isTaskDone(t);
+      const late = t.dueDateObj && t.dueDateObj.getTime() < Date.now() && !done;
+      const matchCourse = c === 'all' || String(t.course) === String(c);
+      const matchType = y === 'all' || t.type === y;
+      const matchState =
+        s === 'all' ||
+        (s === 'done' && done) ||
+        (s === 'pending' && !done) ||
+        (s === 'late' && late);
+      return matchCourse && matchType && matchState;
+    })
+    .sort((a, b) => {
+      const aDone = isTaskDone(a) ? 1 : 0;
+      const bDone = isTaskDone(b) ? 1 : 0;
+      if (aDone !== bDone) return aDone - bDone;
+      if (a.dueDateObj && b.dueDateObj) return a.dueDateObj - b.dueDateObj;
+      if (a.dueDateObj) return -1;
+      if (b.dueDateObj) return 1;
+      return 0;
+    });
+}
+
+function tasksPage() {
+  const list = getFilteredTasks();
+  const doneCount = tasks.filter(isTaskDone).length;
+  return `
+    ${header('المهام والمواعيد', 'تابع الواجبات والاختبارات القصيرة وحالة تسليمها في LMS، وأضف ملاحظاتك وتذكيراتك أو صدّر الموعد إلى التقويم.')}
+    <div class="toolbar">
+      <select class="field" id="taskState" onchange="filterTasks()">
+        <option value="all" ${taskFilterState.state === 'all' ? 'selected' : ''}>كل الحالات (${tasks.length})</option>
+        <option value="pending" ${taskFilterState.state === 'pending' ? 'selected' : ''}>قيد الحل (${tasks.length - doneCount})</option>
+        <option value="done" ${taskFilterState.state === 'done' ? 'selected' : ''}>مكتملة (${doneCount})</option>
+        <option value="late" ${taskFilterState.state === 'late' ? 'selected' : ''}>متأخرة</option>
+      </select>
+      <select class="field" id="taskCourse" onchange="filterTasks()">
+        <option value="all">كل المقررات</option>
+        ${courses.map(c => `<option value="${escapeHTML(c.id)}" ${String(taskFilterState.course) === String(c.id) ? 'selected' : ''}>${escapeHTML(c.name)}</option>`).join('')}
+      </select>
+      <select class="field" id="taskType" onchange="filterTasks()">
+        <option value="all" ${taskFilterState.type === 'all' ? 'selected' : ''}>كل الأنواع</option>
+        <option value="واجب" ${taskFilterState.type === 'واجب' ? 'selected' : ''}>واجب</option>
+        <option value="اختبار قصير" ${taskFilterState.type === 'اختبار قصير' ? 'selected' : ''}>اختبار قصير</option>
+      </select>
+      <button class="btn" style="margin-right:auto" onclick="syncNow()">↻ تحديث من LMS</button>
+    </div>
+    <div class="task-list" id="taskList">
+      ${list.map(taskCard).join('') || '<div class="empty">لا توجد مهام ضمن هذا التصنيف حالياً.</div>'}
+    </div>
+    <div class="callout info">تتم مزامنة حالة الإنجاز تلقائياً عند تسليم الواجب أو إنهاء الاختبار في نظام LMS، كما يمكنك تعليم المهمة كمنجزة لإيقاف تذكيرات العد التنازلي في البوت.</div>
+  `;
+}
+
+function filterTasks() {
+  taskFilterState.state = document.getElementById('taskState')?.value || 'all';
+  taskFilterState.course = document.getElementById('taskCourse')?.value || 'all';
+  taskFilterState.type = document.getElementById('taskType')?.value || 'all';
+  const list = getFilteredTasks();
+  const el = document.getElementById('taskList');
+  if (el) el.innerHTML = list.map(taskCard).join('') || '<div class="empty">لا توجد مهام في هذا التصنيف.</div>';
+}
+
+function gradesPage() {
+  return `
+    ${header('سجل العلامات', 'تفاصيل الدرجات والتقييمات المرصودة لكل مقرر مباشرة من كشف علامات LMS.')}
+    <div class="toolbar">
+      <select class="field" id="gradeCourse" onchange="filterGrades()">
+        <option value="all">كل المقررات</option>
+        ${courses.map(c => `<option value="${escapeHTML(c.id)}" ${String(gradeFilterState.course) === String(c.id) ? 'selected' : ''}>${escapeHTML(c.name)}</option>`).join('')}
+      </select>
+      <select class="field" id="gradeFilter" onchange="filterGrades()">
+        <option value="all" ${gradeFilterState.filter === 'all' ? 'selected' : ''}>كل التقييمات (${grades.length})</option>
+        <option value="graded" ${gradeFilterState.filter === 'graded' ? 'selected' : ''}>المرصودة فقط (${grades.filter(g => g.grade_val && g.grade_val !== '-').length})</option>
+      </select>
+      <button class="btn" style="margin-right:auto" onclick="syncNow()">↻ تحديث العلامات</button>
+    </div>
+    <div id="gradeTable"></div>
+    <div class="callout">تُجلب الدرجات كما رصدها مدرس المقرر في سجل الدرجات (Gradebook) على منصة جامعة مؤتة.</div>
+  `;
+}
+
+function filterGrades() {
+  const c = document.getElementById('gradeCourse')?.value || gradeFilterState.course || 'all';
+  const f = document.getElementById('gradeFilter')?.value || gradeFilterState.filter || 'all';
+  gradeFilterState = { course: c, filter: f };
+
+  const rows = grades.filter(g => {
+    const matchCourse = c === 'all' || String(g.course_id) === String(c);
+    const hasVal = Boolean(g.grade_val && g.grade_val !== '-' && g.grade_val !== '—');
+    const matchFilter = f === 'all' || (f === 'graded' && hasVal);
+    return matchCourse && matchFilter;
+  });
+
+  const tbl = document.getElementById('gradeTable');
+  if (!tbl) return;
+  if (!rows.length) {
+    tbl.innerHTML = '<div class="empty">لا توجد علامات مسجلة تطابق الفلتر المحدد.</div>';
+    return;
+  }
+
+  tbl.innerHTML = `
+    <div class="table-wrap">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>المقرر</th>
+            <th>بند التقييم</th>
+            <th>الدرجة</th>
+            <th>المدى / العظمى</th>
+            <th>النسبة / ملاحظات</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map(r => `
+            <tr>
+              <td>${escapeHTML(r.course_name)}</td>
+              <td>
+                ${r.url ? `<button class="text-link" style="font-weight:600" onclick="openExternalLink('${escapeHTML(r.url)}')">${escapeHTML(r.item_name)} ↗</button>` : `<b>${escapeHTML(r.item_name)}</b>`}
+              </td>
+              <td><b style="color:var(--teal)">${escapeHTML(r.grade_val || '—')}</b></td>
+              <td>${escapeHTML(r.grade_max || '—')}</td>
+              <td>${escapeHTML([r.percentage, r.feedback].filter(Boolean).join(' · ') || '—')}</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function attendancePage() {
+  const withAtt = courses.filter(c => c.total > 0 || c.att_sessions.length > 0);
+  const withoutAtt = courses.filter(c => c.total === 0 && c.att_sessions.length === 0);
+
+  return `
+    ${header('الحضور والغياب', 'السجل التفصيلي والنسبة لكل مقرر مع تنبيه غياب شخصي قابل للضبط.')}
+    <div class="toolbar">
+      <label class="tag" style="padding:6px 10px;font-size:11px">
+        حد التنبيه الشخصي:
+        <input id="absenceLimit" type="number" value="${limit}" min="5" max="50" style="width:45px;border:1px solid var(--line);border-radius:5px;background:#fff;padding:2px 4px;text-align:center" onchange="setLimit(this.value)">
+        ٪ من الغياب
+      </label>
+      <span class="tag">النسبة الرسمية تعتمد على سياسة الجامعة</span>
+      <button class="btn" style="margin-right:auto" onclick="syncNow()">↻ تحديث السجلات</button>
+    </div>
+    <div class="course-list">
+      ${withAtt.map(c => {
+        const rate = c.total ? Math.round((c.attendance / c.total) * 100) : 100;
+        const miss = c.total ? Math.round((c.absent / c.total) * 100) : 0;
+        const alert = c.total > 0 && miss >= limit;
+        return `
+          <article class="card">
+            <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap">
+              <div>
+                <strong>${escapeHTML(c.name)}</strong>
+                <div class="course-meta">
+                  ${escapeHTML(c.code)} · ${c.attendance} حضور · ${c.absent} غياب من ${c.total} محاضرة مسجلة
+                  ${c.att_points ? ` · النقاط: ${escapeHTML(c.att_points)}` : ''}
+                </div>
+              </div>
+              <div style="display:flex;gap:6px;align-items:center">
+                <span class="${alert ? 'pill red' : 'pill good'}">${alert ? 'تنبيه غياب (' + miss + '٪)' : rate + '٪ حضور'}</span>
+                ${c.att_sessions && c.att_sessions.length ? `<button class="btn" onclick="openAttendanceSessionsModal('${escapeHTML(c.id)}')">سجل الجلسات (${c.att_sessions.length})</button>` : ''}
+                ${c.att_url ? `<button class="btn" onclick="openExternalLink('${escapeHTML(c.att_url)}')">LMS ↗</button>` : ''}
+              </div>
+            </div>
+            <div class="progress"><i style="width:${rate}%;background:${alert ? 'var(--red)' : 'var(--teal)'}"></i></div>
+            ${alert ? `<p class="item-meta" style="color:var(--red);font-weight:600;margin-top:7px">⚠️ تنبيه: نسبة الغياب في هذا المقرر (${miss}٪) وصلت أو تجاوزت حد التنبيه الشخصي (${limit}٪).</p>` : ''}
+          </article>
+        `;
+      }).join('') || '<div class="empty">لا توجد سجلات حضور (Attendance) مفعلة من قِبل المدرسين في مقرراتك الحالية حتى الآن.</div>'}
+    </div>
+    ${withoutAtt.length ? `
+      <div class="section-head"><h2>مقررات بدون أداة حضور إلكتروني في LMS</h2></div>
+      <div class="course-list">
+        ${withoutAtt.map(c => `
+          <article class="course">
+            <div>
+              <strong class="course-title">${escapeHTML(c.name)}</strong>
+              <div class="course-meta">${escapeHTML(c.code)} · لم يضف مدرس المساق جدول حضور إلكتروني في صفحة المقرر</div>
+            </div>
+            <span class="pill neutral">غير مفعّل في LMS</span>
+          </article>
+        `).join('')}
+      </div>
+    ` : ''}
+    <p class="footnote">استخدم حد التنبيه للمتابعة الشخصية؛ يرسل البوت أيضاً إشعاراً فورياً عبر تيليجرام عند رصد أي محاضرة جديدة في سجل الحضور.</p>
+  `;
+}
+
+function openAttendanceSessionsModal(cid) {
+  const c = course(cid);
+  const sessions = c.att_sessions || [];
+  document.getElementById('modal').innerHTML = `
+    <div class="modal-head">
+      <div>
+        <span class="pill">سجل المحاضرات</span>
+        <h2 style="margin-top:6px">${escapeHTML(c.name)}</h2>
+      </div>
+      <button class="close" onclick="closeModal()">×</button>
+    </div>
+    <p class="item-meta">${c.attendance} حضور · ${c.absent} غياب · الإجمالي: ${c.total} محاضرة</p>
+    <div class="table-wrap" style="margin-top:10px">
+      <table class="table">
+        <thead><tr><th>التاريخ والوقت</th><th>الحالة</th><th>النقاط</th><th>ملاحظات</th></tr></thead>
+        <tbody>
+          ${sessions.map(s => {
+            const st = String(s.status || '');
+            const isAbs = /absent|غائب|غياب/i.test(st);
+            const isPres = /present|حاضر|موجود/i.test(st);
+            return `
+              <tr>
+                <td>${escapeHTML(s.date || '—')}</td>
+                <td><span class="pill ${isAbs ? 'red' : isPres ? 'good' : 'warn'}">${escapeHTML(st || '—')}</span></td>
+                <td>${escapeHTML(s.points || '—')}</td>
+                <td>${escapeHTML(s.remarks || '—')}</td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="actions" style="margin-top:14px">
+      ${c.att_url ? `<button class="btn btn-primary" onclick="openExternalLink('${escapeHTML(c.att_url)}')">فتح سجل الحضور في LMS ↗</button>` : ''}
+      <button class="btn" onclick="closeModal()">إغلاق</button>
+    </div>
+  `;
+  document.getElementById('modalBack').style.display = 'flex';
+}
+
+function setLimit(v) {
+  limit = Math.min(50, Math.max(5, Number(v) || 20));
+  persist(true);
+  render();
+  toast('تم حفظ حد تنبيه الغياب');
+}
+
+function announcementsPage() {
+  const f = newsFilterState.filter;
+  const c = newsFilterState.course;
+  const list = announcements.filter(a => {
+    const isRead = readSet.has(String(a.id));
+    const matchRead = f === 'all' || (f === 'read' && isRead) || (f === 'unread' && !isRead);
+    const matchCourse = c === 'all' || String(a.course) === String(c);
+    return matchRead && matchCourse;
+  });
+
+  return `
+    ${header('إعلانات المقررات', 'الإعلانات والمنشورات الصادرة من مدرسي المقررات في منتديات الأخبار على LMS.')}
+    <div class="toolbar">
+      <select class="field" id="newsFilter" onchange="filterNews()">
+        <option value="all" ${f === 'all' ? 'selected' : ''}>كل الإعلانات (${announcements.length})</option>
+        <option value="unread" ${f === 'unread' ? 'selected' : ''}>غير المقروءة (${unreadCount()})</option>
+        <option value="read" ${f === 'read' ? 'selected' : ''}>المقروءة</option>
+      </select>
+      <select class="field" id="newsCourse" onchange="filterNews()">
+        <option value="all">كل المقررات</option>
+        ${courses.map(co => `<option value="${escapeHTML(co.id)}" ${String(c) === String(co.id) ? 'selected' : ''}>${escapeHTML(co.name)}</option>`).join('')}
+      </select>
+      <button class="btn" onclick="markAllRead()">تعليم الكل كمقروء</button>
+    </div>
+    <div class="notice-list" id="newsList">
+      ${list.map(announceCard).join('') || '<div class="empty">لا توجد إعلانات ضمن هذا الفلتر حالياً.</div>'}
+    </div>
+  `;
+}
+
+function filterNews() {
+  newsFilterState.filter = document.getElementById('newsFilter')?.value || 'all';
+  newsFilterState.course = document.getElementById('newsCourse')?.value || 'all';
+  render();
+}
+
+function openAnnouncementModal(id) {
+  const a = announcements.find(x => String(x.id) === String(id));
+  if (!a) return;
+  readSet.add(String(a.id));
+  persist(true);
+  render();
+  document.getElementById('modal').innerHTML = `
+    <div class="modal-head">
+      <div>
+        <span class="pill">إعلان مقرر</span>
+        <h2 style="margin-top:8px">${escapeHTML(a.title)}</h2>
+      </div>
+      <button class="close" onclick="closeModal()">×</button>
+    </div>
+    <p class="item-meta">${escapeHTML(a.course_name)}${a.author ? ' · الناشر: ' + escapeHTML(a.author) : ''} · ${escapeHTML(a.date)}</p>
+    <div class="callout" style="white-space:pre-line">${escapeHTML(a.body)}</div>
+    <div class="actions">
+      ${a.url ? `<button class="btn btn-primary" onclick="openExternalLink('${escapeHTML(a.url)}')">فتح الإعلان في LMS ↗</button>` : ''}
+      <button class="btn" onclick="closeModal()">إغلاق</button>
+    </div>
+  `;
+  document.getElementById('modalBack').style.display = 'flex';
+}
+
+function readAnnouncement(id) {
+  const sid = String(id);
+  if (readSet.has(sid)) readSet.delete(sid);
+  else readSet.add(sid);
+  persist(true);
+  render();
+  toast('تم تحديث حالة القراءة');
+}
+
+function markAllRead() {
+  announcements.forEach(a => readSet.add(String(a.id)));
+  persist(true);
+  render();
+  toast('تم تعليم كافة الإعلانات كمقروءة');
+}
+
+function filesPage() {
+  const c = fileFilterState.course;
+  const q = fileFilterState.q.toLowerCase();
+  const list = files.filter(f =>
+    (c === 'all' || f.course === c) &&
+    (f.name.toLowerCase().includes(q) || f.course.toLowerCase().includes(q) || f.kind.toLowerCase().includes(q))
+  );
+
+  return `
+    ${header('ملفات المقررات', 'المحاضرات والشرائح والملفات الدراسية التي رُفعت على صفحات مقرراتك في LMS.')}
+    <div class="toolbar">
+      <select class="field" id="fileCourse" onchange="filterFiles()">
+        <option value="all">كل المقررات (${files.length} ملف)</option>
+        ${courses.map(co => `<option value="${escapeHTML(co.name)}" ${c === co.name ? 'selected' : ''}>${escapeHTML(co.name)}</option>`).join('')}
+      </select>
+      <input class="field search" id="fileSearch" value="${escapeHTML(fileFilterState.q)}" placeholder="ابحث عن ملف أو محاضرة..." oninput="filterFiles()">
+    </div>
+    <div class="file-list" id="fileList">
+      ${list.map(fileCard).join('') || '<div class="empty">لا توجد ملفات مطابقة لبحثك.</div>'}
+    </div>
+    <p class="footnote">اضغط على «فتح / تنزيل ↗» لفتح الملف مباشرة عبر منصة جامعة مؤتة (LMS)، كما يقوم البوت بإرسال الملفات الجديدة تلقائياً في محادثة تيليجرام.</p>
+  `;
+}
+
+function filterFiles() {
+  fileFilterState.course = document.getElementById('fileCourse')?.value || 'all';
+  fileFilterState.q = document.getElementById('fileSearch')?.value || '';
+  const c = fileFilterState.course;
+  const q = fileFilterState.q.toLowerCase();
+  const list = files.filter(f =>
+    (c === 'all' || f.course === c) &&
+    (f.name.toLowerCase().includes(q) || f.course.toLowerCase().includes(q) || f.kind.toLowerCase().includes(q))
+  );
+  const el = document.getElementById('fileList');
+  if (el) el.innerHTML = list.map(fileCard).join('') || '<div class="empty">لا توجد ملفات مطابقة.</div>';
+}
+
+function notificationsPage() {
+  const entries = [
+    ...announcements.filter(a => !readSet.has(String(a.id))).map(a => ({
+      kind: 'إعلان جديد',
+      pill: 'pill',
+      title: a.title,
+      meta: `${a.course_name} · ${a.date}`,
+      onclick: `openAnnouncementModal('${escapeHTML(a.id)}')`
+    })),
+    ...tasks.filter(t => !isTaskDone(t)).map(t => {
+      const [lbl, cl] = dueInfo(t);
+      return {
+        kind: lbl,
+        pill: cl,
+        title: `${t.type}: ${t.title}`,
+        meta: `${t.course_name} · ${fmtDate(t.dueDateObj, t.due_str)}`,
+        onclick: `taskDetail('${escapeHTML(t.id)}')`
+      };
+    }),
+    ...courses.filter(c => c.total > 0 && Math.round((c.absent / c.total) * 100) >= limit).map(c => ({
+      kind: 'تنبيه غياب',
+      pill: 'pill red',
+      title: `تجاوز حد الغياب الشخصي في: ${c.name}`,
+      meta: `${c.absent} غياب من ${c.total} محاضرة (${Math.round((c.absent / c.total) * 100)}٪)`,
+      onclick: `go('attendance')`
+    })),
+    ...reminders.map((r, idx) => ({
+      kind: 'تذكير شخصي',
+      pill: 'pill purple',
+      title: `تذكير: ${r.title}`,
+      meta: `${r.course_name ? r.course_name + ' · ' : ''}${r.when}`,
+      onclick: r.task_id ? `taskDetail('${escapeHTML(r.task_id)}')` : `toast('تذكير شخصي محفوظ')`,
+      delIdx: idx
+    }))
+  ];
+
+  return `
+    ${header('مركز الإشعارات والتنبيهات', 'الإعلانات غير المقروءة والمهام الجارية وتنبيهات الغياب والتذكيرات الشخصية في مكان واحد.')}
+    <div class="toolbar">
+      <button class="btn" onclick="markAllRead()">تعليم الإعلانات كمقروءة</button>
+      <button class="btn" onclick="openCustomReminderModal()">＋ تذكير شخصي جديد</button>
+      <span class="tag">${entries.length} عناصر</span>
+    </div>
+    <div class="generic-list">
+      ${entries.map(e => `
+        <article class="generic-row">
+          <div>
+            <button class="text-link item-title" onclick="${e.onclick}">${escapeHTML(e.title)}</button>
+            <div class="item-meta">${escapeHTML(e.meta)}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <span class="${e.pill}">${escapeHTML(e.kind)}</span>
+            ${typeof e.delIdx === 'number' ? `<button class="btn" style="padding:4px 8px" title="حذف التذكير" onclick="removePersonalReminder(${e.delIdx})">×</button>` : ''}
+          </div>
+        </article>
+      `).join('') || '<div class="empty">لا توجد إشعارات أو تنبيهات معلقة حالياً.</div>'}
+    </div>
+    <p class="footnote">بالإضافة إلى هذا المركز، يرسل البوت إشعارات فورية إلى حسابك في تيليجرام عند نشر أي واجب أو علامة أو إعلان أو ملف جديد.</p>
+  `;
+}
+
+function openCustomReminderModal(taskId = '') {
+  const t = taskId ? tasks.find(x => String(x.id) === String(taskId)) : null;
+  document.getElementById('modal').innerHTML = `
+    <div class="modal-head">
+      <h2>إضافة تذكير شخصي</h2>
+      <button class="close" onclick="closeModal()">×</button>
+    </div>
+    <div class="form-grid" style="margin-top:12px">
+      <div>
+        <label>عنوان التذكير</label>
+        <input id="remTitle" class="field" style="width:100%" value="${escapeHTML(t ? t.title : '')}" placeholder="مثال: مراجعة الفصل الرابع أو تسليم التقرير">
+      </div>
+      <div>
+        <label>الموعد أو الملاحظة الزمنية</label>
+        <input id="remWhen" class="field" style="width:100%" placeholder="مثال: غداً الساعة ٨ مساءً / قبل الموعد بيوم">
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" onclick="saveCustomReminder('${escapeHTML(taskId)}', '${escapeHTML(t ? t.course_name : '')}')">حفظ التذكير</button>
+        <button class="btn" onclick="closeModal()">إلغاء</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('modalBack').style.display = 'flex';
+}
+
+function saveCustomReminder(taskId, courseName) {
+  const title = document.getElementById('remTitle')?.value?.trim();
+  const when = document.getElementById('remWhen')?.value?.trim();
+  if (!title || !when) {
+    toast('يرجى كتابة عنوان التذكير وموعده');
+    return;
+  }
+  reminders.unshift({
+    task_id: taskId || '',
+    title,
+    course_name: courseName || '',
+    when,
+    created_at: new Date().toISOString()
+  });
+  persist(true);
+  closeModal();
+  render();
+  toast('تم حفظ التذكير الشخصي في مركز الإشعارات');
+}
+
+function removePersonalReminder(idx) {
+  reminders.splice(idx, 1);
+  persist(true);
+  render();
+  toast('تم حذف التذكير الشخصي');
+}
+
+function settingsPage() {
+  const prefItems = [
+    ['notify_assign', 'الواجبات والمواعيد', 'إشعار فوري عند نشر واجب جديد أو تذكيرات العد التنازلي (٢٤ ساعة، ٣ ساعات، ساعة)'],
+    ['notify_quiz', 'الاختبارات القصيرة (Quizzes)', 'إشعار فوري عند إضافة كويز جديد أو اقتراب موعد إغلاقه'],
+    ['notify_resource', 'ملفات ومحاضرات المقررات', 'إرسال ملفات المقرر الجديدة مباشرة إلى محادثة تيليجرام'],
+    ['notify_grade', 'رادار العلامات الجديدة', 'إشعار فوري عند رصد أو تعديل أي درجة في سجل العلامات'],
+    ['notify_announcement', 'إعلانات المقررات', 'إشعار فوري عند نشر إعلان جديد من مدرس المقرر'],
+    ['notify_attendance', 'رادار الحضور والغياب', 'إشعار فوري عند تسجيل حالة حضور أو غياب جديدة في LMS']
+  ];
+
+  const intervals = [
+    [1, 'كل دقيقة واحدة'],
+    [2, 'كل دقيقتين'],
+    [5, 'كل ٥ دقائق'],
+    [10, 'كل ١٠ دقائق'],
+    [15, 'كل ١٥ دقيقة'],
+    [30, 'كل ٣٠ دقيقة'],
+    [60, 'كل ساعة']
+  ];
+
+  return `
+    ${header('الإعدادات والحساب', 'تحكم بتفضيلات الإشعارات الفورية في تيليجرام، دورة الفحص التلقائي، وإدارة حسابك الأكاديمي.')}
+    <div class="section-head"><h2>تفضيلات إشعارات تيليجرام والمنصة</h2></div>
+    <div class="card" style="padding:0">
+      ${prefItems.map(([k, t, d]) => `
+        <div class="setting">
+          <div><strong>${t}</strong><p>${d}</p></div>
+          <input class="switch" type="checkbox" ${userProfile[k] ? 'checked' : ''} onchange="setServerPref('${k}', this.checked)">
+        </div>
+      `).join('')}
+    </div>
+
+    <div class="section-head"><h2>المزامنة والفحص التلقائي</h2></div>
+    <div class="card" style="padding:0">
+      <div class="setting">
+        <div>
+          <strong>تكرار الفحص التلقائي</strong>
+          <p>الفترة الزمنية بين كل دورة فحص آلي لحسابك في LMS.</p>
+        </div>
+        <select class="field" onchange="setServerInterval(this.value)">
+          ${intervals.map(([n, lbl]) => `<option value="${n}" ${Number(userProfile.check_interval) === n ? 'selected' : ''}>${lbl}</option>`).join('')}
+        </select>
+      </div>
+      <div class="setting">
+        <div>
+          <strong>تشغيل المراقبة التلقائية النشطة</strong>
+          <p>فحص المقررات في الخلفية على مدار الساعة وإرسال تنبيهات تيليجرام.</p>
+        </div>
+        <input class="switch" type="checkbox" ${userProfile.is_monitoring ? 'checked' : ''} onchange="setServerMonitoring(this.checked)">
+      </div>
+      <div style="padding:12px 14px">
+        <button class="btn btn-primary" onclick="syncNow()">↻ فحص فوري الآن لكافة المقررات</button>
+      </div>
+    </div>
+
+    <div class="section-head"><h2>حساب الجامعة (Moodle LMS)</h2></div>
+    ${isLoggedIn ? `
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div>
+            <strong>${escapeHTML(userProfile.full_name)}</strong>
+            <div class="item-meta">الرقم الجامعي: ${escapeHTML(userProfile.lms_username)} · آخر فحص: ${escapeHTML(userProfile.last_check)}</div>
+          </div>
+          <span class="pill good">مربوط ومتصل</span>
+        </div>
+        <div class="callout info">كلمة المرور مشفرة ومحفوظة بأمان لمعالجة جلسات المراقبة التلقائية مع بوابة جامعة مؤتة.</div>
+        <div class="actions">
+          <button class="btn btn-primary" onclick="openAddCourseModal()">＋ إضافة مقرر برقم ID</button>
+          <button class="btn" onclick="syncAllCoursesFromLms()">استيراد مقرراتي من LMS</button>
+          <button class="btn btn-danger" onclick="logoutAccount()">تسجيل الخروج من الحساب</button>
+        </div>
+      </div>
+    ` : loginBannerCard()}
+    <p class="footnote">جميع التغييرات في هذه الصفحة تُحفظ مباشرة في الخادم وتنعكس فوراً على البوت.</p>
+  `;
+}
+
+async function setServerPref(key, val) {
+  userProfile[key] = Boolean(val);
+  try {
+    await fetch('/api/update-settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '', [key]: Boolean(val) })
+    });
+    toast('تم حفظ تفضيل الإشعارات في النظام');
+  } catch (e) {
+    toast('تعذر حفظ الإعدادات');
+  }
+}
+
+async function setServerInterval(val) {
+  const num = Number(val) || 10;
+  userProfile.check_interval = num;
+  try {
+    await fetch('/api/update-settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '', check_interval: num })
+    });
+    toast(`تم ضبط فترة الفحص التلقائي: كل ${num} دقائق`);
+  } catch (e) {
+    toast('تعذر حفظ فترة الفحص');
+  }
+}
+
+async function setServerMonitoring(val) {
+  userProfile.is_monitoring = Boolean(val);
+  updateTopBar();
+  try {
+    await fetch('/api/update-settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '', is_monitoring: Boolean(val) })
+    });
+    toast(val ? 'تم تفعيل المراقبة التلقائية' : 'تم إيقاف المراقبة التلقائية');
+  } catch (e) {
+    toast('تعذر تغيير حالة المراقبة');
+  }
+}
+
+async function logoutAccount() {
+  if (!confirm('هل تريد بالتأكيد تسجيل الخروج من حسابك الأكاديمي وإيقاف المراقبة؟')) return;
+  try {
+    const res = await fetch('/api/logout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '' })
+    });
+    const d = await res.json();
+    if (d.success) {
+      isLoggedIn = false;
+      courses = [];
+      tasks = [];
+      grades = [];
+      announcements = [];
+      files = [];
+      updateTopBar();
+      render();
+      toast('تم تسجيل الخروج من الحساب بنجاح');
+    }
+  } catch (e) {
+    toast('حدث خطأ أثناء تسجيل الخروج');
+  }
+}
+
+function helpPage() {
+  return `
+    ${header('المساعدة وحالة النظام', 'معلومات الاتصال الحية وإجابات سريعة حول مزايا دفتر الطالب الذكي.')}
+    <div class="callout info">
+      <b>حالة النظام:</b> ${isLoggedIn ? `متصل بحساب الطالب (${escapeHTML(userProfile.lms_username)}) · تتم متابعة ${courses.filter(c => c.is_monitored).length} مقررات دراسية · آخر فحص: ${escapeHTML(userProfile.last_check)}.` : 'غير مربوط بحساب جامعي حالياً — انتقل إلى الإعدادات لتسجيل الدخول.'}
+    </div>
+    <div class="help-grid">
+      <article class="help-card">
+        <strong>كيف يتم كشف إنجاز الواجبات والكويزات؟</strong>
+        <p>يقوم النظام بفحص صفحات الواجبات والاختبارات وسجل الدرجات في LMS تلقائياً؛ وعند تسليمك للواجب أو إنهاء المحاولة يتحول إلى «مكتمل» وتتوقف تذكيرات العد التنازلي فوراً.</p>
+      </article>
+      <article class="help-card">
+        <strong>كيف أضيف الموعد إلى تقويم هاتفي؟</strong>
+        <p>افتح تفاصيل أي مهمة ثم اضغط «إضافة للتقويم» لتنزيل ملف تقويم قياسي (.ics) يعمل مع تقويم Apple وGoogle وOutlook.</p>
+      </article>
+      <article class="help-card">
+        <strong>كيف أضيف تذكيراً أو ملاحظة شخصية؟</strong>
+        <p>اضغط على عنوان أي مهمة لفتح نافذتها، ثم اكتب ملاحظتك أو أضف تذكيراً شخصياً؛ تُحفظ بياناتك في حسابك على الخادم وعلى جهازك.</p>
+      </article>
+      <article class="help-card">
+        <strong>كيف تعمل مكتبة الملفات؟</strong>
+        <p>يرصد النظام كافة ملفات الـ PDF والعروض التقديمية والروابط المرفوعة في صفحات مقرراتك ويعرضها في قسم «الملفات» مع إرسالها في تيليجرام.</p>
+      </article>
+      <article class="help-card">
+        <strong>ماذا يعني حد التنبيه في الحضور؟</strong>
+        <p>نسبة مئوية تحددها بنفسك (مثلاً ٢٠٪) لينبهك الدفتر باللون الأحمر عند اقتراب غيابك في أي مقرر من هذا الحد.</p>
+      </article>
+      <article class="help-card">
+        <strong>كيف يعمل الفحص الفوري (↻)؟</strong>
+        <p>عند الضغط على زر المزامنة في الأعلى، يتصل الخادم ببوابة جامعة مؤتة ويفحص كافة مقرراتك بالتوازي خلال ثوانٍ معدودة.</p>
+      </article>
+    </div>
+    <div class="section-head">
+      <h2>سجل عمليات المزامنة</h2>
+      <button onclick="go('settings')">الإعدادات ←</button>
+    </div>
+    <div class="generic-list">
+      ${syncLogs.slice(0, 8).map(l => `
+        <div class="generic-row">
+          <div>
+            <strong class="item-title">${escapeHTML(l.status)}</strong>
+            <div class="item-meta">${escapeHTML(l.time)} · ${escapeHTML(l.detail)}</div>
+          </div>
+          <span class="pill good">متزامن</span>
+        </div>
+      `).join('') || '<div class="empty">لا توجد سجلات مزامنة بعد. اضغط على زر المزامنة (↻) لإجراء فحص فوري.</div>'}
+    </div>
+  `;
+}
+
+function taskDetail(id) {
+  const t = tasks.find(x => String(x.id) === String(id));
+  if (!t) return;
+  const c = course(t.course);
+  const note = notes[t.id] || '';
+  const done = isTaskDone(t);
+  const [statusLbl, statusCls] = dueInfo(t);
+  const pillMod = statusCls === 'pill red' ? 'red' : statusCls === 'pill warn' ? 'warn' : statusCls === 'pill good' ? 'good' : '';
+
+  document.getElementById('modal').innerHTML = `
+    <div class="modal-head">
+      <div>
+        <span class="pill ${pillMod}">${escapeHTML(t.type)}</span>
+        <h2 style="margin-top:8px">${escapeHTML(t.title)}</h2>
+      </div>
+      <button class="close" onclick="closeModal()">×</button>
+    </div>
+    <p class="item-meta">${escapeHTML(t.course_name)} · ${escapeHTML(c.teacher)}</p>
+    <div class="callout">
+      ${escapeHTML(t.desc)}<br>
+      <b>الموعد:</b> ${escapeHTML(fmtDate(t.dueDateObj, t.due_str))} · <b>الحالة:</b> ${escapeHTML(statusLbl)}
+      ${t.grade ? `<br><b>الدرجة المرصودة:</b> ${escapeHTML(t.grade.grade_val)}${t.grade.grade_max ? ' / ' + escapeHTML(t.grade.grade_max) : ''}` : ''}
+    </div>
+    <div class="actions">
+      <button class="btn btn-primary" onclick="openExternalLink('${escapeHTML(t.url)}')">فتح المهمة في LMS ↗</button>
+      <button class="btn" onclick="openCustomReminderModal('${escapeHTML(t.id)}')">＋ تذكير شخصي</button>
+      <button class="btn" onclick="downloadICS('${escapeHTML(t.id)}')">إضافة للتقويم (.ics)</button>
+      <button class="btn" onclick="toggleDone('${escapeHTML(t.id)}', true)">${done ? 'إلغاء الإنجاز' : 'تسجيل إنجاز ✓'}</button>
+    </div>
+    <div class="section-head"><h2>ملاحظتك الشخصية</h2></div>
+    <textarea id="taskNote" class="field" style="width:100%;min-height:80px" placeholder="اكتب ملاحظة أو خطوة تالية حول هذا الواجب أو الاختبار...">${escapeHTML(note)}</textarea>
+    <div class="actions">
+      <button class="btn btn-primary" onclick="saveNote('${escapeHTML(t.id)}')">حفظ الملاحظة</button>
+      <span class="tag">تُحفظ في حسابك وعلى هذا الجهاز</span>
+    </div>
+  `;
+  document.getElementById('modalBack').style.display = 'flex';
+}
+
+function closeModal() {
+  document.getElementById('modalBack').style.display = 'none';
+}
+
+async function toggleDone(id, reopenModal = false) {
+  const sid = String(id);
+  const t = tasks.find(x => String(x.id) === sid);
+  const currentlyDone = t ? isTaskDone(t) : doneSet.has(sid);
+  const nextDone = !currentlyDone;
+
+  if (nextDone) doneSet.add(sid);
+  else doneSet.delete(sid);
+  if (t) t.done = nextDone;
+
+  persist(false);
+  render();
+  if (reopenModal) taskDetail(sid);
+
+  try {
+    await fetch('/api/mark-submitted', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tid: getTelegramId(),
+        initData: tg?.initData || '',
+        content_id: sid,
+        is_submitted: nextDone ? 1 : 0
+      })
+    });
+    toast(nextDone ? 'تم تسجيل الإنجاز وإيقاف تذكيرات المهمة' : 'أعيدت المهمة إلى قائمة قيد الحل');
+  } catch (e) {
+    toast('تم تحديث الحالة محلياً');
+  }
+}
+
+function saveNote(id) {
+  const val = document.getElementById('taskNote')?.value || '';
+  notes[String(id)] = val;
+  persist(true);
+  render();
+  toast('حُفظت ملاحظتك بنجاح');
+}
+
+function downloadICS(id) {
+  const t = tasks.find(x => String(x.id) === String(id));
+  if (!t) return;
+  const date = t.dueDateObj || new Date(Date.now() + 86400000);
+  const stamp = date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  const nowStamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  const ics = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Mutah Student Notebook//AR',
+    'BEGIN:VEVENT',
+    `UID:${t.id}@mulms.mutah.edu.jo`,
+    `DTSTAMP:${nowStamp}`,
+    `DTSTART:${stamp}`,
+    `SUMMARY:${t.title} (${t.course_name})`,
+    `DESCRIPTION:${t.course_name} - ${t.type} - ${t.url}`,
+    `URL:${t.url}`,
+    'END:VEVENT',
+    'END:VCALENDAR'
+  ].join('\r\n');
+
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar;charset=utf-8' }));
+  a.download = `${t.id}.ics`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  toast('تم تنزيل ملف الموعد لإضافته إلى التقويم');
+}
+
+async function syncNow() {
+  if (!isLoggedIn) {
+    toast('سجّل دخولك أولاً لمزامنة مقرراتك من LMS');
+    go('settings');
+    return;
+  }
+  if (isSyncing) return;
+  isSyncing = true;
+
+  const stEl = document.getElementById('syncState');
+  const topBtn = document.getElementById('btnSyncTop');
+  if (stEl) stEl.textContent = 'جارٍ الفحص…';
+  if (topBtn) topBtn.innerHTML = '<span class="spin">↻</span>';
+  toast('جارٍ فحص كافة المقررات والواجبات في LMS...');
+
+  try {
+    const res = await fetch('/api/force-check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '' })
+    });
+    const d = await res.json();
+    await fetchUserData();
+    if (d.success) {
+      toast(d.new_items > 0 ? `اكتمل الفحص: تم رصد ${d.new_items} تحديث جديد` : 'اكتمل الفحص الفوري — جميع البيانات محدّثة');
+    } else {
+      toast(d.error || 'تعذر إكمال الفحص الفوري');
+    }
+  } catch (e) {
+    toast('حدث خطأ أثناء الاتصال بالخادم');
+  } finally {
+    isSyncing = false;
+    if (topBtn) topBtn.innerHTML = '↻';
+    updateTopBar();
+    if (active === 'help') render();
+  }
+}
+
+function toast(s) {
+  const e = document.getElementById('toast');
+  if (!e) return;
+  e.textContent = s;
+  e.style.display = 'block';
+  clearTimeout(window.toastTimer);
+  window.toastTimer = setTimeout(() => { e.style.display = 'none'; }, 3000);
+}
+
+// Initial render & live fetch
+render();
+fetchUserData();
+</script>
 </body>
 </html>

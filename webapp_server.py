@@ -219,6 +219,46 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                     "items": items,
                 })
 
+            all_files = []
+            for c_obj in detailed_courses:
+                cname = c_obj["name"]
+                cid = c_obj["id"]
+                for it in c_obj.get("items", []):
+                    if it.get("content_type") != "resource":
+                        continue
+                    fname = it.get("content_name") or "مورد دراسي"
+                    furl = it.get("content_url") or ""
+                    low = (fname + " " + furl).lower()
+                    if ".pdf" in low or "pdf" in low:
+                        fkind = "PDF"
+                    elif any(x in low for x in (".doc", ".docx", "word")):
+                        fkind = "DOCX"
+                    elif any(x in low for x in (".ppt", ".pptx", "slide", "شرائح", "عرض")):
+                        fkind = "PPTX"
+                    elif any(x in low for x in (".xls", ".xlsx", "csv")):
+                        fkind = "XLSX"
+                    elif any(x in low for x in (".zip", ".rar")):
+                        fkind = "ZIP"
+                    elif any(x in low for x in ("video", "youtube", "mp4", "تسجيل", "فيديو")):
+                        fkind = "فيديو"
+                    elif "/mod/folder/" in low:
+                        fkind = "مجلد"
+                    elif "/mod/url/" in low:
+                        fkind = "رابط"
+                    elif "/mod/page/" in low:
+                        fkind = "صفحة"
+                    else:
+                        fkind = "ملف / مورد"
+                    all_files.append({
+                        "id": str(it.get("content_id") or it.get("id") or ""),
+                        "name": fname,
+                        "course_id": cid,
+                        "course": cname,
+                        "kind": fkind,
+                        "url": furl,
+                        "date": str(it.get("first_seen") or ""),
+                    })
+
             deadlines_raw = db.get_upcoming_deadlines(tid, limit=50)
             now_ts = int(time.time())
             deadlines = []
@@ -296,6 +336,7 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
             total_deadlines = len(deadlines)
             submitted_deadlines = len([d for d in deadlines if d.get("is_submitted")])
             progress_pct = int((submitted_deadlines / total_deadlines) * 100) if total_deadlines > 0 else 100
+            user_meta = db.get_user_meta(tid)
 
             self._send_json({
                 "success": True,
@@ -305,6 +346,8 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                 "grades": grades,
                 "announcements": announcements,
                 "attendance": attendance,
+                "files": all_files,
+                "user_meta": user_meta,
                 "stats": stats,
                 "progress": {
                     "total": total_deadlines,
@@ -483,6 +526,8 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/update-settings":
             if "check_interval" in payload:
                 db.update_check_interval(tid, int(payload["check_interval"]))
+            if "is_monitoring" in payload:
+                db.set_monitoring(tid, bool(payload["is_monitoring"]))
             if any(k in payload for k in ("notify_assign", "notify_quiz", "notify_resource", "notify_grade", "notify_announcement", "notify_attendance")):
                 db.update_notify_settings(
                     tid,
@@ -496,6 +541,16 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"success": True, "message": "تم حفظ الإعدادات"})
             return
 
+        # 4.b Save personal user metadata (notes, personal reminders, read announcements, absence limit, course schedule)
+        if path == "/api/user-meta":
+            meta_patch = payload.get("meta")
+            if not isinstance(meta_patch, dict):
+                self._send_json({"success": False, "error": "بيانات غير صالحة"}, 400)
+                return
+            updated_meta = db.update_user_meta(tid, meta_patch)
+            self._send_json({"success": True, "user_meta": updated_meta})
+            return
+
         # 5. Sync courses from LMS directly via Mini App
         if path == "/api/sync-courses":
             scraper = LMSScraper(user["lms_username"], user["lms_password"])
@@ -506,12 +561,26 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                 courses_list = scraper.get_courses()
                 added = 0
                 for c in courses_list:
-                    cid = c["id"]
-                    db.add_course(tid, cid, c["name"], c["url"])
+                    db.add_course(tid, c["id"], c["name"], c["url"])
                     added += 1
-                    content = scraper.get_course_content(cid)
-                    _persist_course_content(cid, content)
+
+                def _fetch_sync_course(c):
+                    cid = c["id"]
+                    try:
+                        return cid, scraper.get_course_content(cid)
+                    except Exception as e:
+                        logger.warning(f"Error syncing course {cid}: {e}")
+                        return cid, {}
+
+                if courses_list:
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(courses_list))) as pool:
+                        sync_results = list(pool.map(_fetch_sync_course, courses_list))
+                    for cid, content in sync_results:
+                        if content:
+                            _persist_course_content(cid, content)
+
                 db.update_last_check(tid)
+                db.append_sync_log(tid, "استيراد المقررات", f"تم جلب ومزامنة {added} مقررات من LMS")
                 self._send_json({"success": True, "synced_count": added})
             finally:
                 scraper.close()
@@ -552,6 +621,8 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                 curl = f"https://mulms.mutah.edu.jo/course/view.php?id={cid}"
                 db.add_course(tid, cid, cname, curl)
                 _persist_course_content(cid, content)
+                db.update_last_check(tid)
+                db.append_sync_log(tid, "إضافة مقرر", f"تم ربط ومزامنة مقرر: {cname}")
                 self._send_json({"success": True, "course_name": cname, "course_id": cid})
             finally:
                 scraper.close()
@@ -599,6 +670,8 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                     _persist_course_content(cid, content)
 
                 db.update_last_check(tid)
+                detail_msg = f"تم فحص {len(courses)} مقررات — رُصد {new_items} عنصر جديد" if new_items > 0 else f"تم فحص {len(courses)} مقررات — كافة البيانات محدّثة"
+                db.append_sync_log(tid, "اكتمل الفحص الفوري", detail_msg)
                 self._send_json({"success": True, "new_items": new_items})
             finally:
                 scraper.close()
