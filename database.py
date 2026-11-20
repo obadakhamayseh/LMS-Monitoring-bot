@@ -1,6 +1,8 @@
 import os
 import json
 import time
+import hashlib
+import secrets
 import sqlite3
 import logging
 import threading
@@ -340,6 +342,17 @@ def init_db():
                     UNIQUE(telegram_id, course_id, att_id)
                 )
             """)
+        # Paired devices for the installable phone app (token is stored hashed)
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS app_sessions (
+                token_hash   TEXT PRIMARY KEY,
+                telegram_id  BIGINT NOT NULL,
+                device       TEXT,
+                created_at   TEXT,
+                last_used    TEXT
+            )
+        """)
+
         # Migrate users from the old 10-hour default to the new 1-hour default
         # once, without overwriting later per-user interval choices.
         db.execute("CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY)")
@@ -504,6 +517,58 @@ def append_sync_log(telegram_id, status: str, detail: str):
     logs.insert(0, {"time": now_str, "status": status, "detail": detail})
     logs = logs[:15]
     update_user_meta(telegram_id, {"sync_logs": logs})
+
+# ── Phone-app device sessions ────────────────────────────────────────────
+def _hash_token(token: str) -> str:
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+
+def create_app_session(telegram_id, device: str = "") -> str:
+    """Create a device session and return the raw token (only its hash is stored)."""
+    token = secrets.token_urlsafe(32)
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with DBContext() as db:
+        db.execute(
+            "INSERT INTO app_sessions (token_hash, telegram_id, device, created_at, last_used) VALUES (?,?,?,?,?)",
+            (_hash_token(token), int(telegram_id), (device or "")[:120], now_str, now_str),
+        )
+    return token
+
+def verify_app_token(token: str):
+    """Return the telegram_id bound to a valid device token, else None."""
+    if not token or len(token) < 20:
+        return None
+    th = _hash_token(token)
+    with DBContext() as db:
+        row = db.fetchone("SELECT telegram_id, last_used FROM app_sessions WHERE token_hash=?", (th,))
+        if not row:
+            return None
+        now = datetime.now()
+        try:
+            last = datetime.strptime(str(row.get("last_used") or ""), "%Y-%m-%d %H:%M:%S")
+            stale = (now - last).total_seconds() > 600
+        except Exception:
+            stale = True
+        if stale:
+            db.execute("UPDATE app_sessions SET last_used=? WHERE token_hash=?",
+                       (now.strftime("%Y-%m-%d %H:%M:%S"), th))
+        return int(row["telegram_id"])
+
+def revoke_app_token(token: str):
+    with DBContext() as db:
+        db.execute("DELETE FROM app_sessions WHERE token_hash=?", (_hash_token(token),))
+
+def revoke_all_app_sessions(telegram_id) -> int:
+    with DBContext() as db:
+        n = db.fetchone("SELECT COUNT(*) AS n FROM app_sessions WHERE telegram_id=?", (int(telegram_id),))
+        db.execute("DELETE FROM app_sessions WHERE telegram_id=?", (int(telegram_id),))
+        return int((n or {}).get("n") or 0)
+
+def list_app_sessions(telegram_id):
+    with DBContext() as db:
+        return db.fetchall(
+            "SELECT device, created_at, last_used FROM app_sessions WHERE telegram_id=? ORDER BY created_at DESC",
+            (int(telegram_id),),
+        )
 
 def delete_user(telegram_id):
     with DBContext() as db:

@@ -6,6 +6,8 @@ import logging
 import urllib.parse
 import hmac
 import hashlib
+import secrets
+import threading
 import concurrent.futures
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from typing import Optional
@@ -52,7 +54,79 @@ def _json_serial(obj):
         return obj.isoformat()
     return str(obj)
 
+# ── Phone-app device pairing ────────────────────────────────────────────
+# The owner asks the Telegram bot for a one-time code (/app); the phone app
+# exchanges it for a long-lived device token. Codes live in memory only.
+_PAIR_TTL = 600
+_PAIR_MAX_FAILS = 8
+_pair_lock = threading.Lock()
+_pair_codes = {}          # code -> (telegram_id, expires_ts)
+_pair_fail_times = []     # timestamps of recent failed attempts (global)
+
+def create_pairing_code(telegram_id: int) -> str:
+    code = "".join(secrets.choice("0123456789") for _ in range(8))
+    now = time.time()
+    with _pair_lock:
+        for c in [c for c, (_, exp) in _pair_codes.items() if exp < now]:
+            _pair_codes.pop(c, None)
+        _pair_codes[code] = (int(telegram_id), now + _PAIR_TTL)
+    return code
+
+def _consume_pairing_code(code: str):
+    """Return telegram_id for a valid code (single use), else None. Throttled globally."""
+    now = time.time()
+    code = re.sub(r"\D", "", str(code or "").translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")))
+    with _pair_lock:
+        _pair_fail_times[:] = [t for t in _pair_fail_times if now - t < 300]
+        if len(_pair_fail_times) >= _PAIR_MAX_FAILS:
+            _pair_codes.clear()  # too many wrong guesses: invalidate everything
+            return None
+        entry = _pair_codes.pop(code, None) if code else None
+        if entry and entry[1] >= now:
+            return entry[0]
+        _pair_fail_times.append(now)
+        return None
+
+_STATIC_DIR = os.path.dirname(os.path.abspath(__file__))
+_STATIC_FILES = {
+    "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json; charset=utf-8"),
+    "/sw.js": ("sw.js", "application/javascript; charset=utf-8"),
+    "/icons/icon-192.png": ("icons/icon-192.png", "image/png"),
+    "/icons/icon-512.png": ("icons/icon-512.png", "image/png"),
+    "/icons/icon-maskable-512.png": ("icons/icon-maskable-512.png", "image/png"),
+    "/icons/apple-touch-icon.png": ("icons/apple-touch-icon.png", "image/png"),
+}
+
 class WebAppRequestHandler(BaseHTTPRequestHandler):
+
+    def _authenticate(self, init_data: str = "") -> Optional[int]:
+        """Return the owner's telegram_id if the request carries a valid device
+        token or a Telegram-signed initData; otherwise None."""
+        auth = self.headers.get("Authorization", "") or ""
+        if auth.startswith("Bearer "):
+            tid = db.verify_app_token(auth[7:].strip())
+            if tid and int(tid) == int(OWNER_TELEGRAM_ID):
+                return int(tid)
+        if init_data:
+            tid = _validate_telegram_init_data(init_data, TELEGRAM_BOT_TOKEN)
+            if tid and int(tid) == int(OWNER_TELEGRAM_ID):
+                return int(tid)
+        return None
+
+    def _send_static(self, rel_path: str, ctype: str, no_cache: bool = False):
+        full = os.path.join(_STATIC_DIR, rel_path)
+        if not os.path.isfile(full):
+            self.send_response(404)
+            self.end_headers()
+            return
+        with open(full, "rb") as f:
+            body = f.read()
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Cache-Control", "no-cache" if no_cache else "public, max-age=86400")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def _send_json(self, data: dict, status_code: int = 200):
         body = json.dumps(data, default=_json_serial, ensure_ascii=False).encode("utf-8")
@@ -109,33 +183,19 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                 self._send_html("<h1>Mini App template not found</h1>", 404)
             return
 
+        # PWA assets (manifest, service worker, icons)
+        if path in _STATIC_FILES:
+            rel, ctype = _STATIC_FILES[path]
+            self._send_static(rel, ctype, no_cache=(path in ("/sw.js", "/manifest.webmanifest")))
+            return
+
         # API: user data (Personal Bot — locked to OWNER_TELEGRAM_ID)
         if path == "/api/user-data":
-            tid_str = str(query.get("tid", "")).strip()
-            init_data = query.get("initData", "")
-
-            tid = None
-            if tid_str.isdigit():
-                tid = int(tid_str)
-
-            if not tid and init_data:
-                tid = _validate_telegram_init_data(init_data, TELEGRAM_BOT_TOKEN)
-                if not tid:
-                    try:
-                        parsed = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
-                        if "user" not in parsed:
-                            parsed = dict(urllib.parse.parse_qsl(urllib.parse.unquote(init_data), keep_blank_values=True))
-                        if "user" in parsed:
-                            user_data = json.loads(parsed["user"])
-                            tid = user_data.get("id")
-                    except Exception:
-                        pass
-
-            if tid and int(tid) != int(OWNER_TELEGRAM_ID):
-                self._send_json({"success": False, "error": "🔒 هذا النظام خاص بصاحبه فقط"}, 403)
+            tid = self._authenticate(query.get("initData", ""))
+            if not tid:
+                self._send_json({"success": False, "auth_required": True,
+                                 "error": "يلزم ربط هذا الجهاز بالتطبيق"}, 401)
                 return
-
-            tid = int(OWNER_TELEGRAM_ID)
 
             user = db.get_user(tid)
             if not user:
@@ -371,25 +431,30 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
         except Exception:
             payload = {}
 
-        tid_raw = str(payload.get("tid") or "").strip()
-        tid = int(tid_raw) if tid_raw.isdigit() else None
-        if not tid and payload.get("initData"):
-            tid = _validate_telegram_init_data(payload["initData"], TELEGRAM_BOT_TOKEN)
-            if not tid:
-                try:
-                    p = dict(urllib.parse.parse_qsl(payload["initData"], keep_blank_values=True))
-                    if "user" not in p:
-                        p = dict(urllib.parse.parse_qsl(urllib.parse.unquote(payload["initData"]), keep_blank_values=True))
-                    if "user" in p:
-                        tid = json.loads(p["user"]).get("id")
-                except Exception:
-                    pass
-
-        if tid and int(tid) != int(OWNER_TELEGRAM_ID):
-            self._send_json({"success": False, "error": "🔒 هذا النظام خاص بصاحبه فقط"}, 403)
+        # Device pairing (public endpoint, protected by one-time code + throttling)
+        if path == "/api/pair":
+            owner_tid = _consume_pairing_code(payload.get("code"))
+            if not owner_tid or int(owner_tid) != int(OWNER_TELEGRAM_ID):
+                self._send_json({"success": False, "error": "الرمز غير صحيح أو منتهي الصلاحية. أرسل /app للبوت للحصول على رمز جديد."}, 400)
+                return
+            device = str(payload.get("device") or self.headers.get("User-Agent", ""))[:120]
+            token = db.create_app_session(owner_tid, device)
+            self._send_json({"success": True, "token": token})
             return
 
-        tid = int(OWNER_TELEGRAM_ID)
+        tid = self._authenticate(payload.get("initData", ""))
+        if not tid:
+            self._send_json({"success": False, "auth_required": True,
+                             "error": "يلزم ربط هذا الجهاز بالتطبيق"}, 401)
+            return
+
+        # Unlink only this device (does not touch the LMS account or Telegram alerts)
+        if path == "/api/app-logout":
+            auth = self.headers.get("Authorization", "") or ""
+            if auth.startswith("Bearer "):
+                db.revoke_app_token(auth[7:].strip())
+            self._send_json({"success": True})
+            return
 
         def _persist_course_content(cid, content):
             assigns = content.get("assignments", [])

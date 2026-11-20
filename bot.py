@@ -24,7 +24,7 @@ from lms_scraper import LMSScraper
 from monitor import MonitorEngine
 from reminder import ReminderEngine
 from config import TELEGRAM_BOT_TOKEN, OWNER_TELEGRAM_ID
-from webapp_server import run_web_server, init_webapp_engines
+from webapp_server import run_web_server, init_webapp_engines, create_pairing_code
 
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -163,6 +163,7 @@ def _main_kb(user=None):
             InlineKeyboardButton("⚙️ إعدادات الإشعارات", callback_data="settings"),
         ],
         [
+            InlineKeyboardButton("📲 ربط تطبيق الهاتف", callback_data="app_pair"),
             InlineKeyboardButton("🚪 تسجيل الخروج من الجلسة", callback_data="logout_prompt"),
         ],
     ])
@@ -777,6 +778,9 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if data == "main_menu":
         await _show_main(q.message, tid, edit=True)
+
+    elif data == "app_pair":
+        await _send_app_pairing(q.message, tid, edit=True)
 
     elif data == "webapp_info":
         url = get_webapp_url()
@@ -1789,9 +1793,49 @@ async def cmd_logout(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
     return ConversationHandler.END
 
+async def _send_app_pairing(msg_obj, tid, edit=False):
+    """Give the owner a one-time code (and link) to pair the phone app."""
+    url = get_webapp_url()
+    if not url:
+        await _send(msg_obj,
+            "📲 *تطبيق الهاتف*\n\n"
+            "رابط الخادم غير مضبوط. على Render يُضبط تلقائياً، أو أضف `WEBAPP_URL` في الإعدادات.",
+            _back_kb("main_menu"), edit=edit)
+        return
+    code = create_pairing_code(tid)
+    link = f"{url}?code={code}"
+    await _send(msg_obj,
+        "📲 *ربط تطبيق الهاتف*\n"
+        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"رمز الربط (صالح ١٠ دقائق، يُستخدم مرة واحدة):\n`{code}`\n\n"
+        "*الطريقة ١ — الأسرع:* افتح الرابط التالي في *Chrome* (أندرويد) أو *Safari* (آيفون) "
+        "وسيتم الربط تلقائياً، ثم ثبّته من قائمة المتصفح ← «إضافة إلى الشاشة الرئيسية»:\n"
+        f"{link}\n\n"
+        f"*الطريقة ٢:* افتح `{url}` وأدخل الرمز يدوياً.\n\n"
+        "💡 إن فتح تيليجرام الرابط داخل متصفحه الداخلي فاختر «فتح في المتصفح».\n"
+        "🔔 التنبيهات ستبقى تصلك هنا في تيليجرام كما هي.",
+        _back_kb("main_menu"), edit=edit)
+
+async def cmd_app(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return await _reject_unauthorized(update)
+    await _send_app_pairing(update.message, update.effective_user.id)
+    return ConversationHandler.END
+
+async def cmd_unlink(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not _is_owner(update):
+        return await _reject_unauthorized(update)
+    n = db.revoke_all_app_sessions(update.effective_user.id)
+    await _send(update.message,
+        f"🔌 تم فصل جميع أجهزة التطبيق ({n}). لإعادة الربط أرسل /app.",
+        _back_kb("main_menu"))
+    return ConversationHandler.END
+
 async def post_init(app: Application):
     await app.bot.set_my_commands([
         BotCommand("start", "🏠 القائمة الرئيسية"),
+        BotCommand("app", "📲 ربط تطبيق الهاتف"),
+        BotCommand("unlink", "🔌 فصل أجهزة التطبيق"),
         BotCommand("logout", "🚪 تسجيل الخروج من الحساب"),
     ])
     rem_engine = ReminderEngine(app.bot)
@@ -1876,6 +1920,8 @@ def main():
     app.add_handler(conv_handler)
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("logout", cmd_logout))
+    app.add_handler(CommandHandler("app", cmd_app))
+    app.add_handler(CommandHandler("unlink", cmd_unlink))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 

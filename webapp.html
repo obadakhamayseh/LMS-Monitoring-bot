@@ -2,8 +2,15 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <meta name="theme-color" content="#2457a7">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="دفتر الطالب">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" type="image/png" href="/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <title>دفتر الطالب | جامعة مؤتة</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -134,13 +141,22 @@ button{cursor:pointer}
 .tag{font-size:9px;border-radius:20px;padding:3px 8px;background:#f1f3ef;color:#64716c;display:inline-flex;align-items:center;gap:4px}
 .form-grid{display:grid;gap:10px;margin-top:10px}
 .form-grid label{font-size:11px;font-weight:600;display:block;margin-bottom:4px;color:var(--ink)}
+.top{padding-top:env(safe-area-inset-top);height:calc(70px + env(safe-area-inset-top))}
+.pair-view{position:fixed;inset:0;z-index:60;background:var(--paper);display:none;align-items:center;justify-content:center;padding:20px;overflow:auto}
+.pair-card{background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);width:min(420px,100%);padding:24px}
+.pair-card h1{font-size:19px;margin:12px 0 6px;font-weight:600}
+.pair-card p{margin:0 0 14px;color:var(--muted);font-size:12px;line-height:1.8}
+.pair-card ol{margin:0 0 16px;padding-inline-start:18px;color:#3d4c63;font-size:12px;line-height:2}
+.pair-card input{width:100%;text-align:center;letter-spacing:.25em;font-size:20px;direction:ltr;margin-bottom:10px;padding:12px}
+.pair-err{color:var(--red);font-size:11px;min-height:16px;margin-bottom:8px}
+.offline-bar{display:none;background:#fff4df;color:#805619;font-size:11px;text-align:center;padding:6px 10px;border-bottom:1px solid #eee6d8}
 @media(max-width:900px){
   .layout{grid-template-columns:175px minmax(0,1fr);gap:18px}
   .stats{grid-template-columns:repeat(2,1fr)}
 }
 @media(max-width:690px){
   .shell{padding:0 15px}
-  .top{height:61px}
+  .top{height:calc(61px + env(safe-area-inset-top))}
   .layout{display:block;padding-top:19px;padding-bottom:95px}
   .side{display:none}
   .welcome h1,.page-title h1{font-size:20px}
@@ -177,6 +193,22 @@ button{cursor:pointer}
 </style>
 </head>
 <body>
+<div class="offline-bar" id="offlineBar">أنت غير متصل بالإنترنت — يتم عرض آخر بيانات تمت مزامنتها</div>
+<div class="pair-view" id="pairView">
+  <div class="pair-card">
+    <div class="mark" style="width:46px;height:46px;font-size:22px">م</div>
+    <h1>ربط هذا الجهاز بدفتر الطالب</h1>
+    <p>التطبيق خاص بصاحبه فقط. اربط هذا الهاتف مرة واحدة ثم يبقى مسجلاً حتى تفصله بنفسك. التنبيهات تستمر بالوصول عبر تيليجرام كالمعتاد.</p>
+    <ol>
+      <li>افتح بوت تيليجرام وأرسل الأمر <b>/app</b></li>
+      <li>انسخ الرمز المكوّن من ٨ أرقام (صالح ١٠ دقائق)</li>
+      <li>أدخله هنا واضغط «ربط الجهاز»</li>
+    </ol>
+    <input class="field" id="pairCode" inputmode="numeric" autocomplete="one-time-code" maxlength="12" placeholder="00000000" onkeydown="if(event.key==='Enter')submitPairCode()">
+    <div class="pair-err" id="pairErr"></div>
+    <button class="btn btn-primary" id="pairBtn" style="width:100%;padding:12px" onclick="submitPairCode()">ربط الجهاز</button>
+  </div>
+</div>
 <header class="top">
   <div class="shell top-inner">
     <div class="brand" onclick="go('home')">
@@ -233,6 +265,103 @@ function getTelegramId() {
   }
   const p = new URLSearchParams(window.location.search);
   return p.get('tid') || '';
+}
+
+// ── Phone-app (PWA) support: device token, pairing, install, offline ──
+const APP_TOKEN_KEY = 'mutahAppToken';
+const getAppToken = () => { try { return localStorage.getItem(APP_TOKEN_KEY) || ''; } catch (e) { return ''; } };
+const inTelegram = !!(tg && tg.initData);
+const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+
+const _nativeFetch = window.fetch.bind(window);
+window.fetch = function (input, init) {
+  const url = typeof input === 'string' ? input : (input && input.url) || '';
+  const isApi = url.startsWith('/api/');
+  if (isApi) {
+    init = init || {};
+    const h = new Headers(init.headers || {});
+    const t = getAppToken();
+    if (t) h.set('Authorization', 'Bearer ' + t);
+    init.headers = h;
+  }
+  return _nativeFetch(input, init).then(res => {
+    if (isApi && res.status === 401 && !url.startsWith('/api/pair')) {
+      res.clone().json().then(d => { if (d && d.auth_required) showPairing(); }).catch(() => {});
+    }
+    return res;
+  });
+};
+
+function showPairing(msg) {
+  document.getElementById('pairView').style.display = 'flex';
+  if (msg) document.getElementById('pairErr').textContent = msg;
+}
+function hidePairing() { document.getElementById('pairView').style.display = 'none'; }
+
+async function pairWithCode(code) {
+  const res = await fetch('/api/pair', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, device: (isStandalone() ? 'تطبيق مثبّت · ' : 'متصفح · ') + navigator.userAgent.slice(0, 80) })
+  });
+  const d = await res.json();
+  if (!d.success) throw new Error(d.error || 'تعذر ربط الجهاز');
+  localStorage.setItem(APP_TOKEN_KEY, d.token);
+  return true;
+}
+
+async function submitPairCode() {
+  const input = document.getElementById('pairCode');
+  const btn = document.getElementById('pairBtn');
+  const err = document.getElementById('pairErr');
+  const code = input.value.trim();
+  if (!code) { err.textContent = 'أدخل الرمز المرسل من البوت'; return; }
+  btn.disabled = true; btn.textContent = 'جارٍ الربط...'; err.textContent = '';
+  try {
+    await pairWithCode(code);
+    input.value = '';
+    hidePairing();
+    toast('تم ربط الجهاز بنجاح');
+    await fetchUserData();
+  } catch (e) {
+    err.textContent = e.message || 'تعذر ربط الجهاز';
+  } finally {
+    btn.disabled = false; btn.textContent = 'ربط الجهاز';
+  }
+}
+
+async function unlinkThisDevice() {
+  if (!confirm('فصل هذا الجهاز عن التطبيق؟ ستحتاج رمزاً جديداً من البوت لإعادة الربط. تنبيهات تيليجرام لن تتأثر.')) return;
+  try { await fetch('/api/app-logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); } catch (e) {}
+  localStorage.removeItem(APP_TOKEN_KEY);
+  localStorage.removeItem('mutahStudentNotebook');
+  try { navigator.serviceWorker?.controller?.postMessage('clear-data'); } catch (e) {}
+  location.reload();
+}
+
+let deferredInstall = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstall = e;
+  if (active === 'settings') render();
+});
+window.addEventListener('appinstalled', () => { deferredInstall = null; toast('تم تثبيت التطبيق على جهازك'); if (active === 'settings') render(); });
+async function installApp() {
+  if (!deferredInstall) { toast('استخدم قائمة المتصفح ← «إضافة إلى الشاشة الرئيسية»'); return; }
+  deferredInstall.prompt();
+  try { await deferredInstall.userChoice; } catch (e) {}
+  deferredInstall = null;
+  render();
+}
+
+function updateOnlineBar() {
+  document.getElementById('offlineBar').style.display = navigator.onLine ? 'none' : 'block';
+}
+window.addEventListener('online', () => { updateOnlineBar(); if (isLoggedIn) fetchUserData(); });
+window.addEventListener('offline', updateOnlineBar);
+
+if ('serviceWorker' in navigator && !inTelegram && location.protocol.startsWith('http')) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
 
 const navItems = [
@@ -1862,7 +1991,34 @@ function settingsPage() {
         </div>
       </div>
     ` : loginBannerCard()}
+    ${appDevicePanel()}
     <p class="footnote">جميع التغييرات في هذه الصفحة تُحفظ مباشرة في الخادم وتنعكس فوراً على البوت.</p>
+  `;
+}
+
+function appDevicePanel() {
+  if (inTelegram) return '';
+  const linked = !!getAppToken();
+  const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const installed = isStandalone();
+  return `
+    <div class="section-head"><h2>التطبيق على هذا الهاتف</h2></div>
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div>
+          <strong>${installed ? 'التطبيق مثبّت على جهازك' : 'ثبّت دفتر الطالب كتطبيق'}</strong>
+          <div class="item-meta">${linked ? 'هذا الجهاز مرتبط بحسابك.' : 'هذا الجهاز غير مرتبط برمز.'} تنبيهات المهام والعلامات والحضور تصلك عبر بوت تيليجرام كما هي.</div>
+        </div>
+        <span class="pill ${linked ? 'good' : 'warn'}">${linked ? 'جهاز مرتبط' : 'غير مرتبط'}</span>
+      </div>
+      <div class="actions">
+        ${!installed && deferredInstall ? `<button class="btn btn-primary" onclick="installApp()">⬇ تثبيت التطبيق</button>` : ''}
+        ${linked ? `<button class="btn btn-danger" onclick="unlinkThisDevice()">فصل هذا الجهاز</button>` : ''}
+      </div>
+      ${!installed && !deferredInstall ? `<div class="callout info">${ios
+        ? 'للتثبيت على آيفون: افتح الصفحة في Safari ← زر المشاركة ← «إضافة إلى الشاشة الرئيسية».'
+        : 'للتثبيت على أندرويد: افتح الصفحة في Chrome ← قائمة ⋮ ← «تثبيت التطبيق» أو «إضافة إلى الشاشة الرئيسية».'}</div>` : ''}
+    </div>
   `;
 }
 
@@ -2144,8 +2300,23 @@ function toast(s) {
 }
 
 // Initial render & live fetch
-render();
-fetchUserData();
+(async function boot() {
+  updateOnlineBar();
+  const params = new URLSearchParams(location.search);
+  const go0 = params.get('go');
+  if (go0 && navItems.some(n => n[0] === go0)) active = go0;
+  render();
+
+  const urlCode = params.get('code');
+  if (urlCode && !inTelegram) {
+    // Link from the bot: pair automatically, then clean the URL
+    try { await pairWithCode(urlCode); toast('تم ربط الجهاز بنجاح'); }
+    catch (e) { showPairing(e.message); }
+    history.replaceState(null, '', location.pathname);
+  }
+  fetchUserData();
+})();
+
 </script>
 </body>
 </html>

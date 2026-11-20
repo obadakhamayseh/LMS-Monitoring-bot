@@ -1,0 +1,24 @@
+{
+  "name": "دفتر الطالب | جامعة مؤتة",
+  "short_name": "دفتر الطالب",
+  "description": "متابعة المقررات والمهام والعلامات والحضور من نظام التعليم الإلكتروني لجامعة مؤتة.",
+  "lang": "ar",
+  "dir": "rtl",
+  "id": "/webapp",
+  "start_url": "/webapp?source=pwa",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f4f7fb",
+  "theme_color": "#2457a7",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "المهام", "url": "/webapp?go=tasks", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "الحضور", "url": "/webapp?go=attendance", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] },
+    { "name": "العلامات", "url": "/webapp?go=grades", "icons": [{ "src": "/icons/icon-192.png", "sizes": "192x192" }] }
+  ]
+}
