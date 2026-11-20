@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-title" content="دفتر الطالب">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <link rel="manifest" href="/manifest.webmanifest">
-<link rel="icon" type="image/png" href="/icons/icon-192.png">
+<link rel="icon" type="image/png" href="/logo.png">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <title>دفتر الطالب | جامعة مؤتة</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -25,6 +25,8 @@ button{cursor:pointer}
 .top{height:70px;border-bottom:1px solid var(--line);background:rgba(255,255,255,.94);display:flex;align-items:center;position:sticky;top:0;z-index:10;backdrop-filter:blur(12px)}
 .top-inner{display:flex;align-items:center;justify-content:space-between;width:100%}
 .brand{display:flex;align-items:center;gap:11px;cursor:pointer}
+.brand-logo{width:38px;height:38px;border-radius:10px;object-fit:cover;box-shadow:0 3px 10px rgba(0,0,0,.14);flex-shrink:0;transition:transform .15s}
+.brand:hover .brand-logo{transform:scale(1.04)}
 .mark{width:38px;height:38px;border-radius:11px;background:var(--teal);color:#fff;display:grid;place-items:center;font-size:18px;font-weight:700;flex-shrink:0}
 .brand strong{display:block;font-size:15px}
 .brand small{display:block;color:var(--muted);font-size:10px}
@@ -196,7 +198,9 @@ button{cursor:pointer}
 <div class="offline-bar" id="offlineBar">أنت غير متصل بالإنترنت — يتم عرض آخر بيانات تمت مزامنتها</div>
 <div class="pair-view" id="pairView">
   <div class="pair-card">
-    <div class="mark" style="width:46px;height:46px;font-size:22px">م</div>
+    <div style="text-align:center">
+      <img src="/logo.png" style="width:68px;height:68px;border-radius:18px;box-shadow:0 8px 24px rgba(36,87,167,0.22);display:inline-block;margin-bottom:12px;object-fit:cover" alt="شعار دفتر الطالب" onerror="this.style.display='none'">
+    </div>
     <h1>ربط هذا الجهاز بدفتر الطالب</h1>
     <p>التطبيق خاص بصاحبه فقط. اربط هذا الهاتف مرة واحدة ثم يبقى مسجلاً حتى تفصله بنفسك. التنبيهات تستمر بالوصول عبر تيليجرام كالمعتاد.</p>
     <ol>
@@ -212,7 +216,8 @@ button{cursor:pointer}
 <header class="top">
   <div class="shell top-inner">
     <div class="brand" onclick="go('home')">
-      <div class="mark">م</div>
+      <img src="/logo.png" class="brand-logo" alt="شعار دفتر الطالب" onerror="this.style.display='none';this.nextElementSibling.style.display='grid'">
+      <div class="mark" style="display:none">م</div>
       <div>
         <strong>دفتر الطالب</strong>
         <small>جامعة مؤتة · المتابعة الأكاديمية</small>
@@ -464,27 +469,95 @@ function extractTeacher(name) {
   return m ? m[1].trim() : 'هيئة التدريس';
 }
 
-function parseLmsDate(str, ts) {
-  if (ts && Number(ts) > 0) return new Date(Number(ts) * 1000);
-  if (!str) return null;
-  const cleaned = String(str).replace(/^(Due|Closes|Closed|Opened|Opens)\s*:\s*/i, '').trim();
-  const d = new Date(cleaned);
+function parseAnyDate(val, tsFallback) {
+  if (tsFallback && Number(tsFallback) > 0) return new Date(Number(tsFallback) * 1000);
+  if (!val) return null;
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+  if (typeof val === 'number') return new Date(val > 1e11 ? val : val * 1000);
+  let s = String(val).trim();
+  if (!s || s === 'لم يتم بعد' || s === 'حديثاً' || s === 'مرصود' || s === '—') return null;
+  s = s.replace(/^(Due|Closes|Closed|Opened|Opens)\s*:\s*/i, '').trim();
+
+  // Try standard parse
+  let d = new Date(s);
   if (!isNaN(d.getTime())) return d;
+
+  // Try ISO with T instead of space
+  if (s.includes(' ')) {
+    d = new Date(s.replace(' ', 'T'));
+    if (!isNaN(d.getTime())) return d;
+  }
+
+  // Regex parse YYYY-MM-DD
+  const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
+  if (m) {
+    d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4] || 0), Number(m[5] || 0), Number(m[6] || 0));
+    if (!isNaN(d.getTime())) return d;
+  }
   return null;
+}
+const parseLmsDate = parseAnyDate;
+
+function formatRelativeTime(val) {
+  const d = parseAnyDate(val);
+  if (!d) return 'لم يتم بعد';
+  const now = Date.now();
+  const diffSec = Math.round((now - d.getTime()) / 1000);
+  if (diffSec < 45) return 'الآن';
+  const diffMin = Math.round(diffSec / 60);
+  if (diffMin <= 1) return 'منذ دقيقة';
+  if (diffMin === 2) return 'منذ دقيقتين';
+  if (diffMin <= 10) return `منذ ${diffMin} دقائق`;
+  if (diffMin < 60) return `منذ ${diffMin} دقيقة`;
+  const diffHours = Math.round(diffMin / 60);
+  if (diffHours <= 1) return 'منذ ساعة';
+  if (diffHours === 2) return 'منذ ساعتين';
+  if (diffHours <= 10) return `منذ ${diffHours} ساعات`;
+  if (diffHours < 24) return `منذ ${diffHours} ساعة`;
+  const diffDays = Math.round(diffHours / 24);
+  if (diffDays <= 1) return 'أمس';
+  if (diffDays === 2) return 'منذ يومين';
+  if (diffDays <= 10) return `منذ ${diffDays} أيام`;
+  return d.toLocaleDateString('ar-JO-u-nu-latn', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function formatFriendlyDateTime(val, withRelative = false) {
+  const d = parseAnyDate(val);
+  if (!d) return typeof val === 'string' && val.trim() ? val : '—';
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+  const yest = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  const isYesterday = d.toDateString() === yest.toDateString();
+  const tom = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  const isTomorrow = d.toDateString() === tom.toDateString();
+  const timeStr = d.toLocaleTimeString('ar-JO-u-nu-latn', { hour: 'numeric', minute: '2-digit', hour12: true });
+
+  let prefix = '';
+  if (isToday) prefix = 'اليوم';
+  else if (isYesterday) prefix = 'أمس';
+  else if (isTomorrow) prefix = 'غداً';
+  else prefix = d.toLocaleDateString('ar-JO-u-nu-latn', { weekday: 'short', day: 'numeric', month: 'short', year: d.getFullYear() === now.getFullYear() ? undefined : 'numeric' });
+
+  const res = `${prefix}، ${timeStr}`;
+  if (withRelative) {
+    const rel = formatRelativeTime(d);
+    if (rel && rel !== 'الآن' && !rel.startsWith('اليوم') && !rel.startsWith('أمس')) {
+      return `${res} (${rel})`;
+    }
+  }
+  return res;
+}
+
+function formatDateOnly(val) {
+  const d = parseAnyDate(val);
+  if (!d) return typeof val === 'string' && val.trim() ? val : 'مرصود';
+  return d.toLocaleDateString('ar-JO-u-nu-latn', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
 function fmtDate(dInput, fallbackStr) {
   if (!dInput && !fallbackStr) return 'بدون موعد محدد';
-  const d = dInput instanceof Date ? dInput : (dInput ? new Date(dInput) : null);
-  if (d && !isNaN(d.getTime())) {
-    try {
-      return d.toLocaleString('ar-JO', {
-        weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit'
-      });
-    } catch (e) {
-      return fallbackStr || d.toLocaleDateString();
-    }
-  }
+  const d = parseAnyDate(dInput);
+  if (d) return formatFriendlyDateTime(d);
   return fallbackStr || 'بدون موعد محدد';
 }
 
@@ -536,7 +609,11 @@ function updateTopBar() {
     stEl.textContent = 'مراقبة متوقفة';
     boxEl.classList.add('paused');
   }
-  whEl.textContent = userProfile.last_check || 'لم يتم بعد';
+  const rel = formatRelativeTime(userProfile.last_check);
+  const full = formatFriendlyDateTime(userProfile.last_check, false);
+  whEl.textContent = rel;
+  whEl.title = 'آخر فحص: ' + full;
+  if (boxEl) boxEl.title = 'آخر فحص: ' + full;
 
   const cleanName = String(userProfile.full_name || 'طالب').trim();
   avEl.textContent = cleanName ? cleanName.charAt(0) : 'ط';
@@ -682,7 +759,7 @@ async function fetchUserData() {
       course_name: a.course_name || course(a.course_id).name,
       title: a.title || 'إعلان دراسي',
       author: a.author || '',
-      date: a.posted_date || (a.first_seen ? String(a.first_seen).slice(0, 10) : 'حديثاً'),
+      date: a.posted_date || (a.first_seen ? formatFriendlyDateTime(a.first_seen) : 'حديثاً'),
       body: a.body_text || a.forum_name || 'إعلان منشور في منتدى المقرر على نظام LMS.',
       url: a.url || ''
     }));
@@ -693,7 +770,7 @@ async function fetchUserData() {
       course_id: String(f.course_id || ''),
       course: f.course || 'مقرر دراسي',
       kind: f.kind || 'ملف',
-      date: f.date ? String(f.date).slice(0, 10) : 'مرصود',
+      date: f.date ? formatDateOnly(f.date) : 'مرصود',
       url: f.url || ''
     }));
 
@@ -770,7 +847,7 @@ function taskCard(t) {
       <button class="text-link item-title" onclick="taskDetail('${escapeHTML(t.id)}')">${escapeHTML(t.title)}</button>
       <div class="item-meta">${escapeHTML(t.course_name)} · ${escapeHTML(t.type)} · ${escapeHTML(dueDisplay)}</div>
       <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
-        ${!done && t.dueDateObj ? `<span class="due ${cl === 'pill red' ? 'late' : ''}">◷ ${escapeHTML(label)}</span>` : ''}
+        ${!done && t.time_remaining && !label.includes(t.time_remaining) ? `<span class="due ${cl === 'pill red' ? 'late' : ''}">◷ متبقي ${escapeHTML(t.time_remaining)}</span>` : ''}
         ${t.grade ? `<span class="due" style="background:#e8f5ed;color:#28724b">الدرجة: ${escapeHTML(t.grade.grade_val)}${t.grade.grade_max ? ' / ' + escapeHTML(t.grade.grade_max) : ''}</span>` : ''}
         ${hasNote ? `<span class="tag" style="margin-top:9px">✎ ملاحظة مسجلة</span>` : ''}
       </div>
@@ -1360,7 +1437,7 @@ function courseDetailPage() {
     ${header(c.name, `${c.code} · ${c.teacher} · ${c.room}${c.time ? ' · ' + c.time : ''}`)}
     <div class="toolbar">
       <button class="btn" onclick="go('courses')">← كل المقررات</button>
-      <span class="tag">آخر فحص: ${escapeHTML(userProfile.last_check)}</span>
+      <span class="tag" title="التاريخ الكامل: ${escapeHTML(formatFriendlyDateTime(userProfile.last_check, false))}">آخر فحص: ${escapeHTML(formatFriendlyDateTime(userProfile.last_check, true))}</span>
       <button class="btn" onclick="openEditCourseMetaModal('${escapeHTML(c.id)}')">✎ تعديل بيانات المحاضرة</button>
       <button class="btn" onclick="openExternalLink('${escapeHTML(c.url)}')">فتح المقرر في LMS ↗</button>
       <button class="btn" onclick="toggleCourseMonitoring('${escapeHTML(c.id)}')">${c.is_monitored ? 'إيقاف المراقبة' : 'تفعيل المراقبة'}</button>
@@ -1667,7 +1744,7 @@ function openAttendanceSessionsModal(cid) {
             const isPres = /present|حاضر|موجود/i.test(st);
             return `
               <tr>
-                <td>${escapeHTML(s.date || '—')}</td>
+                <td>${escapeHTML(formatFriendlyDateTime(s.date) || s.date || '—')}</td>
                 <td><span class="pill ${isAbs ? 'red' : isPres ? 'good' : 'warn'}">${escapeHTML(st || '—')}</span></td>
                 <td>${escapeHTML(s.points || '—')}</td>
                 <td>${escapeHTML(s.remarks || '—')}</td>
@@ -1979,7 +2056,7 @@ function settingsPage() {
         <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
           <div>
             <strong>${escapeHTML(userProfile.full_name)}</strong>
-            <div class="item-meta">الرقم الجامعي: ${escapeHTML(userProfile.lms_username)} · آخر فحص: ${escapeHTML(userProfile.last_check)}</div>
+            <div class="item-meta">الرقم الجامعي: ${escapeHTML(userProfile.lms_username)} · آخر فحص: ${escapeHTML(formatFriendlyDateTime(userProfile.last_check, true))}</div>
           </div>
           <span class="pill good">مربوط ومتصل</span>
         </div>
@@ -2095,7 +2172,7 @@ function helpPage() {
   return `
     ${header('المساعدة وحالة النظام', 'معلومات الاتصال الحية وإجابات سريعة حول مزايا دفتر الطالب الذكي.')}
     <div class="callout info">
-      <b>حالة النظام:</b> ${isLoggedIn ? `متصل بحساب الطالب (${escapeHTML(userProfile.lms_username)}) · تتم متابعة ${courses.filter(c => c.is_monitored).length} مقررات دراسية · آخر فحص: ${escapeHTML(userProfile.last_check)}.` : 'غير مربوط بحساب جامعي حالياً — انتقل إلى الإعدادات لتسجيل الدخول.'}
+      <b>حالة النظام:</b> ${isLoggedIn ? `متصل بحساب الطالب (${escapeHTML(userProfile.lms_username)}) · تتم متابعة ${courses.filter(c => c.is_monitored).length} مقررات دراسية · آخر فحص: ${escapeHTML(formatFriendlyDateTime(userProfile.last_check, true))}.` : 'غير مربوط بحساب جامعي حالياً — انتقل إلى الإعدادات لتسجيل الدخول.'}
     </div>
     <div class="help-grid">
       <article class="help-card">
@@ -2132,7 +2209,7 @@ function helpPage() {
         <div class="generic-row">
           <div>
             <strong class="item-title">${escapeHTML(l.status)}</strong>
-            <div class="item-meta">${escapeHTML(l.time)} · ${escapeHTML(l.detail)}</div>
+            <div class="item-meta">${escapeHTML(formatFriendlyDateTime(l.time, false))} · ${escapeHTML(l.detail)}</div>
           </div>
           <span class="pill good">متزامن</span>
         </div>
@@ -2315,6 +2392,8 @@ function toast(s) {
     history.replaceState(null, '', location.pathname);
   }
   fetchUserData();
+  // Live refresh of relative time in header every 30s
+  setInterval(updateTopBar, 30000);
 })();
 
 </script>

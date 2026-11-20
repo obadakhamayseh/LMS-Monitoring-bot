@@ -2,11 +2,11 @@
    - App shell: network-first, falls back to the last cached copy (opens offline).
    - /api/user-data: network-first, falls back to the last cached snapshot.
    - Other API calls are never cached. */
-const VERSION = 'v1';
+const VERSION = 'v2';
 const SHELL_CACHE = 'shell-' + VERSION;
 const DATA_CACHE = 'data-' + VERSION;
 const FONT_CACHE = 'fonts-' + VERSION;
-const SHELL_URLS = ['/webapp', '/manifest.webmanifest', '/icons/icon-192.png'];
+const SHELL_URLS = ['/webapp', '/manifest.webmanifest', '/logo.png', '/icons/icon-192.png'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(

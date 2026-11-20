@@ -91,6 +91,8 @@ _STATIC_DIR = os.path.dirname(os.path.abspath(__file__))
 _STATIC_FILES = {
     "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json; charset=utf-8"),
     "/sw.js": ("sw.js", "application/javascript; charset=utf-8"),
+    "/logo.png": ("logo.png", "image/png"),
+    "/logo.jpg": ("logo.jpg", "image/jpeg"),
     "/icons/icon-192.png": ("icons/icon-192.png", "image/png"),
     "/icons/icon-512.png": ("icons/icon-512.png", "image/png"),
     "/icons/icon-maskable-512.png": ("icons/icon-maskable-512.png", "image/png"),
