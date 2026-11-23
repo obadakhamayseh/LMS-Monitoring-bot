@@ -705,7 +705,7 @@ class LMSScraper:
             if cmid in completed_cmids or cmid in graded_cmids:
                 q["is_submitted"] = True
 
-        # Deep-check individual assignment & quiz pages ONLY when submission or due_date is still missing
+        # Deep-check individual assignment & quiz pages when submission, due_date, or quiz grade is not yet known
         for a in result["assignments"]:
             if self.session_expired or self.waf_blocked:
                 self.last_fetch_ok = False
@@ -722,13 +722,64 @@ class LMSScraper:
             if self.session_expired or self.waf_blocked:
                 self.last_fetch_ok = False
                 return result
-            if (not q.get("is_submitted") or not q.get("due_date")) and q.get("url"):
+            cmid = str(q["id"]).replace("quiz_", "")
+            needs_grade_check = bool(q.get("is_submitted")) and cmid not in graded_cmids and not q.get("grade_val")
+            if (not q.get("is_submitted") or not q.get("due_date") or needs_grade_check) and q.get("url"):
                 qst = self.get_quiz_status(q["url"])
                 if qst.get("is_submitted"):
                     q["is_submitted"] = True
                     q["submission_text"] = qst.get("status_text") or "تم الحل"
                 if not q.get("due_date") and qst.get("due_date"):
                     q["due_date"] = self._normalize_due_date_year(qst["due_date"])
+                if qst.get("grade_val"):
+                    q["grade_val"] = qst["grade_val"]
+                    if qst.get("grade_max"):
+                        q["grade_max"] = qst["grade_max"]
+                    if qst.get("percentage"):
+                        q["percentage"] = qst["percentage"]
+                    if qst.get("feedback"):
+                        q["feedback"] = qst["feedback"]
+
+        # Merge quiz grades discovered from quiz/index.php or quiz/view.php into result["grades"]
+        # (covers quizzes hidden from Gradebook or graded directly on the quiz page)
+        quiz_cmids = {str(q["id"]).replace("quiz_", "") for q in result["quizzes"]}
+        grades_by_id = {g["item_id"]: g for g in result["grades"]}
+        for g in result["grades"]:
+            g_cmid = g.get("item_id", "").replace("mod_", "")
+            if g_cmid in quiz_cmids or "/mod/quiz/" in (g.get("url") or ""):
+                g["is_quiz"] = True
+
+        for q in result["quizzes"]:
+            cmid = str(q["id"]).replace("quiz_", "")
+            q_grade = (q.get("grade_val") or "").strip()
+            if not q_grade:
+                continue
+            mod_key = f"mod_{cmid}"
+            existing_g = grades_by_id.get(mod_key)
+            if existing_g:
+                existing_g["is_quiz"] = True
+                if not (existing_g.get("grade_val") or "").strip():
+                    existing_g["grade_val"] = q_grade
+                if not (existing_g.get("grade_max") or "").strip() and q.get("grade_max"):
+                    existing_g["grade_max"] = q["grade_max"]
+                if not (existing_g.get("percentage") or "").strip() and q.get("percentage"):
+                    existing_g["percentage"] = q["percentage"]
+                if not (existing_g.get("feedback") or "").strip() and q.get("feedback"):
+                    existing_g["feedback"] = q["feedback"]
+            else:
+                new_g = {
+                    "item_id": mod_key,
+                    "item_name": q.get("name") or f"Quiz #{cmid}",
+                    "grade_val": q_grade,
+                    "grade_max": q.get("grade_max") or "",
+                    "percentage": q.get("percentage") or "",
+                    "feedback": q.get("feedback") or "",
+                    "url": q.get("url") or f"{LMS_BASE_URL}/mod/quiz/view.php?id={cmid}",
+                    "course_id": course_id,
+                    "is_quiz": True,
+                }
+                result["grades"].append(new_g)
+                grades_by_id[mod_key] = new_g
 
         self.last_fetch_ok = ((assign_ok and quiz_ok and res_ok) or (res_ok and page_soup is not None)) and not self.waf_blocked and not self.session_expired
         return result
@@ -977,12 +1028,19 @@ class LMSScraper:
                             elif re.search(r"no submissions? have been made|no attempt|لا توجد محاولة|لم تسلم|لم يتم تقديم|not submitted|draft|مسودة", s_txt, re.I):
                                 is_submitted = False
 
+                    grade_val = ""
+                    grade_max = ""
+                    percentage = ""
                     grade_cell = row.find(["td", "th"], attrs={"data-mdl-overview-item": "grade"})
                     if not grade_cell and grade_col_idx is not None and grade_col_idx < len(cells):
                         grade_cell = cells[grade_col_idx]
                     if grade_cell:
                         g_txt = grade_cell.get_text(" ", strip=True)
-                        if g_txt and g_txt not in ("-", "—", "Empty", "فارغ") and any(ch.isdigit() for ch in g_txt):
+                        parsed_g = self._parse_quiz_grade_text(g_txt)
+                        if parsed_g.get("grade_val"):
+                            grade_val = parsed_g["grade_val"]
+                            grade_max = parsed_g.get("grade_max", "")
+                            percentage = parsed_g.get("percentage", "")
                             is_submitted = True
                             if not submission_text:
                                 submission_text = f"تم التقييم ({g_txt})"
@@ -1020,6 +1078,9 @@ class LMSScraper:
                         "due_date": due_date,
                         "is_submitted": is_submitted,
                         "submission_text": submission_text,
+                        "grade_val": grade_val,
+                        "grade_max": grade_max,
+                        "percentage": percentage,
                     })
 
             if not activities:
@@ -1255,12 +1316,60 @@ class LMSScraper:
             logger.warning(f"Error checking assignment status at {url}: {e}")
         return result
 
+    @staticmethod
+    def _parse_quiz_grade_text(raw_text: str) -> Dict[str, str]:
+        """Parse Moodle quiz grade text such as '15.00 out of 15.00 ( 100 %)', '14.5 / 15', or '15.00'."""
+        out = {"grade_val": "", "grade_max": "", "percentage": ""}
+        if not raw_text:
+            return out
+        s = re.sub(r"\s+", " ", str(raw_text)).strip()
+        s = s.translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789"))
+        low = s.lower()
+        if not s or s in ("-", "—", "empty", "فارغ") or any(
+            neg in low for neg in (
+                "not yet graded", "لم يتم التقييم", "لم يُقيَّم", "review not permitted",
+                "غير مسموح", "no grade", "بدون علامة",
+            )
+        ):
+            return out
+
+        # Percentage in parentheses or trailing: e.g. "( 100 %)" or "93.33%"
+        m_pct = re.search(r"(\d+(?:\.\d+)?)\s*%", s)
+        if m_pct:
+            out["percentage"] = f"{m_pct.group(1)}%"
+
+        # Pattern 1: "15.00 out of 15.00" / "15.00 من 15.00" / "15.00 من أصل 15.00"
+        m_out = re.search(r"(\d+(?:\.\d+)?)\s*(?:out\s+of|من\s+أصل|من)\s*(\d+(?:\.\d+)?)", s, re.I)
+        if m_out:
+            out["grade_val"] = m_out.group(1)
+            out["grade_max"] = f"0–{m_out.group(2)}"
+            return out
+
+        # Pattern 2: "15.00 / 15.00" or "14/15"
+        m_slash = re.search(r"(\d+(?:\.\d+)?)\s*/\s*(\d+(?:\.\d+)?)", s)
+        if m_slash:
+            out["grade_val"] = m_slash.group(1)
+            out["grade_max"] = f"0–{m_slash.group(2)}"
+            return out
+
+        # Pattern 3: Pure number (e.g. "15.00" from quiz/index.php Grade column)
+        m_num = re.fullmatch(r"\d+(?:\.\d+)?", s)
+        if m_num:
+            out["grade_val"] = s
+            return out
+
+        return out
+
     def get_quiz_status(self, url: str) -> Dict[str, Any]:
-        """Fetch completion/attempt status and close date for an individual quiz."""
+        """Fetch completion/attempt status, released grade, and close date for an individual quiz."""
         result = {
             "is_submitted": False,
             "status_text": "",
             "due_date": "",
+            "grade_val": "",
+            "grade_max": "",
+            "percentage": "",
+            "feedback": "",
         }
         try:
             resp = self.authenticated_get(url, timeout=20)
@@ -1268,38 +1377,66 @@ class LMSScraper:
                 return result
             soup = BeautifulSoup(resp.text, "lxml")
 
-            # 1. Check all tables on the quiz page (handles both quizreviewsummary cards and quizattemptsummary tables, including row 0)
+            # 1. Check all tables on the quiz page (handles quizreviewsummary cards & quizattemptsummary tables)
             for tr in soup.find_all("tr"):
                 cells = [c.get_text(" ", strip=True) for c in tr.find_all(["th", "td"])]
                 if not cells:
                     continue
                 if len(cells) >= 2:
                     hdr = cells[0].lower()
-                    val = cells[-1].lower()
+                    val_raw = cells[-1]
+                    val = val_raw.lower()
                     if any(k in hdr for k in ["status", "state", "الحالة", "حالة"]) and any(
                         k in val for k in ["finished", "منتهي", "منتهية", "تم التسليم", "submitted", "completed", "مكتمل"]
                     ):
                         result["is_submitted"] = True
                         result["status_text"] = "تم الحل (Finished)"
-                        break
-                    if any(k in hdr for k in ["completed", "اكتمل", "تاريخ الإكتمال"]) and len(val) > 4 and val not in ("-", "—"):
+                    elif any(k in hdr for k in ["completed", "اكتمل", "تاريخ الإكتمال"]) and len(val) > 4 and val not in ("-", "—"):
                         result["is_submitted"] = True
-                        result["status_text"] = "تم الحل (Finished)"
-                        break
+                        result["status_text"] = result["status_text"] or "تم الحل (Finished)"
+                    elif any(k in hdr for k in ["grade", "mark", "الدرجة", "العلامة", "النتيجة"]) and not result["grade_val"]:
+                        pg = self._parse_quiz_grade_text(val_raw)
+                        if pg.get("grade_val"):
+                            result["grade_val"] = pg["grade_val"]
+                            result["grade_max"] = pg.get("grade_max", "")
+                            result["percentage"] = pg.get("percentage", "")
+                            result["is_submitted"] = True
+                            result["status_text"] = result["status_text"] or "تم التقييم"
                 row_txt = " ".join(cells).lower()
                 if any(k in row_txt for k in ["status finished", "الحالة منتهية", "الحالة منتهي"]):
                     result["is_submitted"] = True
-                    result["status_text"] = "تم الحل (Finished)"
-                    break
+                    result["status_text"] = result["status_text"] or "تم الحل (Finished)"
 
-            # 2. Check final grade heading or feedback
-            if not result["is_submitted"]:
-                grade_info = soup.find(id="feedback") or soup.find(class_=re.compile(r"quizgradefeedback|quizattemptcounts|grade"))
-                if grade_info:
-                    gtxt = grade_info.get_text(" ", strip=True).lower()
-                    if any(k in gtxt for k in ["final grade", "علامتك النهائية", "الدرجة النهائية", "أعلى درجة", "highest grade"]):
-                        result["is_submitted"] = True
-                        result["status_text"] = "تم التقييم"
+            # 2. Check final grade heading or feedback (e.g. "Your final grade for this quiz is 15.00/15.00.")
+            grade_blocks = []
+            fb_el = soup.find(id="feedback")
+            if fb_el:
+                grade_blocks.append(fb_el)
+            for el in soup.find_all(["div", "h2", "h3", "p"], class_=re.compile(r"quizgradefeedback|quizattemptcounts|grade")):
+                grade_blocks.append(el)
+            for el in soup.find_all(["h2", "h3", "div"]):
+                txt_l = el.get_text(" ", strip=True).lower()
+                if len(txt_l) < 160 and any(k in txt_l for k in [
+                    "your final grade for this quiz is", "final grade", "highest grade",
+                    "علامتك النهائية", "الدرجة النهائية", "أعلى درجة",
+                ]):
+                    grade_blocks.append(el)
+
+            for gb in grade_blocks:
+                gtxt = gb.get_text(" ", strip=True)
+                gtxt_l = gtxt.lower()
+                if any(k in gtxt_l for k in ["final grade", "علامتك النهائية", "الدرجة النهائية", "أعلى درجة", "highest grade"]):
+                    result["is_submitted"] = True
+                    result["status_text"] = result["status_text"] or "تم التقييم"
+                    if not result["grade_val"]:
+                        pg = self._parse_quiz_grade_text(gtxt)
+                        if pg.get("grade_val"):
+                            result["grade_val"] = pg["grade_val"]
+                            result["grade_max"] = pg.get("grade_max", "")
+                            result["percentage"] = pg.get("percentage", "")
+                if gb.get("id") == "feedback" or "quizgradefeedback" in " ".join(gb.get("class") or []):
+                    if not result["feedback"] and len(gtxt) > 2:
+                        result["feedback"] = gtxt[:300]
 
             # 3. Check Moodle 4.x/5.x completion badge on the quiz page itself
             if not result["is_submitted"]:

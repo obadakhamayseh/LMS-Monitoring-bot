@@ -351,6 +351,7 @@ class MonitorEngine:
         now = time.monotonic()
         content = None
         cache_key = (tid, cid)
+        had_prior_course_data = bool(db.get_course_items(tid, cid) or db.get_user_grades(tid, cid))
 
         if not bypass_cache and cache_key in self._course_cache:
             cache_ts, cached_content = self._course_cache[cache_key]
@@ -418,11 +419,23 @@ class MonitorEngine:
             if event:
                 events.append(event)
 
-        # 4. Gradebook & Marks Radar
+        # 4. Gradebook & Quiz Marks Radar
         try:
             grades_list = content.get("grades", [])
-            existing_course_grades = db.get_user_grades(tid, cid)
-            is_first_grade_seed = len(existing_course_grades) == 0
+            quiz_cmids = {str(q["id"]).replace("quiz_", "") for q in quizzes}
+            is_first_grade_seed = not had_prior_course_data
+
+            def _same_grade_val(v1: str, v2: str) -> bool:
+                s1 = " ".join(str(v1 or "").split()).strip()
+                s2 = " ".join(str(v2 or "").split()).strip()
+                if s1 == s2:
+                    return True
+                if not s1 or not s2:
+                    return False
+                try:
+                    return abs(float(s1) - float(s2)) < 1e-6
+                except ValueError:
+                    return s1.casefold() == s2.casefold()
 
             for g in grades_list:
                 item_id = g["item_id"]
@@ -432,28 +445,49 @@ class MonitorEngine:
                 pct = (g.get("percentage") or "").strip()
                 fb = (g.get("feedback") or "").strip()
                 g_url = g.get("url", "")
+                g_cmid = str(item_id).replace("mod_", "")
+                is_quiz_grade = bool(g.get("is_quiz")) or g_cmid in quiz_cmids or "/mod/quiz/" in g_url
 
                 old_g = db.get_grade(tid, cid, item_id)
                 old_val = (old_g.get("grade_val") or "").strip() if old_g else ""
 
                 db.upsert_grade(tid, cid, item_id, item_name, grade_val, grade_max, pct, fb, g_url)
 
-                # Notify if a real grade value was newly posted or changed (and not initial course seed)
-                if not is_first_grade_seed and grade_val and grade_val != old_val:
-                    if user.get("notify_grade", 1):
+                # Notify if a real grade value was newly released or changed (and not initial course seed)
+                if not is_first_grade_seed and grade_val and not _same_grade_val(grade_val, old_val):
+                    should_notify = (
+                        bool(user.get("notify_grade", 1)) or
+                        (is_quiz_grade and bool(user.get("notify_quiz", 1)))
+                    )
+                    if should_notify:
+                        if is_quiz_grade:
+                            header_line = (
+                                "🔄 *تم تحديث علامة الكويز في LMS!*"
+                                if old_val else
+                                "🎓 *تم إصدار علامة الكويز في LMS!*"
+                            )
+                            item_label = "الكويز"
+                            link_label = "فتح الكويز في LMS"
+                        else:
+                            header_line = "🎯 *تم رصد علامة جديدة في LMS!*"
+                            item_label = "التقييم"
+                            link_label = "عرض سجل العلامات"
+
                         g_lines = [
-                            "🎯 *تم رصد علامة جديدة في LMS!*",
+                            header_line,
                             "━━━━━━━━━━━━━━━━━━━━━━",
                             f"📖 المادة: *{_esc(cname)}*",
-                            f"📝 التقييم: *{_esc(item_name)}*",
+                            f"📝 {item_label}: *{_esc(item_name)}*",
                             f"🏆 العلامة: `{_esc(grade_val)}`" + (f" _(المدى: {_esc(grade_max)})_" if grade_max else ""),
                         ]
+                        if old_val:
+                            g_lines.append(f"↩️ _(العلامة السابقة: `{_esc(old_val)}`)_")
                         if pct:
                             g_lines.append(f"📊 النسبة: `{_esc(pct)}`")
                         if fb:
                             g_lines.append(f"💬 ملاحظات الدكتور: _{_esc(fb[:300])}_")
                         if g_url:
-                            g_lines.append(f"🔗 [عرض سجل العلامات]({g_url})")
+                            g_lines.append(f"🔗 [{link_label}]({g_url})")
                         await self._send(tid, "\n".join(g_lines))
         except Exception as ge:
             logger.warning(f"Error checking grades for course {cid} (user {tid}): {ge}")
