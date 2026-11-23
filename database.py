@@ -663,16 +663,21 @@ def update_seen_content(telegram_id, content_id, content_type,
         if is_submitted is not None:
             db.execute(
                 """UPDATE seen_content
-                   SET content_name=?, content_url=?, due_date=?, is_submitted=?
+                   SET content_name=?,
+                       content_url=?,
+                       due_date=CASE WHEN ? <> '' THEN ? ELSE due_date END,
+                       is_submitted=CASE WHEN ? = 1 THEN 1 ELSE is_submitted END
                    WHERE telegram_id=? AND content_id=? AND content_type=?""",
-                (name, url, due, 1 if is_submitted else 0, telegram_id, str(content_id), content_type)
+                (name, url, due or "", due or "", 1 if is_submitted else 0, telegram_id, str(content_id), content_type)
             )
         else:
             db.execute(
                 """UPDATE seen_content
-                   SET content_name=?, content_url=?, due_date=?
+                   SET content_name=?,
+                       content_url=?,
+                       due_date=CASE WHEN ? <> '' THEN ? ELSE due_date END
                    WHERE telegram_id=? AND content_id=? AND content_type=?""",
-                (name, url, due, telegram_id, str(content_id), content_type)
+                (name, url, due or "", due or "", telegram_id, str(content_id), content_type)
             )
 
 def mark_seen(telegram_id, course_id, content_id, content_type,

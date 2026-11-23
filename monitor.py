@@ -10,6 +10,7 @@ from telegram.constants import ParseMode
 MD = ParseMode.MARKDOWN
 from telegram.error import TelegramError
 from lms_scraper import LMSScraper
+from reminder import _parse_due_date
 import database as db
 
 logger = logging.getLogger(__name__)
@@ -372,6 +373,7 @@ class MonitorEngine:
             self.reminder_engine.register_assignments(tid, cid, assignments + quizzes)
 
         # Auto-detect solved/completed assignments & quizzes from LMS and update DB
+        now_ts = int(time.time())
         for task_item in assignments + quizzes:
             if task_item.get("is_submitted"):
                 t_type = task_item.get("type", "assign")
@@ -379,6 +381,10 @@ class MonitorEngine:
                 was_previously_unsubmitted = existing_seen is not None and not bool(existing_seen.get("is_submitted", 0))
                 db.mark_assignment_submitted(tid, task_item["id"], 1)
                 if was_previously_unsubmitted:
+                    # Only notify for recent/active tasks (do not spam retroactive alerts for tasks expired > 48h ago)
+                    due_ts = _parse_due_date(task_item.get("due_date") or (existing_seen.get("due_date") if existing_seen else ""))
+                    if due_ts and due_ts < now_ts - 172800:
+                        continue
                     t_label = "الواجب" if t_type == "assign" else "الاختبار/المهمة"
                     done_msg = (
                         f"✅ *تم رصد إنجاز {t_label} تلقائياً في LMS!*\n"
@@ -586,44 +592,129 @@ class MonitorEngine:
 
         return events, True
 
+    @staticmethod
+    def _normalize_name(value: str) -> str:
+        s = " ".join(str(value or "").split()).strip().casefold()
+        # Moodle switches default forum name between English and Arabic depending on session language
+        if s in ("announcements", "الإعلانات", "الاعلانات", "إعلانات", "اعلانات"):
+            return "__default_announcements__"
+        return s
+
+    @staticmethod
+    def _same_due_date(old_due: str, new_due: str) -> bool:
+        o = " ".join(str(old_due or "").split()).strip()
+        n = " ".join(str(new_due or "").split()).strip()
+        if o.casefold() == n.casefold():
+            return True
+        if not o or not n:
+            return False
+        ts_o = _parse_due_date(o)
+        ts_n = _parse_due_date(n)
+        if ts_o is not None and ts_n is not None:
+            return abs(ts_o - ts_n) < 120
+        return False
+
     def _collect_change(self, tid, cid, cname, item, content_type, enabled):
         content_id = str(item["id"])
-        name = item.get("name", "")
-        url = item.get("url", "")
-        due = item.get("due_date", "")
+        name = (item.get("name") or "").strip()
+        url = (item.get("url") or "").strip()
+        due = (item.get("due_date") or "").strip()
+        new_sub = bool(item.get("is_submitted", False))
         existing = db.get_seen_content(tid, content_id, content_type)
         is_new = existing is None
-        changes = []
+        now_ts = int(time.time())
+
         if existing:
-            old_name = existing.get("content_name") or ""
-            old_url = existing.get("content_url") or ""
-            old_due = existing.get("due_date") or ""
-            if old_name != name:
+            old_name = (existing.get("content_name") or "").strip()
+            old_url = (existing.get("content_url") or "").strip()
+            old_due = (existing.get("due_date") or "").strip()
+            old_sub = bool(existing.get("is_submitted", 0))
+
+            effective_sub = 1 if (old_sub or new_sub) else 0
+            effective_name = name or old_name
+            # Never erase a known due_date with an empty string on a transient scrape miss
+            effective_due = due or old_due
+
+            # 1. Already-seen resources: silently refresh metadata/clean URLs, never spam repeat summaries
+            if content_type == "resource":
+                if effective_name != old_name or url != old_url:
+                    db.update_seen_content(tid, content_id, content_type, effective_name, url, effective_due)
+                return None
+
+            # 2. Already-completed assignments & quizzes: silently sync metadata, never notify again
+            if effective_sub == 1:
+                if effective_name != old_name or url != old_url or effective_due != old_due or not old_sub:
+                    db.update_seen_content(
+                        tid, content_id, content_type,
+                        effective_name, url, effective_due, is_submitted=1,
+                    )
+                return None
+
+            # 3. Check for genuine, actionable changes on OPEN/UNSUBMITTED assignments & quizzes
+            changes = []
+            if name and self._normalize_name(old_name) != self._normalize_name(name):
                 changes.append(
                     f"تغيّر الاسم: «{self._one_line(old_name)}» ← «{self._one_line(name)}»"
                 )
-            if old_due != due:
-                changes.append(
-                    f"تغيّر موعد التسليم: «{self._one_line(old_due)}» ← "
-                    f"«{self._one_line(due)}»"
+
+            if due and not self._same_due_date(old_due, due):
+                new_due_ts = _parse_due_date(due)
+                old_due_ts = _parse_due_date(old_due) if old_due else None
+                # Only notify about deadline discovery/changes if the new deadline is still in the future
+                # (ignore retroactive backfill or changes on already-expired past assignments)
+                is_future_deadline = (new_due_ts is None) or (new_due_ts > now_ts)
+                if is_future_deadline:
+                    if old_due:
+                        changes.append(
+                            f"تغيّر موعد التسليم: «{self._one_line(old_due)}» ← "
+                            f"«{self._one_line(due)}»"
+                        )
+                    elif old_due_ts is None:
+                        # Previously had no due date and now has an upcoming future deadline
+                        changes.append(f"تم تحديد موعد التسليم: «{self._one_line(due)}»")
+
+            # Note: Never trigger notifications for URL-only parameter changes on the same cmid
+            if not changes:
+                if effective_name != old_name or url != old_url or effective_due != old_due:
+                    db.update_seen_content(
+                        tid, content_id, content_type,
+                        effective_name, url, effective_due, is_submitted=effective_sub,
+                    )
+                return None
+
+            if not enabled:
+                db.update_seen_content(
+                    tid, content_id, content_type,
+                    effective_name, url, effective_due, is_submitted=effective_sub,
                 )
-            if _canonical_content_url(old_url) != _canonical_content_url(url):
-                changes.append("تم تغيير رابط المحتوى")
+                return None
 
-        if not is_new and not changes:
-            # Refresh the stored link or submission status if changed
-            old_sub = bool(existing.get("is_submitted", 0))
-            new_sub = bool(item.get("is_submitted", False))
-            if (existing.get("content_url") or "") != url or (new_sub and not old_sub):
-                db.update_seen_content(tid, content_id, content_type, name, url, due, is_submitted=1 if (old_sub or new_sub) else 0)
-            return None
+            return {
+                "telegram_id": tid,
+                "course_id": cid,
+                "course_name": cname,
+                "content_id": content_id,
+                "content_type": content_type,
+                "name": effective_name,
+                "url": url,
+                "raw_url": item.get("raw_url", ""),
+                "due": effective_due,
+                "is_submitted": effective_sub,
+                "is_new": False,
+                "changes": changes,
+            }
 
-        is_sub_val = 1 if item.get("is_submitted") else 0
-        if not enabled:
-            if is_new:
+        # Brand new item (existing is None)
+        is_sub_val = 1 if new_sub else 0
+        # Do not notify about newly-discovered assignments/quizzes that are ALREADY submitted or ALREADY past due
+        if content_type in ("assign", "quiz"):
+            due_ts = _parse_due_date(due) if due else None
+            if is_sub_val == 1 or (due_ts is not None and due_ts < now_ts):
                 db.mark_seen(tid, cid, content_id, content_type, name, url, due, is_submitted=is_sub_val)
-            else:
-                db.update_seen_content(tid, content_id, content_type, name, url, due, is_submitted=is_sub_val)
+                return None
+
+        if not enabled:
+            db.mark_seen(tid, cid, content_id, content_type, name, url, due, is_submitted=is_sub_val)
             return None
 
         return {
@@ -637,8 +728,8 @@ class MonitorEngine:
             "raw_url": item.get("raw_url", ""),
             "due": due,
             "is_submitted": is_sub_val,
-            "is_new": is_new,
-            "changes": changes,
+            "is_new": True,
+            "changes": [],
         }
 
     @staticmethod
