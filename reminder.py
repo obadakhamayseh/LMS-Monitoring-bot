@@ -81,21 +81,30 @@ def _parse_due_date(due_str: str):
     }
 
     match = re.search(
-        r"(\d{1,2})\s+([^\d,،:]+?)\s+(\d{4})(?:[,،\s]+(\d{1,2}):(\d{2})\s*(AM|PM|am|pm|ص|م|صباحاً|صباحا|مساءً|مساء)?)?",
+        r"(\d{1,2})\s+([^\d,،:]+?)(?:\s+(\d{4}))?(?:[,،\s]+(\d{1,2}):(\d{2})\s*(AM|PM|am|pm|ص|م|صباحاً|صباحا|مساءً|مساء)?)?(?:\s|$)",
         s, re.IGNORECASE
     )
     if match:
         try:
             day = int(match.group(1))
             month_s = re.sub(r"\s+", " ", match.group(2).strip()).lower()
-            year = int(match.group(3))
+            m = month_map.get(month_s)
+            if not m:
+                return None
+            if match.group(3):
+                year = int(match.group(3))
+            else:
+                # Moodle 5.x overview tables may omit the year (e.g. 'Saturday, 28 November, 11:59 PM')
+                now_jo = datetime.now(timezone(timedelta(hours=3)))
+                year = now_jo.year
+                if now_jo.month >= 10 and m <= 2:
+                    year += 1
+                elif now_jo.month <= 2 and m >= 11:
+                    year -= 1
             hour = int(match.group(4)) if match.group(4) else 23
             minute = int(match.group(5)) if match.group(5) else 59
             am_pm = (match.group(6) or "").strip().lower()
 
-            m = month_map.get(month_s)
-            if not m:
-                return None
             h = hour
             is_pm = am_pm in ("pm", "م", "مساءً", "مساء")
             is_am = am_pm in ("am", "ص", "صباحاً", "صباحا")

@@ -1,9 +1,12 @@
 import requests
 import logging
 import re
+import json
 import time
+from datetime import datetime, timezone, timedelta
+from urllib.parse import urljoin, urlsplit, urlunsplit, parse_qsl, urlencode
 from bs4 import BeautifulSoup
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from config import LMS_BASE_URL, LMS_LOGIN_URL
 
 logger = logging.getLogger(__name__)
@@ -11,6 +14,10 @@ logger = logging.getLogger(__name__)
 
 class LMSAuthError(RuntimeError):
     """Raised when an authenticated LMS page still requires a login."""
+
+
+class LMSWafError(RuntimeError):
+    """Raised when the university WAF/NetScaler requests human CAPTCHA validation."""
 
 HEADERS = {
     "User-Agent": (
@@ -34,10 +41,58 @@ class LMSScraper:
         self.user_id: Optional[str] = None
         self.full_name: Optional[str] = None
         self.sesskey: Optional[str] = None
+        self.moodle_theme: Optional[str] = None
         self.error_message: Optional[str] = None
         self.last_request_at = 0.0
         self.last_fetch_ok = True
         self.session_expired = False
+        self.waf_blocked = False
+
+    @staticmethod
+    def _clean_url(url: str) -> str:
+        """Strip volatile NetScaler WAF query parameters (__ncforminfo) for stable stored/display URLs."""
+        if not url:
+            return ""
+        u = url.strip()
+        if not u.startswith("http"):
+            u = urljoin(LMS_BASE_URL + "/", u)
+        try:
+            parts = urlsplit(u)
+            query = [
+                (k, v)
+                for k, v in parse_qsl(parts.query, keep_blank_values=True)
+                if k.casefold() != "__ncforminfo"
+            ]
+            return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query, doseq=True), parts.fragment))
+        except Exception:
+            return re.sub(r"([?&])__ncforminfo=[^&#]*&?", r"\1", u).rstrip("?&")
+
+    @staticmethod
+    def _is_waf_challenge(resp) -> bool:
+        """Detect Citrix NetScaler / Barracuda WAF CAPTCHA validation pages."""
+        if resp is None:
+            return False
+        text_low = (resp.text or "")[:2500].lower()
+        return (
+            "/captcha.gif" in text_low
+            or "/captcha_resp" in text_low
+            or "user validation required" in text_low
+            or ("validation request" in text_low and "captcha" in text_low)
+        )
+
+    @staticmethod
+    def _extract_moodle_cfg(html_text: str) -> Dict[str, Any]:
+        """Extract Moodle's embedded M.cfg JSON object (Moodle 4.x/5.x)."""
+        if not html_text:
+            return {}
+        m = re.search(r"M\.cfg\s*=\s*(\{.*?\});", html_text, re.S)
+        if not m:
+            return {}
+        try:
+            data = json.loads(m.group(1))
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
 
     def _is_login_response(self, resp) -> bool:
         if "/login/index.php" in (resp.url or "").lower():
@@ -54,9 +109,20 @@ class LMSScraper:
         return bool(login_form and login_form.find("input", {"name": "username"}))
 
     def authenticated_get(self, url: str, timeout: int = 30, **kwargs):
-        """Fetch a protected page and report an expired session to the monitor."""
+        """Fetch a protected page and report an expired session or WAF challenge."""
+        if self.waf_blocked:
+            self.last_fetch_ok = False
+            raise LMSWafError("جدار حماية موقع الجامعة طلب تحققاً أمنياً مؤقتاً؛ تم إيقاف الفحص مؤقتاً لتجنب الحظر")
+
         resp = self.session.get(url, timeout=timeout, **kwargs)
         self.last_request_at = time.monotonic()
+
+        if self._is_waf_challenge(resp):
+            logger.warning("University WAF CAPTCHA challenge encountered; backing off immediately")
+            self.waf_blocked = True
+            self.last_fetch_ok = False
+            raise LMSWafError("جدار حماية موقع الجامعة طلب تحققاً أمنياً (CAPTCHA)؛ تم التوقف مؤقتاً")
+
         if not self._is_login_response(resp):
             return resp
 
@@ -103,6 +169,7 @@ class LMSScraper:
     def login(self) -> bool:
         self.logged_in = False
         self.session_expired = False
+        self.waf_blocked = False
         self.last_fetch_ok = True
         self.error_message = None
         try:
@@ -115,23 +182,50 @@ class LMSScraper:
                 logger.error(self.error_message)
                 return False
 
+            if self._is_waf_challenge(resp):
+                self.waf_blocked = True
+                self.error_message = "جدار حماية موقع الجامعة طلب تحققاً أمنياً (CAPTCHA) مؤقتاً؛ حاول مجدداً بعد عدة دقائق"
+                logger.warning(f"WAF CAPTCHA challenge on login GET for {self.username}")
+                return False
+
             soup = BeautifulSoup(resp.text, "lxml")
 
-            login_token = ""
-            token_input = soup.find("input", {"name": "logintoken"})
-            if token_input:
-                login_token = token_input.get("value", "")
+            # If session cookies already keep us logged in
+            if self._check_logged_in(soup, resp.text):
+                self.logged_in = True
+                self._extract_user_info(soup, resp.text)
+                logger.info(f"✅ جلسة نشطة بالفعل - {self.full_name}")
+                return True
 
-            payload = {
-                "username": self.username,
-                "password": self.password,
-                "logintoken": login_token,
-                "anchor": "",
-                "rememberusername": "1",
-            }
+            # Preserve ALL hidden/default inputs (logintoken, anchor, NetScaler __ncforminfo, etc.)
+            login_form = soup.find("form", id="login") or soup.find(
+                "form", action=re.compile(r"/login/index\.php", re.I)
+            )
+            post_url = LMS_LOGIN_URL
+            payload: Dict[str, str] = {}
+            if login_form:
+                action = (login_form.get("action") or "").strip()
+                if action:
+                    post_url = action if action.startswith("http") else urljoin(LMS_BASE_URL + "/", action)
+                for inp in login_form.find_all("input"):
+                    name = inp.get("name")
+                    if not name:
+                        continue
+                    itype = (inp.get("type") or "text").lower()
+                    if itype in ("hidden", "text", "password"):
+                        payload[name] = inp.get("value", "")
+                    elif itype == "checkbox" and name == "rememberusername":
+                        payload[name] = "1"
+            else:
+                token_input = soup.find("input", {"name": "logintoken"})
+                payload["logintoken"] = token_input.get("value", "") if token_input else ""
+                payload["anchor"] = ""
+
+            payload["username"] = self.username
+            payload["password"] = self.password
 
             resp = self.session.post(
-                LMS_LOGIN_URL,
+                post_url,
                 data=payload,
                 timeout=30,
                 allow_redirects=True
@@ -143,21 +237,27 @@ class LMSScraper:
                 logger.error(self.error_message)
                 return False
 
+            if self._is_waf_challenge(resp):
+                self.waf_blocked = True
+                self.error_message = "جدار حماية موقع الجامعة طلب تحققاً أمنياً (CAPTCHA) بعد محاولة الدخول؛ حاول بعد عدة دقائق"
+                logger.warning(f"WAF CAPTCHA challenge on login POST for {self.username}")
+                return False
+
             soup = BeautifulSoup(resp.text, "lxml")
 
-            if self._check_logged_in(soup):
+            if self._check_logged_in(soup, resp.text):
                 self.logged_in = True
-                self._extract_user_info(soup)
-                logger.info(f"✅ تسجيل الدخول ناجح - {self.full_name}")
+                self._extract_user_info(soup, resp.text)
+                logger.info(f"✅ تسجيل الدخول ناجح - {self.full_name} (uid={self.user_id}, theme={self.moodle_theme})")
                 return True
 
             try:
                 my_resp = self.session.get(f"{LMS_BASE_URL}/my/", timeout=15)
-                if my_resp.status_code == 200 and "login" not in my_resp.url:
+                if my_resp.status_code == 200 and not self._is_waf_challenge(my_resp) and "login" not in my_resp.url:
                     my_soup = BeautifulSoup(my_resp.text, "lxml")
-                    if self._check_logged_in(my_soup):
+                    if self._check_logged_in(my_soup, my_resp.text):
                         self.logged_in = True
-                        self._extract_user_info(my_soup)
+                        self._extract_user_info(my_soup, my_resp.text)
                         logger.info(f"✅ تسجيل الدخول ناجح عبر /my/ - {self.full_name}")
                         return True
             except Exception:
@@ -165,7 +265,7 @@ class LMSScraper:
 
             err = soup.find(class_=["loginerrors", "alert-danger", "error"]) or soup.find(id="loginerrormessage")
             if err:
-                msg = err.get_text(strip=True)
+                msg = err.get_text(" ", strip=True)
             else:
                 title = soup.title.get_text(strip=True) if soup.title else ""
                 msg = f"بيانات غير صحيحة أو تم حظر الجلسة (الصفحة: {title})"
@@ -186,14 +286,21 @@ class LMSScraper:
             logger.error(self.error_message)
             return False
 
-    def _check_logged_in(self, soup: BeautifulSoup) -> bool:
+    def _check_logged_in(self, soup: BeautifulSoup, html_text: str = "") -> bool:
         body = soup.find("body")
         if body:
             classes = body.get("class", [])
             if "notloggedin" in classes:
                 return False
             uid = body.get("data-userid", "0")
-            if uid and uid != "0":
+            if uid and str(uid) != "0":
+                return True
+
+        # Moodle 5.x (classic/boost): userId is exposed in M.cfg
+        cfg = self._extract_moodle_cfg(html_text or str(soup))
+        if cfg:
+            cfg_uid = cfg.get("userId")
+            if cfg_uid and str(cfg_uid).isdigit() and int(cfg_uid) > 0:
                 return True
 
         if soup.find("a", href=re.compile(r"logout", re.I)):
@@ -207,6 +314,7 @@ class LMSScraper:
         return False
 
     def _extract_sesskey(self, html_or_soup) -> Optional[str]:
+        raw_text = html_or_soup if isinstance(html_or_soup, str) else ""
         if isinstance(html_or_soup, BeautifulSoup):
             inp = html_or_soup.find("input", {"name": "sesskey"})
             if inp and inp.get("value"):
@@ -218,21 +326,32 @@ class LMSScraper:
                 if m:
                     self.sesskey = m.group(1)
                     return self.sesskey
-            text = str(html_or_soup)
-        else:
-            text = str(html_or_soup or "")
+            raw_text = str(html_or_soup)
 
-        m = re.search(r'"sesskey"\s*:\s*"([A-Za-z0-9]+)"', text)
+        cfg = self._extract_moodle_cfg(raw_text)
+        if cfg:
+            if cfg.get("sesskey"):
+                self.sesskey = str(cfg["sesskey"])
+            if cfg.get("userId") and str(cfg["userId"]).isdigit() and int(cfg["userId"]) > 0:
+                self.user_id = str(cfg["userId"])
+            if cfg.get("theme"):
+                self.moodle_theme = str(cfg["theme"])
+            if self.sesskey:
+                return self.sesskey
+
+        m = re.search(r'"sesskey"\s*:\s*"([A-Za-z0-9]+)"', raw_text)
         if m:
             self.sesskey = m.group(1)
             return self.sesskey
         return self.sesskey
 
-    def _extract_user_info(self, soup: BeautifulSoup):
-        self._extract_sesskey(soup)
+    def _extract_user_info(self, soup: BeautifulSoup, html_text: str = ""):
+        self._extract_sesskey(html_text or soup)
         body = soup.find("body")
-        if body:
-            self.user_id = body.get("data-userid")
+        if body and not self.user_id:
+            uid = body.get("data-userid")
+            if uid and str(uid) != "0":
+                self.user_id = str(uid)
 
         excluded_labels = {
             "user menu", "language selector", "قائمة المستخدم",
@@ -470,12 +589,18 @@ class LMSScraper:
             course_id, "assign"
         )
         assign_ok = self.last_fetch_ok
+        if self.session_expired or self.waf_blocked:
+            self.last_fetch_ok = False
+            return result
 
         self.last_fetch_ok = True
         result["quizzes"] = self._get_activities_from_index(
             course_id, "quiz"
         )
         quiz_ok = self.last_fetch_ok
+        if self.session_expired or self.waf_blocked:
+            self.last_fetch_ok = False
+            return result
 
         self.last_fetch_ok = True
         resources, page_soup = self._get_resources_from_course_page(
@@ -483,17 +608,20 @@ class LMSScraper:
         )
         res_ok = self.last_fetch_ok
         result["resources"] = resources
+        if self.session_expired or self.waf_blocked:
+            self.last_fetch_ok = False
+            return result
 
-        # Supplement assignments & quizzes from the main course page if any were missed by index.php
+        # Supplement assignments & quizzes + full-year activity dates from the main course page
         completed_cmids = set()
+        page_due_dates: Dict[str, str] = {}
         if page_soup is not None:
             completed_cmids = self._extract_course_page_completions(page_soup)
+            page_due_dates = self._extract_course_page_activity_dates(page_soup)
 
             seen_assigns = {a["id"] for a in result["assignments"]}
             for a in page_soup.find_all("a", href=re.compile(r"/mod/assign/view\.php\?id=\d+")):
-                href = a.get("href", "")
-                if not href.startswith("http"):
-                    href = LMS_BASE_URL + href
+                href = self._clean_url(a.get("href", ""))
                 id_m = re.search(r"id=(\d+)", href)
                 if not id_m:
                     continue
@@ -509,16 +637,14 @@ class LMSScraper:
                     "url": href,
                     "type": "assign",
                     "course_id": course_id,
-                    "due_date": "",
+                    "due_date": page_due_dates.get(cmid, ""),
                     "is_submitted": cmid in completed_cmids,
                     "submission_text": "منجز في المقرر" if cmid in completed_cmids else "",
                 })
 
             seen_quizzes = {q["id"] for q in result["quizzes"]}
             for a in page_soup.find_all("a", href=re.compile(r"/mod/quiz/view\.php\?id=\d+")):
-                href = a.get("href", "")
-                if not href.startswith("http"):
-                    href = LMS_BASE_URL + href
+                href = self._clean_url(a.get("href", ""))
                 id_m = re.search(r"id=(\d+)", href)
                 if not id_m:
                     continue
@@ -534,17 +660,26 @@ class LMSScraper:
                     "url": href,
                     "type": "quiz",
                     "course_id": course_id,
-                    "due_date": "",
+                    "due_date": page_due_dates.get(cmid, ""),
                     "is_submitted": cmid in completed_cmids,
                     "submission_text": "منجز في المقرر" if cmid in completed_cmids else "",
                 })
 
         # Fetch course grades, announcements, and attendance
         result["grades"] = self.get_course_grades(course_id)
+        if self.session_expired or self.waf_blocked:
+            self.last_fetch_ok = False
+            return result
         result["announcements"] = self.get_course_announcements(course_id, course_soup=page_soup)
+        if self.session_expired or self.waf_blocked:
+            self.last_fetch_ok = False
+            return result
         result["attendance"] = self.get_course_attendance(course_id, course_soup=page_soup)
+        if self.session_expired or self.waf_blocked:
+            self.last_fetch_ok = False
+            return result
 
-        # Cross-reference completion from course page badges & gradebook
+        # Cross-reference completion from course page badges & gradebook, and prefer full-year dates from course page
         graded_cmids = {
             g["item_id"].replace("mod_", "")
             for g in result["grades"]
@@ -553,39 +688,127 @@ class LMSScraper:
 
         for a in result["assignments"]:
             cmid = str(a["id"]).replace("assign_", "")
+            if page_due_dates.get(cmid):
+                # Moodle 5 course page activity-dates always include the full 4-digit year
+                a["due_date"] = page_due_dates[cmid]
+            elif a.get("due_date"):
+                a["due_date"] = self._normalize_due_date_year(a["due_date"])
             if cmid in completed_cmids or cmid in graded_cmids:
                 a["is_submitted"] = True
 
         for q in result["quizzes"]:
             cmid = str(q["id"]).replace("quiz_", "")
+            if page_due_dates.get(cmid):
+                q["due_date"] = page_due_dates[cmid]
+            elif q.get("due_date"):
+                q["due_date"] = self._normalize_due_date_year(q["due_date"])
             if cmid in completed_cmids or cmid in graded_cmids:
                 q["is_submitted"] = True
 
-        # Deep-check individual assignment & quiz pages when submission or due_date is not yet known
+        # Deep-check individual assignment & quiz pages ONLY when submission or due_date is still missing
         for a in result["assignments"]:
+            if self.session_expired or self.waf_blocked:
+                self.last_fetch_ok = False
+                return result
             if (not a.get("is_submitted") or not a.get("due_date")) and a.get("url"):
                 st = self.get_assignment_status(a["url"])
                 if st.get("is_submitted"):
                     a["is_submitted"] = True
                     a["submission_text"] = st.get("status_text") or "تم التسليم"
                 if not a.get("due_date") and st.get("due_date"):
-                    a["due_date"] = st["due_date"]
+                    a["due_date"] = self._normalize_due_date_year(st["due_date"])
 
         for q in result["quizzes"]:
+            if self.session_expired or self.waf_blocked:
+                self.last_fetch_ok = False
+                return result
             if (not q.get("is_submitted") or not q.get("due_date")) and q.get("url"):
                 qst = self.get_quiz_status(q["url"])
                 if qst.get("is_submitted"):
                     q["is_submitted"] = True
                     q["submission_text"] = qst.get("status_text") or "تم الحل"
                 if not q.get("due_date") and qst.get("due_date"):
-                    q["due_date"] = qst["due_date"]
+                    q["due_date"] = self._normalize_due_date_year(qst["due_date"])
 
-        self.last_fetch_ok = (assign_ok and quiz_ok and res_ok) or (res_ok and page_soup is not None)
+        self.last_fetch_ok = ((assign_ok and quiz_ok and res_ok) or (res_ok and page_soup is not None)) and not self.waf_blocked and not self.session_expired
         return result
 
     @staticmethod
+    def _normalize_due_date_year(due_str: str) -> str:
+        """Ensure Moodle 5.x yearless overview dates (e.g. 'Saturday, 28 November, 11:59 PM') include a 4-digit year."""
+        if not due_str:
+            return ""
+        s = re.sub(r"\s+", " ", str(due_str)).strip()
+        if not s or s in ("-", "—"):
+            return ""
+        # Pure unix timestamp (e.g. from Moodle 5 data-mdl-overview-value)
+        if re.fullmatch(r"\d{9,11}", s):
+            try:
+                ts = int(s)
+                if ts > 1_000_000_000:
+                    dt = datetime.fromtimestamp(ts, tz=timezone(timedelta(hours=3)))
+                    hour12 = dt.strftime("%I").lstrip("0") or "12"
+                    return f"{dt.strftime('%A')}, {dt.day} {dt.strftime('%B %Y')}, {hour12}:{dt.strftime('%M %p')}"
+            except Exception:
+                pass
+        # Already has a 4-digit year
+        if re.search(r"\b20\d{2}\b", s):
+            return s
+        # Insert inferred year after month name (e.g. 'Saturday, 28 November, 11:59 PM' -> 'Saturday, 28 November 2026, 11:59 PM')
+        month_names = (
+            r"January|February|March|April|May|June|July|August|September|October|November|December|"
+            r"Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec|"
+            r"يناير|فبراير|مارس|أبريل|ابريل|مايو|يونيو|يوليو|أغسطس|اغسطس|سبتمبر|أكتوبر|اكتوبر|نوفمبر|ديسمبر|"
+            r"كانون الثاني|شباط|آذار|اذار|نيسان|أيار|ايار|حزيران|تموز|آب|اب|أيلول|ايلول|تشرين الأول|تشرين الاول|تشرين الثاني|كانون الأول|كانون الاول"
+        )
+        m = re.search(rf"(\b\d{{1,2}}\s+(?:{month_names})\b)", s, re.I)
+        if m:
+            now = datetime.now(timezone(timedelta(hours=3)))
+            year = now.year
+            # Handle Dec <-> Jan academic year boundary cleanly
+            month_low = m.group(1).lower()
+            if now.month >= 10 and any(k in month_low for k in ("jan", "feb", "يناير", "فبراير", "كانون الثاني", "شباط")):
+                year += 1
+            elif now.month <= 2 and any(k in month_low for k in ("nov", "dec", "نوفمبر", "ديسمبر", "تشرين الثاني", "كانون الأول", "كانون الاول")):
+                year -= 1
+            s = s[:m.end(1)] + f" {year}" + s[m.end(1):]
+        return s
+
+    @staticmethod
+    def _extract_course_page_activity_dates(soup: BeautifulSoup) -> Dict[str, str]:
+        """Extract full-year Due/Closes dates per cmid directly from Moodle 4.x/5.x course page."""
+        dates: Dict[str, str] = {}
+        if soup is None:
+            return dates
+        try:
+            for act in soup.find_all(["li", "div"], class_=re.compile(r"\bactivity\b|\bactivity-item\b")):
+                cmid = act.get("data-id") or ""
+                if not cmid:
+                    m = re.search(r"module-(\d+)", act.get("id") or "")
+                    if m:
+                        cmid = m.group(1)
+                if not cmid:
+                    continue
+                act_dates = act.find(attrs={"data-region": "activity-dates"}) or act.find(class_=re.compile(r"activity-dates"))
+                if not act_dates:
+                    continue
+                dates_txt = act_dates.get_text(" ", strip=True)
+                m_due = re.search(
+                    r"(?:Due|Closes|Closed|تاريخ الاستحقاق|موعد التسليم|تاريخ الإغلاق|يغلق|أغلق)\s*:\s*(.+?)(?=\s*(?:Opened|Opens|Due|Closes|Closed|تاريخ الفتح|يفتح|Done|To do|$))",
+                    dates_txt,
+                    re.I,
+                )
+                if m_due:
+                    val = m_due.group(1).strip(" |·-")
+                    if val and len(val) < 90:
+                        dates[str(cmid)] = val
+        except Exception as e:
+            logger.debug(f"Course activity-dates parse error: {e}")
+        return dates
+
+    @staticmethod
     def _extract_course_page_completions(soup: BeautifulSoup) -> set:
-        """Detect completed activity module IDs (cmids) from Moodle 3.x/4.x course page."""
+        """Detect completed activity module IDs (cmids) from Moodle 3.x/4.x/5.x course page."""
         completed = set()
         if soup is None:
             return completed
@@ -606,10 +829,13 @@ class LMSScraper:
                 if not cmid:
                     continue
 
-                # 1. Moodle 4.x completion badge/button (btn-success / bg-success / data-toggletype="manual:undo")
+                # 1. Moodle 4.x/5.x completion badge/button (Bootstrap 4 & 5)
                 comp_region = act.find(attrs={"data-region": "completion-info"}) or act.find(class_=re.compile(r"activity-completion"))
                 if comp_region:
-                    if comp_region.find(class_=re.compile(r"btn-success|bg-success|badge-success")):
+                    # Explicit undone manual toggle in Moodle 5.x (data-toggletype="manual:mark-done" / btn-subtle-body)
+                    if comp_region.find(attrs={"data-toggletype": re.compile(r"mark-done", re.I)}):
+                        continue
+                    if comp_region.find(class_=re.compile(r"btn-success|bg-success|badge-success|alert-success|text-bg-success")):
                         completed.add(str(cmid))
                         continue
                     undo_btn = comp_region.find(attrs={"data-toggletype": re.compile(r"undo", re.I)})
@@ -618,7 +844,7 @@ class LMSScraper:
                         continue
                     reg_txt = comp_region.get_text(" ", strip=True).lower()
                     if any(k in reg_txt for k in ["done:", "done", "تم:", "مكتمل", "منجز"]):
-                        if not any(neg in reg_txt for neg in ["to do", "mark as done", "وضع علامة", "غير مكتمل"]):
+                        if not any(neg in reg_txt for neg in ["to do", "mark as done", "mark ", "وضع علامة", "غير مكتمل"]):
                             completed.add(str(cmid))
                             continue
 
@@ -668,22 +894,31 @@ class LMSScraper:
             resp.raise_for_status()
             soup = BeautifulSoup(resp.text, "lxml")
 
-            table = soup.find("table", class_=re.compile(r"generaltable"))
+            # Support both Moodle 5.x (course-overview-table) and Moodle 3.x/4.x (generaltable)
+            table = soup.find("table", class_=re.compile(r"course-overview-table|generaltable"))
             if table:
                 all_rows = table.find_all("tr")
                 due_col_idx = None
                 sub_col_idx = None
                 grade_col_idx = None
+                name_col_idx = None
 
                 if all_rows:
                     header_cells = all_rows[0].find_all(["th", "td"])
                     for idx, hc in enumerate(header_cells):
+                        col_key = (hc.get("data-mdl-overview-column") or "").lower()
                         htxt = hc.get_text(strip=True).lower()
-                        if any(k in htxt for k in ["due", "استحقاق", "موعد", "تاريخ", "close", "إغلاق", "انتهاء"]):
+                        if col_key == "name" or any(k in htxt for k in ["name", "الاسم", "النشاط"]):
+                            name_col_idx = idx
+                        elif col_key in ("duedate", "allowsubmissionsfromdate", "closedate", "timeclose") or any(
+                            k in htxt for k in ["due", "استحقاق", "موعد", "تاريخ", "close", "إغلاق", "انتهاء"]
+                        ):
                             due_col_idx = idx
-                        elif any(k in htxt for k in ["status", "submission", "تسليم", "محاولة"]):
+                        elif col_key in ("submissionstatus", "status", "attempts") or any(
+                            k in htxt for k in ["status", "submission", "تسليم", "محاولة"]
+                        ):
                             sub_col_idx = idx
-                        elif any(k in htxt for k in ["grade", "درجة", "علامة", "تقييم"]):
+                        elif col_key == "grade" or any(k in htxt for k in ["grade", "درجة", "علامة", "تقييم"]):
                             grade_col_idx = idx
 
                 rows = all_rows[1:]
@@ -692,64 +927,89 @@ class LMSScraper:
                     if not cells:
                         continue
 
-                    link = row.find("a", href=re.compile(
-                        rf"/mod/{mod_type}/view\.php\?id=\d+"
-                    ))
+                    link = (
+                        row.find("a", class_=re.compile(r"activityname")) or
+                        row.find("a", href=re.compile(rf"/mod/{mod_type}/view\.php\?id=\d+"))
+                    )
                     if not link:
                         continue
 
-                    href = link.get("href", "")
-                    if not href.startswith("http"):
-                        href = LMS_BASE_URL + href
+                    href = self._clean_url(link.get("href", ""))
+                    if f"/mod/{mod_type}/" not in href:
+                        continue
 
                     id_match = re.search(r"id=(\d+)", href)
-                    activity_id = id_match.group(1) if id_match else href
+                    activity_id = row.get("data-mdl-overview-cmid") or (id_match.group(1) if id_match else href)
 
+                    # In Moodle 5.x overview tables, data-mdl-overview-value on the name cell holds the exact clean name
+                    name_cell = row.find(["td", "th"], attrs={"data-mdl-overview-item": "name"})
                     name = self._clean_link_text(link)
+                    if not name and name_cell and name_cell.get("data-mdl-overview-value"):
+                        name = str(name_cell.get("data-mdl-overview-value")).strip()
 
                     due_date = ""
                     is_submitted = False
                     submission_text = ""
 
-                    # Extract from mapped columns first if headers were detected
-                    if due_col_idx is not None and due_col_idx < len(cells):
-                        d_txt = cells[due_col_idx].get_text(strip=True)
+                    # 1. Moodle 5.x structured data-mdl-overview-item cells
+                    due_cell = row.find(["td", "th"], attrs={"data-mdl-overview-item": re.compile(r"duedate|close", re.I)})
+                    if due_cell:
+                        ov_val = (due_cell.get("data-mdl-overview-value") or "").strip()
+                        d_txt = due_cell.get_text(" ", strip=True)
+                        if ov_val and re.fullmatch(r"\d{9,11}", ov_val) and int(ov_val) > 1_000_000_000:
+                            due_date = self._normalize_due_date_year(ov_val)
+                        elif d_txt and d_txt not in ("-", "—"):
+                            due_date = self._normalize_due_date_year(d_txt)
+                    elif due_col_idx is not None and due_col_idx < len(cells):
+                        d_txt = cells[due_col_idx].get_text(" ", strip=True)
                         if d_txt and d_txt not in ("-", "—"):
-                            due_date = d_txt
+                            due_date = self._normalize_due_date_year(d_txt)
 
-                    if sub_col_idx is not None and sub_col_idx < len(cells):
-                        s_txt = cells[sub_col_idx].get_text(strip=True)
+                    sub_cell = row.find(["td", "th"], attrs={"data-mdl-overview-item": re.compile(r"submission|status", re.I)})
+                    if not sub_cell and sub_col_idx is not None and sub_col_idx < len(cells):
+                        sub_cell = cells[sub_col_idx]
+                    if sub_cell:
+                        s_txt = sub_cell.get_text(" ", strip=True)
                         if s_txt and s_txt not in ("-", "—"):
                             submission_text = s_txt
-                            if re.search(r"submitted for grading|تم تسليمها للتقييم|تم التسليم|submitted|مسلّمة|مسلّم|graded|تم التقييم", s_txt, re.I):
+                            if re.search(r"submitted for grading|تم تسليمها للتقييم|تم التسليم|submitted|مسلّمة|مسلّم|graded|تم التقييم|finished|منتهية", s_txt, re.I):
                                 is_submitted = True
+                            elif re.search(r"no submissions? have been made|no attempt|لا توجد محاولة|لم تسلم|لم يتم تقديم|not submitted|draft|مسودة", s_txt, re.I):
+                                is_submitted = False
 
-                    if grade_col_idx is not None and grade_col_idx < len(cells):
-                        g_txt = cells[grade_col_idx].get_text(strip=True)
+                    grade_cell = row.find(["td", "th"], attrs={"data-mdl-overview-item": "grade"})
+                    if not grade_cell and grade_col_idx is not None and grade_col_idx < len(cells):
+                        grade_cell = cells[grade_col_idx]
+                    if grade_cell:
+                        g_txt = grade_cell.get_text(" ", strip=True)
                         if g_txt and g_txt not in ("-", "—", "Empty", "فارغ") and any(ch.isdigit() for ch in g_txt):
                             is_submitted = True
                             if not submission_text:
                                 submission_text = f"تم التقييم ({g_txt})"
 
+                    # 2. Fallback cell scan (strictly excluding the name/section cell & grade cell)
                     for idx, cell in enumerate(cells):
-                        # Never mistake the activity name cell or the grade cell for due_date
+                        if cell.get("data-mdl-overview-item") in ("name", "grade"):
+                            continue
+                        if name_col_idx is not None and idx == name_col_idx:
+                            continue
                         if link in cell.descendants or cell == link.parent:
                             continue
                         if grade_col_idx is not None and idx == grade_col_idx:
                             continue
 
-                        cell_txt = cell.get_text(strip=True)
+                        cell_txt = cell.get_text(" ", strip=True)
                         if not cell_txt or cell_txt in ("-", "—"):
                             continue
 
                         if re.search(r"submitted for grading|تم تسليمها للتقييم|تم التسليم|submitted|مسلّمة", cell_txt, re.I):
                             is_submitted = True
                             submission_text = cell_txt
-                        elif re.search(r"no attempt|لا توجد محاولة|لم تسلم|not submitted|draft|مسودة", cell_txt, re.I):
+                        elif re.search(r"no submissions? have been made|no attempt|لا توجد محاولة|لم تسلم|لم يتم تقديم|not submitted|draft|مسودة", cell_txt, re.I):
                             is_submitted = False
                             submission_text = cell_txt
                         elif not due_date and self._looks_like_date(cell_txt):
-                            due_date = cell_txt
+                            due_date = self._normalize_due_date_year(cell_txt)
 
                     activities.append({
                         "id": f"{mod_type}_{activity_id}",
@@ -767,9 +1027,7 @@ class LMSScraper:
                 for a in soup.find_all("a", href=re.compile(
                     rf"/mod/{mod_type}/view\.php\?id=\d+"
                 )):
-                    href = a.get("href", "")
-                    if not href.startswith("http"):
-                        href = LMS_BASE_URL + href
+                    href = self._clean_url(a.get("href", ""))
                     id_match = re.search(r"id=(\d+)", href)
                     activity_id = id_match.group(1) if id_match else href
                     full_id = f"{mod_type}_{activity_id}"
@@ -791,6 +1049,8 @@ class LMSScraper:
 
             logger.debug(f"المادة {course_id} | {mod_type}: {len(activities)} نشاط")
 
+        except (LMSAuthError, LMSWafError):
+            self.last_fetch_ok = False
         except Exception as e:
             self.last_fetch_ok = False
             logger.error(f"خطأ في جلب {mod_type} للمادة {course_id}: {e}")
@@ -822,15 +1082,16 @@ class LMSScraper:
 
             seen = set()
             for a in soup.find_all("a", href=re.compile(combined)):
-                href = a.get("href", "")
-                if not href.startswith("http"):
-                    href = LMS_BASE_URL + href
+                raw_href = a.get("href", "")
+                if not raw_href.startswith("http"):
+                    raw_href = LMS_BASE_URL + raw_href
+                clean_href = self._clean_url(raw_href)
 
-                id_match = re.search(r"id=(\d+)", href)
+                id_match = re.search(r"id=(\d+)", clean_href)
                 if not id_match:
                     continue
 
-                type_match = re.search(r"/mod/(\w+)/", href)
+                type_match = re.search(r"/mod/(\w+)/", clean_href)
                 mod_type = type_match.group(1) if type_match else "resource"
 
                 activity_id = f"{mod_type}_{id_match.group(1)}"
@@ -843,7 +1104,8 @@ class LMSScraper:
                 resources.append({
                     "id": activity_id,
                     "name": name or f"مورد #{id_match.group(1)}",
-                    "url": href,
+                    "url": clean_href,
+                    "raw_url": raw_href,
                     "type": mod_type,
                     "course_id": course_id,
                     "due_date": "",
@@ -851,6 +1113,8 @@ class LMSScraper:
 
             logger.debug(f"المادة {course_id} | resources: {len(resources)} مورد")
 
+        except (LMSAuthError, LMSWafError):
+            self.last_fetch_ok = False
         except Exception as e:
             self.last_fetch_ok = False
             logger.error(f"خطأ في جلب موارد المادة {course_id}: {e}")
@@ -878,10 +1142,9 @@ class LMSScraper:
                 soup.find("title")
             )
             if title_el:
-                course_name = title_el.get_text(strip=True)
-                course_name = course_name.split("|")[0].split(":")[0 if course_name.lower().startswith("course") else 0].strip()
-                if ":" in title_el.get_text(strip=True) and len(course_name) < 4:
-                    course_name = title_el.get_text(strip=True).split("|")[0].strip()
+                raw_title = title_el.get_text(" ", strip=True)
+                course_name = raw_title.split("|")[0].strip()
+                course_name = re.sub(r"^(?:Course|المقرر|المادة)\s*:\s*", "", course_name, flags=re.I).strip()
 
             if not course_name:
                 crumb = soup.find(class_=re.compile(r"breadcrumb"))
@@ -895,6 +1158,9 @@ class LMSScraper:
 
             content = self.get_course_content(course_id, course_soup=soup)
 
+        except (LMSAuthError, LMSWafError):
+            self.last_fetch_ok = False
+            return None, content
         except Exception as e:
             self.last_fetch_ok = False
             logger.error(f"get_course_info error for {course_id}: {e}")
@@ -946,7 +1212,7 @@ class LMSScraper:
                     result["status_text"] = val
                     if any(k in val_lower for k in ["submitted for grading", "تم تسليمها للتقييم", "تم التسليم", "submitted", "مسلّمة"]):
                         result["is_submitted"] = True
-                    elif any(k in val_lower for k in ["no attempt", "لا توجد محاولة", "لم تسلم"]):
+                    elif any(k in val_lower for k in ["no submissions have been made", "no submission", "no attempt", "لا توجد محاولة", "لم تسلم", "لم يتم تقديم"]):
                         result["is_submitted"] = False
 
                 elif any(k in header for k in ["due date", "تاريخ الاستحقاق", "موعد التسليم", "يُسلَّم"]):
@@ -1035,10 +1301,10 @@ class LMSScraper:
                         result["is_submitted"] = True
                         result["status_text"] = "تم التقييم"
 
-            # 3. Check Moodle 4.x completion badge on the quiz page itself
+            # 3. Check Moodle 4.x/5.x completion badge on the quiz page itself
             if not result["is_submitted"]:
                 comp = soup.find(attrs={"data-region": "completion-info"})
-                if comp and comp.find(class_=re.compile(r"btn-success|bg-success|badge-success")):
+                if comp and comp.find(class_=re.compile(r"btn-success|bg-success|badge-success|alert-success|text-bg-success")):
                     result["is_submitted"] = True
                     result["status_text"] = "مكتمل"
 
@@ -1069,16 +1335,29 @@ class LMSScraper:
             logger.debug(f"Error checking quiz status at {url}: {e}")
         return result
 
-    def download_resource(self, url: str, max_mb: int = 40) -> Optional[tuple]:
+    def download_resource(self, url: str, max_mb: int = 40, raw_url: Optional[str] = None) -> Optional[tuple]:
         """Download a resource file from Moodle safely.
-        
+
+        Tries raw_url (with same-session NetScaler __ncforminfo if present) first, then falls back to url.
         Returns:
             Tuple[str, bytes] -> (filename, file_content_bytes) if successful, None otherwise.
         """
         try:
-            resp = self.authenticated_get(url, timeout=30, stream=True, allow_redirects=True)
-            if resp.status_code != 200:
-                logger.warning(f"Resource download returned {resp.status_code} for {url}")
+            candidates = []
+            if raw_url and raw_url != url:
+                candidates.append(raw_url)
+            candidates.append(url)
+
+            resp = None
+            for cand in candidates:
+                r = self.authenticated_get(cand, timeout=30, stream=True, allow_redirects=True)
+                if r.status_code == 200:
+                    resp = r
+                    break
+                logger.debug(f"Resource candidate returned {r.status_code} for {cand}")
+
+            if resp is None:
+                logger.warning(f"Resource download failed for {url}")
                 return None
 
             content_type = resp.headers.get("Content-Type", "").lower()
@@ -1233,9 +1512,7 @@ class LMSScraper:
                 item_url = ""
                 item_id = ""
                 if link:
-                    href = link.get("href", "")
-                    if not href.startswith("http"):
-                        href = LMS_BASE_URL + href
+                    href = self._clean_url(link.get("href", ""))
                     item_url = href
                     m = re.search(r"id=(\d+)", href)
                     if m:
@@ -1355,9 +1632,7 @@ class LMSScraper:
                         d_link = tr.find("a", href=re.compile(r"/mod/forum/discuss\.php\?d=\d+"))
                         if not d_link:
                             continue
-                        d_href = d_link.get("href", "")
-                        if not d_href.startswith("http"):
-                            d_href = LMS_BASE_URL + d_href
+                        d_href = self._clean_url(d_link.get("href", ""))
                         dm = re.search(r"d=(\d+)", d_href)
                         if not dm:
                             continue
@@ -1389,11 +1664,10 @@ class LMSScraper:
 
                     # Fallback for any discuss.php links outside tr.discussion
                     for d_link in f_soup.find_all("a", href=re.compile(r"/mod/forum/discuss\.php\?d=\d+")):
-                        d_href = d_link.get("href", "")
-                        if "#" in d_href:
+                        raw_d = d_link.get("href", "")
+                        if "#" in raw_d:
                             continue
-                        if not d_href.startswith("http"):
-                            d_href = LMS_BASE_URL + d_href
+                        d_href = self._clean_url(raw_d)
                         dm = re.search(r"d=(\d+)", d_href)
                         if not dm:
                             continue
@@ -1470,10 +1744,8 @@ class LMSScraper:
             att_links: List[Tuple[str, str, str]] = []
             seen_cmids = set()
             for a in soup.find_all("a", href=re.compile(r"/mod/attendance/view\.php\?id=\d+")):
-                href = a.get("href", "")
-                if not href.startswith("http"):
-                    href = LMS_BASE_URL + href
-                m = re.search(r"id=(\d+)", href)
+                clean_href = self._clean_url(a.get("href", ""))
+                m = re.search(r"id=(\d+)", clean_href)
                 if not m:
                     continue
                 cmid = m.group(1)
@@ -1481,13 +1753,12 @@ class LMSScraper:
                     continue
                 seen_cmids.add(cmid)
                 title = self._clean_link_text(a) or "Attendance"
-                att_links.append((cmid, title, href))
+                att_links.append((cmid, title, clean_href))
 
             for cmid, title, base_url in att_links:
                 try:
                     # view=5 forces Moodle Attendance to display all sessions in the semester
-                    sep = "&" if "?" in base_url else "?"
-                    full_url = f"{base_url}{sep}view=5"
+                    full_url = f"{LMS_BASE_URL}/mod/attendance/view.php?id={cmid}&view=5"
                     r = self.authenticated_get(full_url, timeout=20)
                     if r.status_code != 200 or "/login/" in r.url:
                         continue

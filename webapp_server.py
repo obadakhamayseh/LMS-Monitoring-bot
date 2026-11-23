@@ -640,11 +640,15 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                         return cid, {}
 
                 if courses_list:
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(courses_list))) as pool:
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=min(2, len(courses_list))) as pool:
                         sync_results = list(pool.map(_fetch_sync_course, courses_list))
                     for cid, content in sync_results:
                         if content:
                             _persist_course_content(cid, content)
+
+                if scraper.waf_blocked:
+                    self._send_json({"success": False, "error": "جدار حماية موقع الجامعة طلب تحققاً أمنياً مؤقتاً؛ حاول مجدداً بعد عدة دقائق"}, 429)
+                    return
 
                 db.update_last_check(tid)
                 db.append_sync_log(tid, "استيراد المقررات", f"تم جلب ومزامنة {added} مقررات من LMS")
@@ -718,9 +722,13 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                         logger.warning(f"Error fetching course {cid} in force-check: {e}")
                         return cid, {}
 
-                max_w = min(4, len(courses))
+                max_w = min(2, len(courses))
                 with concurrent.futures.ThreadPoolExecutor(max_workers=max_w) as pool:
                     course_results = list(pool.map(_fetch_single_course, courses))
+
+                if scraper.waf_blocked:
+                    self._send_json({"success": False, "error": "جدار حماية موقع الجامعة طلب تحققاً أمنياً مؤقتاً؛ حاول مجدداً بعد عدة دقائق"}, 429)
+                    return
 
                 for cid, content in course_results:
                     if not content:

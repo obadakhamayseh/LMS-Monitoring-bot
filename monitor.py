@@ -56,8 +56,10 @@ class MonitorEngine:
         self._check_slots = asyncio.Semaphore(5)
         self._auth_required = set()
         self._auth_alerted = set()
+        self._waf_backoff_until = {}  # tid -> monotonic timestamp
         self._course_cache = {}  # course_id -> (timestamp, content)
         self.COURSE_CACHE_TTL = 300  # 5 minutes shared cache TTL
+        self.WAF_BACKOFF_SECONDS = 900  # 15 minutes polite cooldown if WAF triggers
 
     async def start(self):
         if self._running:
@@ -118,11 +120,19 @@ class MonitorEngine:
                 await self._notify_auth_stopped(tid)
                 return
 
+            backoff_until = self._waf_backoff_until.get(tid, 0.0)
+            if time.monotonic() < backoff_until:
+                return
+
             scraper = self._get_session(user)
             loop = asyncio.get_running_loop()
             if not scraper.logged_in:
                 ok = await loop.run_in_executor(None, scraper.login)
                 if not ok:
+                    if scraper.waf_blocked:
+                        logger.warning(f"WAF challenge during login for {tid}; pausing checks for {self.WAF_BACKOFF_SECONDS}s")
+                        self._waf_backoff_until[tid] = time.monotonic() + self.WAF_BACKOFF_SECONDS
+                        return
                     logger.warning(f"Login failed for {tid}: {scraper.error_message}")
                     self._auth_required.add(tid)
                     await self._notify_auth_stopped(
@@ -135,11 +145,21 @@ class MonitorEngine:
             due = True
             last_check = user.get("last_check")
             if last_check:
-                from datetime import datetime
+                from datetime import datetime, timezone
                 try:
-                    last_dt = datetime.strptime(last_check, "%Y-%m-%d %H:%M:%S")
-                    elapsed = (datetime.now() - last_dt).total_seconds()
-                    due = elapsed >= max(1, int(user.get("check_interval", 5))) * 60
+                    if isinstance(last_check, datetime):
+                        last_dt = last_check
+                    else:
+                        lc_str = str(last_check).strip()
+                        try:
+                            last_dt = datetime.fromisoformat(lc_str.replace("Z", "+00:00"))
+                        except ValueError:
+                            last_dt = datetime.strptime(lc_str[:19], "%Y-%m-%d %H:%M:%S")
+                    if last_dt.tzinfo is not None:
+                        elapsed = (datetime.now(timezone.utc) - last_dt.astimezone(timezone.utc)).total_seconds()
+                    else:
+                        elapsed = (datetime.now() - last_dt).total_seconds()
+                    due = elapsed >= max(1, int(user.get("check_interval", 10))) * 60
                 except (TypeError, ValueError):
                     due = True
 
@@ -149,6 +169,9 @@ class MonitorEngine:
                     ok = await loop.run_in_executor(None, scraper.keep_session_alive)
                     if not ok:
                         logger.warning(f"LMS session keepalive failed for {tid}")
+                    if scraper.waf_blocked:
+                        self._waf_backoff_until[tid] = time.monotonic() + self.WAF_BACKOFF_SECONDS
+                        return
                     if scraper.session_expired:
                         self._auth_required.add(tid)
                         await self._notify_auth_stopped(tid)
@@ -156,6 +179,10 @@ class MonitorEngine:
 
             logger.info(f"Checking user {tid}")
             count, complete = await self._scan_user(user, courses, scraper)
+            if scraper.waf_blocked:
+                logger.warning(f"WAF challenge during scan for {tid}; pausing checks for {self.WAF_BACKOFF_SECONDS}s")
+                self._waf_backoff_until[tid] = time.monotonic() + self.WAF_BACKOFF_SECONDS
+                return
             if scraper.session_expired:
                 self._auth_required.add(tid)
                 await self._notify_auth_stopped(tid)
@@ -238,11 +265,11 @@ class MonitorEngine:
         complete = True
         events = []
 
-        sem = asyncio.Semaphore(4)
+        sem = asyncio.Semaphore(2)
 
         async def _check_course_safe(course):
             async with sem:
-                if scraper.session_expired:
+                if scraper.session_expired or scraper.waf_blocked:
                     return [], False
                 try:
                     return await self._check_course(
@@ -274,7 +301,8 @@ class MonitorEngine:
                     for res_ev in new_resources[:3]:
                         try:
                             file_info = await loop.run_in_executor(
-                                None, scraper.download_resource, res_ev["url"]
+                                None,
+                                lambda u=res_ev["url"], ru=res_ev.get("raw_url"): scraper.download_resource(u, raw_url=ru),
                             )
                             if file_info:
                                 filename, file_bytes = file_info
@@ -606,6 +634,7 @@ class MonitorEngine:
             "content_type": content_type,
             "name": name,
             "url": url,
+            "raw_url": item.get("raw_url", ""),
             "due": due,
             "is_submitted": is_sub_val,
             "is_new": is_new,
@@ -744,12 +773,18 @@ class MonitorEngine:
             if not scraper.logged_in:
                 ok = await loop.run_in_executor(None, scraper.login)
                 if not ok:
+                    if scraper.waf_blocked:
+                        self._waf_backoff_until[tid] = time.monotonic() + self.WAF_BACKOFF_SECONDS
+                        return 0, scraper.error_message or "جدار حماية موقع الجامعة طلب تحققاً أمنياً مؤقتاً؛ حاول بعد عدة دقائق"
                     return 0, "فشل تسجيل الدخول إلى LMS"
             self._auth_alerted.discard(tid)
             # Invalidate course cache for this user's courses to ensure fresh data
             for c in courses:
                 self._course_cache.pop((tid, c["course_id"]), None)
             count, complete = await self._scan_user(user, courses, scraper, bypass_cache=True)
+            if scraper.waf_blocked:
+                self._waf_backoff_until[tid] = time.monotonic() + self.WAF_BACKOFF_SECONDS
+                return count, "جدار حماية موقع الجامعة طلب تحققاً أمنياً مؤقتاً؛ تم إيقاف الفحص مؤقتاً"
             if scraper.session_expired:
                 self._auth_required.add(tid)
                 await self._notify_auth_stopped(tid)

@@ -478,6 +478,15 @@ function parseAnyDate(val, tsFallback) {
   if (!s || s === 'لم يتم بعد' || s === 'حديثاً' || s === 'مرصود' || s === '—') return null;
   s = s.replace(/^(Due|Closes|Closed|Opened|Opens)\s*:\s*/i, '').trim();
 
+  // Moodle 5.x yearless dates like "Saturday, 28 November, 11:59 PM" default to year 2001 in V8 unless we inject the year
+  if (!/\b20\d{2}\b/.test(s)) {
+    const ym = s.match(/(\b\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b)/i);
+    if (ym) {
+      const nowY = new Date().getFullYear();
+      s = s.slice(0, ym.index + ym[0].length) + ' ' + nowY + s.slice(ym.index + ym[0].length);
+    }
+  }
+
   // Try standard parse
   let d = new Date(s);
   if (!isNaN(d.getTime())) return d;
