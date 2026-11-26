@@ -306,6 +306,19 @@ class LMSScraper:
             return False
         return LMSScraper._is_waf_challenge_text(resp.text or "")
 
+    @classmethod
+    def _is_waf_response(cls, resp) -> bool:
+        """Detect WAF CAPTCHA challenge on any non-binary HTTP response (even without HTML Content-Type)."""
+        if resp is None:
+            return False
+        ctype = cls._response_content_type(resp)
+        if ctype and any(
+            b in ctype
+            for b in ("application/pdf", "application/octet-stream", "image/", "audio/", "video/", "application/zip", "application/vnd.")
+        ):
+            return False
+        return cls._is_waf_challenge(resp)
+
     @staticmethod
     def _extract_moodle_cfg(html_text: str) -> Dict[str, Any]:
         """Extract Moodle's embedded M.cfg JSON object (Moodle 4.x/5.x)."""
@@ -321,10 +334,9 @@ class LMSScraper:
             return {}
 
     @staticmethod
-    def _is_login_html(html_text: str) -> bool:
-        if not html_text:
+    def _is_login_soup(soup: Optional[BeautifulSoup]) -> bool:
+        if soup is None:
             return False
-        soup = BeautifulSoup(html_text, "lxml")
         body = soup.find("body")
         if body and "notloggedin" in body.get("class", []):
             return True
@@ -333,10 +345,31 @@ class LMSScraper:
         )
         return bool(login_form and login_form.find("input", {"name": "username"}))
 
+    @classmethod
+    def _is_login_html(cls, html_text: str) -> bool:
+        if not html_text:
+            return False
+        return cls._is_login_soup(BeautifulSoup(html_text, "lxml"))
+
+    @staticmethod
+    def _soup_from_response(resp) -> BeautifulSoup:
+        """Parse an HTTP response's HTML with BeautifulSoup at most once and cache on the response."""
+        cached = getattr(resp, "_parsed_soup", None)
+        if cached is not None:
+            return cached
+        soup = BeautifulSoup(resp.text, "lxml")
+        try:
+            setattr(resp, "_parsed_soup", soup)
+        except Exception:
+            pass
+        return soup
+
     def _is_login_response(self, resp) -> bool:
         if "/login/index.php" in (getattr(resp, "url", "") or "").lower():
             return True
-        return self._is_login_html(resp.text)
+        if not (getattr(resp, "text", None) or ""):
+            return False
+        return self._is_login_soup(self._soup_from_response(resp))
 
     @staticmethod
     def _response_content_type(resp) -> str:
@@ -402,7 +435,7 @@ class LMSScraper:
             _close_response(resp)
             raise ValueError(f"HTML response exceeds inspection limit ({cl_bytes} bytes)")
 
-        if self._is_waf_challenge(resp):
+        if self._is_waf_response(resp):
             _close_response(resp)
             logger.warning("University WAF CAPTCHA challenge encountered; backing off immediately")
             self.http.trigger_waf_cooldown()
@@ -423,6 +456,59 @@ class LMSScraper:
                 self.session_expired = True
                 self.last_fetch_ok = False
         raise LMSAuthError("انتهت جلسة LMS؛ يرجى تسجيل الدخول مجدداً من البوت")
+
+    def authenticated_post(self, url: str, timeout: int = 30, **kwargs):
+        """Send an authenticated POST (e.g. Moodle AJAX) through LMSHttpClient with WAF & auth checks."""
+        suppress = self._suppress_legacy_state()
+        if (not suppress and self.waf_blocked) or self.http.waf_cooldown_active:
+            if not suppress:
+                with self._state_lock:
+                    self.last_fetch_ok = False
+            raise LMSWafError("جدار حماية موقع الجامعة طلب تحققاً أمنياً مؤقتاً؛ تم إيقاف الفحص مؤقتاً لتجنب الحظر")
+
+        _assert_allowed_url(url)
+        resp = self.http.post(url, timeout=timeout, **kwargs)
+
+        final_url = getattr(resp, "url", None)
+        if isinstance(final_url, str) and final_url:
+            try:
+                _assert_allowed_url(final_url)
+            except ValueError:
+                _close_response(resp)
+                raise
+
+        if "/login/index.php" in (final_url or "").lower():
+            _close_response(resp)
+            logger.info("LMS session expired on POST (login redirect); waiting for re-authentication")
+            if not suppress:
+                with self._state_lock:
+                    self.logged_in = False
+                    self.session_expired = True
+                    self.last_fetch_ok = False
+            raise LMSAuthError("انتهت جلسة LMS؛ يرجى تسجيل الدخول مجدداً من البوت")
+
+        if self._is_waf_response(resp):
+            _close_response(resp)
+            logger.warning("University WAF CAPTCHA challenge encountered on POST/AJAX; backing off immediately")
+            self.http.trigger_waf_cooldown()
+            if not suppress:
+                with self._state_lock:
+                    self.waf_blocked = True
+                    self.last_fetch_ok = False
+            raise LMSWafError("جدار حماية موقع الجامعة طلب تحققاً أمنياً (CAPTCHA)؛ تم التوقف مؤقتاً")
+
+        ctype = self._response_content_type(resp)
+        if ("text/html" in ctype or "application/xhtml" in ctype) and self._is_login_response(resp):
+            _close_response(resp)
+            logger.info("LMS session expired on POST; waiting for re-authentication")
+            if not suppress:
+                with self._state_lock:
+                    self.logged_in = False
+                    self.session_expired = True
+                    self.last_fetch_ok = False
+            raise LMSAuthError("انتهت جلسة LMS؛ يرجى تسجيل الدخول مجدداً من البوت")
+
+        return resp
 
     def keep_session_alive(self) -> bool:
         """Make a lightweight authenticated request to keep an active monitor session warm."""
@@ -752,7 +838,7 @@ class LMSScraper:
             else:
                 self.full_name = raw_name.strip()
 
-    def get_courses(self) -> List[Dict[str, Any]]:
+    def get_courses(self, *, raise_auth_errors: bool = False) -> List[Dict[str, Any]]:
         if not self.logged_in:
             logger.warning("لم يتم تسجيل الدخول")
             return []
@@ -764,15 +850,19 @@ class LMSScraper:
         resp = None
         try:
             resp = self.authenticated_get(f"{LMS_BASE_URL}/my/courses.php", timeout=30)
-            soup = BeautifulSoup(resp.text, "lxml")
+            soup = self._soup_from_response(resp)
             self._extract_sesskey(soup)
             self._extract_courses_from_soup(soup, courses, seen_ids)
+        except (LMSWafError, LMSAuthError):
+            if raise_auth_errors:
+                raise
+            return courses
         except Exception as e:
             logger.error(f"خطأ في صفحة My Courses: {e}")
         finally:
             _close_response(resp)
 
-        # 2. Moodle 4.x AJAX WebService (loads courses rendered dynamically by block_myoverview)
+        # 2. Moodle 4.x/5.x AJAX WebService (routes through self.http via authenticated_post with WAF & auth checks)
         if self.sesskey:
             for classification in ("all", "inprogress", "All"):
                 ajax_resp = None
@@ -793,14 +883,7 @@ class LMSScraper:
                             "customfieldvalue": "",
                         },
                     }]
-                    ajax_resp = self.http.post(ajax_url, json=payload, timeout=20)
-                    ctype = self._response_content_type(ajax_resp)
-                    if ("text/html" in ctype or "application/xhtml" in ctype) and self._is_waf_challenge(ajax_resp):
-                        self.http.trigger_waf_cooldown()
-                        with self._state_lock:
-                            self.waf_blocked = True
-                        logger.warning("WAF CAPTCHA challenge on AJAX course fetch")
-                        break
+                    ajax_resp = self.authenticated_post(ajax_url, json=payload, timeout=20)
                     if ajax_resp.status_code == 200:
                         data = ajax_resp.json()
                         if isinstance(data, list) and data and not data[0].get("error"):
@@ -819,6 +902,10 @@ class LMSScraper:
                                 })
                             if courses:
                                 break
+                except (LMSWafError, LMSAuthError):
+                    if raise_auth_errors:
+                        raise
+                    return courses
                 except Exception as e:
                     logger.debug(f"AJAX course fetch ({classification}) failed: {e}")
                 finally:
@@ -829,9 +916,13 @@ class LMSScraper:
             resp = None
             try:
                 resp = self.authenticated_get(f"{LMS_BASE_URL}/my/", timeout=30)
-                soup = BeautifulSoup(resp.text, "lxml")
+                soup = self._soup_from_response(resp)
                 self._extract_sesskey(soup)
                 self._extract_courses_from_soup(soup, courses, seen_ids)
+            except (LMSWafError, LMSAuthError):
+                if raise_auth_errors:
+                    raise
+                return courses
             except Exception as e:
                 logger.error(f"خطأ في Dashboard: {e}")
             finally:
@@ -846,8 +937,12 @@ class LMSScraper:
                     if self.user_id else f"{LMS_BASE_URL}/user/profile.php?showallcourses=1"
                 )
                 resp = self.authenticated_get(prof_url, timeout=30)
-                soup = BeautifulSoup(resp.text, "lxml")
+                soup = self._soup_from_response(resp)
                 self._extract_courses_from_soup(soup, courses, seen_ids)
+            except (LMSWafError, LMSAuthError):
+                if raise_auth_errors:
+                    raise
+                return courses
             except Exception as e:
                 logger.error(f"خطأ في صفحة User Profile Courses: {e}")
             finally:
@@ -1390,7 +1485,7 @@ class LMSScraper:
             if resp.status_code == 404:
                 return activities
             resp.raise_for_status()
-            soup = BeautifulSoup(resp.text, "lxml")
+            soup = self._soup_from_response(resp)
 
             # Support both Moodle 5.x (course-overview-table) and Moodle 3.x/4.x (generaltable)
             table = soup.find("table", class_=re.compile(r"course-overview-table|generaltable"))
@@ -1400,16 +1495,28 @@ class LMSScraper:
                 sub_col_idx = None
                 grade_col_idx = None
                 name_col_idx = None
+                excluded_date_col_idxs = set()
 
                 if all_rows:
                     header_cells = all_rows[0].find_all(["th", "td"])
                     for idx, hc in enumerate(header_cells):
                         col_key = (hc.get("data-mdl-overview-column") or "").lower()
-                        htxt = hc.get_text(strip=True).lower()
+                        htxt = hc.get_text(" ", strip=True).lower()
+                        # Never treat allowsubmissionsfromdate / open date columns as a due date!
+                        if col_key in ("allowsubmissionsfromdate", "timeopen", "opendate", "opened", "startdate") or any(
+                            k in htxt
+                            for k in (
+                                "allow submissions from", "allowsubmissionsfrom",
+                                "open date", "opened", "opens",
+                                "تاريخ الفتح", "يفتح", "السماح بالتسليم", "بداية التسليم", "وقت الفتح",
+                            )
+                        ):
+                            excluded_date_col_idxs.add(idx)
+                            continue
                         if col_key == "name" or any(k in htxt for k in ["name", "الاسم", "النشاط"]):
                             name_col_idx = idx
-                        elif col_key in ("duedate", "allowsubmissionsfromdate", "closedate", "timeclose") or any(
-                            k in htxt for k in ["due", "استحقاق", "موعد", "تاريخ", "close", "إغلاق", "انتهاء"]
+                        elif col_key in ("duedate", "closedate", "timeclose") or any(
+                            k in htxt for k in ["due", "deadline", "استحقاق", "موعد التسليم", "تاريخ التسليم", "close", "إغلاق", "انتهاء"]
                         ):
                             due_col_idx = idx
                         elif col_key in ("submissionstatus", "status", "attempts") or any(
@@ -1494,9 +1601,12 @@ class LMSScraper:
                             if not submission_text:
                                 submission_text = f"تم التقييم ({g_txt})"
 
-                    # 2. Fallback cell scan (strictly excluding the name/section cell & grade cell)
+                    # 2. Fallback cell scan (strictly excluding name, grade, sub, and open/allow-from date columns)
                     for idx, cell in enumerate(cells):
-                        if cell.get("data-mdl-overview-item") in ("name", "grade"):
+                        item_attr = (cell.get("data-mdl-overview-item") or "").lower()
+                        if item_attr in ("name", "grade", "allowsubmissionsfromdate", "timeopen", "opendate", "opened", "startdate"):
+                            continue
+                        if idx in excluded_date_col_idxs:
                             continue
                         if name_col_idx is not None and idx == name_col_idx:
                             continue
@@ -1599,7 +1709,7 @@ class LMSScraper:
             if soup is None:
                 resp = self.authenticated_get(url, timeout=30)
                 resp.raise_for_status()
-                soup = BeautifulSoup(resp.text, "lxml")
+                soup = self._soup_from_response(resp)
 
             resource_patterns = [
                 r"/mod/resource/view\.php\?id=\d+",
@@ -1681,7 +1791,7 @@ class LMSScraper:
             if resp.status_code == 404 or "login" in (getattr(resp, "url", "") or ""):
                 return None, content
 
-            soup = BeautifulSoup(resp.text, "lxml")
+            soup = self._soup_from_response(resp)
             _close_response(resp)
             resp = None
 
@@ -1725,7 +1835,7 @@ class LMSScraper:
         resp = None
         try:
             resp = self.authenticated_get(assignment_url, timeout=20)
-            soup = BeautifulSoup(resp.text, "lxml")
+            soup = self._soup_from_response(resp)
 
             for row in soup.find_all("tr"):
                 cells = row.find_all("td")
@@ -1754,7 +1864,7 @@ class LMSScraper:
             resp = self.authenticated_get(url, timeout=20)
             if resp.status_code != 200:
                 return result
-            soup = BeautifulSoup(resp.text, "lxml")
+            soup = self._soup_from_response(resp)
 
             for tr in soup.find_all("tr"):
                 th = tr.find(["th", "td"])
@@ -1884,7 +1994,7 @@ class LMSScraper:
             resp = self.authenticated_get(url, timeout=20)
             if resp.status_code != 200:
                 return result
-            soup = BeautifulSoup(resp.text, "lxml")
+            soup = self._soup_from_response(resp)
 
             # 1. Check all tables on the quiz page (handles quizreviewsummary cards & quizattemptsummary tables)
             # Note: Moodle shows BOTH 'Marks' (raw points, e.g. 5/5) AND 'Grade' (scaled grade, e.g. 10/10).
@@ -2063,11 +2173,10 @@ class LMSScraper:
                     self.http.trigger_waf_cooldown()
                     logger.warning("WAF CAPTCHA challenge on resource interstitial page")
                     return None
-                if self._is_login_html(html_text):
+                soup = BeautifulSoup(html_text, "lxml")
+                if self._is_login_soup(soup):
                     logger.info("Login page returned on resource interstitial page")
                     return None
-
-                soup = BeautifulSoup(html_text, "lxml")
                 file_link = (
                     soup.find("a", href=re.compile(r"/pluginfile\.php/|/mod_resource/content/")) or
                     soup.find("object", data=re.compile(r"/pluginfile\.php/|/mod_resource/content/")) or
@@ -2158,7 +2267,7 @@ class LMSScraper:
             resp = self.authenticated_get(url, timeout=25)
             if resp.status_code != 200:
                 return grades
-            soup = BeautifulSoup(resp.text, "lxml")
+            soup = self._soup_from_response(resp)
 
             table = (
                 soup.find("table", class_=re.compile(r"user-grade|generaltable")) or
@@ -2332,7 +2441,7 @@ class LMSScraper:
                 try:
                     resp = self.authenticated_get(idx_url, timeout=20)
                     if resp.status_code == 200:
-                        idx_soup = BeautifulSoup(resp.text, "lxml")
+                        idx_soup = self._soup_from_response(resp)
                         for a in idx_soup.find_all("a", href=re.compile(r"/mod/forum/view\.php\?id=\d+")):
                             href = a.get("href", "")
                             if not href.startswith("http"):
@@ -2353,7 +2462,7 @@ class LMSScraper:
                     f_resp = self.authenticated_get(f_url, timeout=20)
                     if f_resp.status_code != 200:
                         continue
-                    f_soup = BeautifulSoup(f_resp.text, "lxml")
+                    f_soup = self._soup_from_response(f_resp)
 
                     # Check discussion table rows first
                     for tr in f_soup.find_all("tr", class_=re.compile(r"discussion")):
@@ -2440,7 +2549,7 @@ class LMSScraper:
             resp = self.authenticated_get(discuss_url, timeout=20)
             if resp.status_code != 200:
                 return info
-            soup = BeautifulSoup(resp.text, "lxml")
+            soup = self._soup_from_response(resp)
 
             post_body = (
                 soup.find(class_=re.compile(r"post-content-container|posting|fullpost")) or
@@ -2462,6 +2571,53 @@ class LMSScraper:
         finally:
             _close_response(resp)
         return info
+
+    @staticmethod
+    def _parse_attendance_status_category(status_text: str) -> Optional[str]:
+        """Classify attendance status (full words, Arabic equivalents, and single-letter P/A/L/E)."""
+        if not status_text:
+            return None
+        cleaned = _ARABIC_DIACRITICS_RE.sub("", str(status_text))
+        cleaned = re.sub(r"\s+", " ", cleaned).strip().lower()
+        if not cleaned or cleaned in ("?", "-", "—") or cleaned.startswith("?"):
+            return None
+        first_tok = re.split(r"[\s(\[/\-–—]+", cleaned)[0]
+        if first_tok == "p" or any(k in cleaned for k in ("present", "حاضر", "موجود")):
+            return "present"
+        if first_tok == "a" or any(k in cleaned for k in ("absent", "غائب", "غياب")):
+            return "absent"
+        if first_tok == "l" or any(k in cleaned for k in ("late", "متأخر", "تأخير")):
+            return "late"
+        if first_tok == "e" or any(k in cleaned for k in ("excused", "معذور", "عذر")):
+            return "excused"
+        return None
+
+    @staticmethod
+    def _build_attendance_col_map(tbl) -> Tuple[Optional[Any], Dict[str, int]]:
+        """Build a dynamic header column index map for a Moodle Attendance session table."""
+        rows = tbl.find_all("tr")
+        for tr in rows:
+            cells = tr.find_all(["th", "td"])
+            if len(cells) < 2:
+                continue
+            col_map: Dict[str, int] = {}
+            for idx, cell in enumerate(cells):
+                htxt = _ARABIC_DIACRITICS_RE.sub("", cell.get_text(" ", strip=True)).lower()
+                if "date" not in col_map and any(k in htxt for k in ("date", "التاريخ", "تاريخ")):
+                    col_map["date"] = idx
+                elif "group" not in col_map and any(k in htxt for k in ("group", "المجموعة", "مجموعة", "الشعبة", "شعبة")):
+                    col_map["group"] = idx
+                elif "description" not in col_map and any(k in htxt for k in ("description", "الوصف", "وصف", "المحاضرة", "session")):
+                    col_map["description"] = idx
+                elif "status" not in col_map and any(k in htxt for k in ("status", "الحالة", "الوضع")):
+                    col_map["status"] = idx
+                elif "points" not in col_map and any(k in htxt for k in ("points", "النقاط", "نقاط", "grade", "الدرجة")):
+                    col_map["points"] = idx
+                elif "remarks" not in col_map and any(k in htxt for k in ("remarks", "ملاحظات", "تعليق", "comment")):
+                    col_map["remarks"] = idx
+            if "date" in col_map and "status" in col_map:
+                return tr, col_map
+        return None, {}
 
     def get_course_attendance(
         self,
@@ -2485,7 +2641,7 @@ class LMSScraper:
                     )
                     if resp.status_code != 200 or "/login/" in (getattr(resp, "url", "") or ""):
                         return attendance_records
-                    soup = BeautifulSoup(resp.text, "lxml")
+                    soup = self._soup_from_response(resp)
                 finally:
                     _close_response(resp)
 
@@ -2511,7 +2667,7 @@ class LMSScraper:
                     r = self.authenticated_get(full_url, timeout=20)
                     if r.status_code != 200 or "/login/" in (getattr(r, "url", "") or ""):
                         continue
-                    att_soup = BeautifulSoup(r.text, "lxml")
+                    att_soup = self._soup_from_response(r)
                     tables = att_soup.find_all("table")
 
                     sessions: List[Dict[str, str]] = []
@@ -2526,45 +2682,61 @@ class LMSScraper:
                     percentage_str = ""
 
                     for tbl in tables:
-                        headers = [th.get_text(" ", strip=True).lower() for th in tbl.find_all("th")]
-                        # Session list table has Date & Status columns
-                        if any("date" in h or "التاريخ" in h for h in headers) and any(
-                            "status" in h or "الحالة" in h or "الوضع" in h for h in headers
-                        ):
+                        header_tr, col_map = self._build_attendance_col_map(tbl)
+                        # Session list table has Date & Status columns mapped dynamically
+                        if header_tr is not None and col_map:
+                            date_idx = col_map["date"]
+                            status_idx = col_map["status"]
+                            desc_idx = col_map.get("description")
+                            points_idx = col_map.get("points")
+                            remarks_idx = col_map.get("remarks")
+                            group_idx = col_map.get("group")
+                            min_required = max(date_idx, status_idx) + 1
+
                             for tr in tbl.find_all("tr"):
-                                tds = [td.get_text(" ", strip=True) for td in tr.find_all("td")]
-                                if len(tds) < 3:
+                                if tr is header_tr:
                                     continue
-                                s_date = re.sub(r"\s+", " ", tds[0]).strip()
-                                s_desc = re.sub(r"\s+", " ", tds[1]).strip() if len(tds) > 1 else ""
-                                s_status = re.sub(r"\s+", " ", tds[2]).strip() if len(tds) > 2 else ""
-                                s_points = re.sub(r"\s+", " ", tds[3]).strip() if len(tds) > 3 else ""
-                                s_remarks = re.sub(r"\s+", " ", tds[4]).strip() if len(tds) > 4 else ""
+                                raw_cells = tr.find_all(["td", "th"])
+                                if not raw_cells or all(c.name == "th" for c in raw_cells):
+                                    continue
+                                cells = [re.sub(r"\s+", " ", c.get_text(" ", strip=True)).strip() for c in raw_cells]
+                                if len(cells) < min_required:
+                                    continue
+
+                                s_date = cells[date_idx]
+                                s_status = cells[status_idx]
+                                s_desc = cells[desc_idx] if (desc_idx is not None and desc_idx < len(cells)) else ""
+                                s_points = cells[points_idx] if (points_idx is not None and points_idx < len(cells)) else ""
+                                s_remarks = cells[remarks_idx] if (remarks_idx is not None and remarks_idx < len(cells)) else ""
+                                s_group = cells[group_idx] if (group_idx is not None and group_idx < len(cells)) else ""
 
                                 # Skip unrecorded future sessions (where status is '?' or empty)
                                 if not s_status or s_status in ("?", "-", "—") or s_status.startswith("?"):
                                     continue
-                                # Skip "Noiske" or empty table message rows
-                                if "no " in s_date.lower() and len(tds) < 4:
+                                # Skip empty-table placeholder message rows
+                                if "no " in s_date.lower() and len(cells) < 4:
                                     continue
 
-                                st_low = s_status.lower()
-                                if any(k in st_low for k in ("present", "حاضر", "موجود")):
+                                cat = self._parse_attendance_status_category(s_status)
+                                if cat == "present":
                                     present_count += 1
-                                elif any(k in st_low for k in ("absent", "غائب", "غياب")):
+                                elif cat == "absent":
                                     absent_count += 1
-                                elif any(k in st_low for k in ("late", "متأخر", "تأخير")):
+                                elif cat == "late":
                                     late_count += 1
-                                elif any(k in st_low for k in ("excused", "معذور", "عذر")):
+                                elif cat == "excused":
                                     excused_count += 1
 
-                                sessions.append({
+                                sess_rec = {
                                     "date": s_date,
                                     "description": s_desc,
                                     "status": s_status,
                                     "points": s_points,
                                     "remarks": s_remarks,
-                                })
+                                }
+                                if s_group:
+                                    sess_rec["group"] = s_group
+                                sessions.append(sess_rec)
                         else:
                             # Summary key-value table
                             for tr in tbl.find_all("tr"):

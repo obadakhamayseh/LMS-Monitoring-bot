@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#2457a7">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -14,7 +14,7 @@
 <title>دفتر الطالب | جامعة مؤتة</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
-<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://telegram.org/js/telegram-web-app.js" defer></script>
 <style>
 :root{--paper:#f4f7fb;--surface:#fff;--ink:#1e2d43;--muted:#718096;--line:#e3e9f2;--teal:#2457a7;--teal-pale:#eaf1fc;--amber:#a66a12;--amber-pale:#fff4df;--red:#b54746;--red-pale:#fceeed;--shadow:0 8px 24px rgba(37,65,110,.055)}
 *{box-sizing:border-box}
@@ -41,7 +41,7 @@ button{cursor:pointer}
 .btn-primary:hover{background:#1d488c}
 .btn-danger{background:var(--red-pale);border-color:#f3d2d1;color:var(--red)}
 .icon-btn{width:35px;height:35px;padding:0;font-size:17px;position:relative;display:inline-grid;place-items:center}
-.avatar{width:34px;height:34px;border-radius:50%;background:#e7eef9;color:#365b94;display:grid;place-items:center;font-weight:700;cursor:pointer;user-select:none}
+.avatar{border:0;width:34px;height:34px;border-radius:50%;background:#e7eef9;color:#365b94;display:grid;place-items:center;font-weight:700;cursor:pointer;user-select:none}
 .layout{display:grid;grid-template-columns:205px minmax(0,1fr);gap:29px;padding-top:23px;padding-bottom:65px}
 .side{position:sticky;top:90px;align-self:start;max-height:calc(100vh - 110px);overflow:auto}
 .side-label{font-size:10px;color:#9aa19e;letter-spacing:.06em;margin:4px 12px 9px}
@@ -195,27 +195,27 @@ button{cursor:pointer}
 </style>
 </head>
 <body>
-<div class="offline-bar" id="offlineBar">أنت غير متصل بالإنترنت — يتم عرض آخر بيانات تمت مزامنتها</div>
-<div class="pair-view" id="pairView">
+<div class="offline-bar" id="offlineBar" role="status" aria-live="polite">أنت غير متصل بالإنترنت — يتم عرض آخر بيانات تمت مزامنتها</div>
+<div class="pair-view" id="pairView" role="dialog" aria-modal="true" aria-labelledby="pairTitle" aria-hidden="true">
   <div class="pair-card">
     <div style="text-align:center">
       <img src="/logo.png" style="width:68px;height:68px;border-radius:18px;box-shadow:0 8px 24px rgba(36,87,167,0.22);display:inline-block;margin-bottom:12px;object-fit:cover" alt="شعار دفتر الطالب" data-img-fallback="hide">
     </div>
-    <h1>ربط هذا الجهاز بدفتر الطالب</h1>
+    <h1 id="pairTitle">ربط هذا الجهاز بدفتر الطالب</h1>
     <p>التطبيق خاص بصاحبه فقط. اربط هذا الهاتف مرة واحدة ثم يبقى مسجلاً حتى تفصله بنفسك. التنبيهات تستمر بالوصول عبر تيليجرام كالمعتاد.</p>
     <ol>
       <li>افتح بوت تيليجرام وأرسل الأمر <b>/app</b></li>
       <li>انسخ الرمز المكوّن من ٨ أرقام (صالح ١٠ دقائق)</li>
       <li>أدخله هنا واضغط «ربط الجهاز»</li>
     </ol>
-    <input class="field" id="pairCode" inputmode="numeric" autocomplete="one-time-code" maxlength="12" placeholder="00000000" data-keydown="submit-pair-code">
-    <div class="pair-err" id="pairErr"></div>
-    <button class="btn btn-primary" id="pairBtn" style="width:100%;padding:12px" data-action="submit-pair-code">ربط الجهاز</button>
+    <input class="field" id="pairCode" inputmode="numeric" autocomplete="one-time-code" maxlength="12" placeholder="00000000" aria-label="رمز ربط الجهاز" data-keydown="submit-pair-code">
+    <div class="pair-err" id="pairErr" role="alert" aria-live="assertive"></div>
+    <button type="button" class="btn btn-primary" id="pairBtn" style="width:100%;padding:12px" data-action="submit-pair-code">ربط الجهاز</button>
   </div>
 </div>
 <header class="top">
   <div class="shell top-inner">
-    <div class="brand" data-action="go" data-page="home">
+    <div class="brand" role="button" tabindex="0" aria-label="العودة إلى الصفحة الرئيسية" data-action="go" data-page="home">
       <img src="/logo.png" class="brand-logo" alt="شعار دفتر الطالب" data-img-fallback="next">
       <div class="mark" style="display:none">م</div>
       <div>
@@ -224,10 +224,10 @@ button{cursor:pointer}
       </div>
     </div>
     <div class="right-head">
-      <div class="sync" id="syncBox">● <b id="syncState">مزامنة نشطة</b> <span id="syncLong" class="sync-long">· آخر فحص <span id="syncWhen">الآن</span></span></div>
-      <button class="icon-btn" title="مركز الإشعارات" data-action="go" data-page="notifications">♧<sup id="bellCount" style="font-size:8px;color:#a14f49;font-weight:700"></sup></button>
-      <button class="icon-btn" id="btnSyncTop" title="مزامنة الآن من LMS" data-action="sync-now">↻</button>
-      <div class="avatar" id="userAvatar" title="الإعدادات والحساب" data-action="go" data-page="settings">ط</div>
+      <div class="sync" id="syncBox" aria-live="polite">● <b id="syncState">مزامنة نشطة</b> <span id="syncLong" class="sync-long">· آخر فحص <span id="syncWhen">الآن</span></span></div>
+      <button type="button" class="icon-btn" title="مركز الإشعارات" aria-label="مركز الإشعارات" data-action="go" data-page="notifications">♧<sup id="bellCount" style="font-size:8px;color:#a14f49;font-weight:700"></sup></button>
+      <button type="button" class="icon-btn" id="btnSyncTop" title="مزامنة الآن من LMS" aria-label="مزامنة الآن من LMS" data-action="sync-now">↻</button>
+      <button type="button" class="avatar" id="userAvatar" title="الإعدادات والحساب" aria-label="الإعدادات والحساب" data-action="go" data-page="settings">ط</button>
     </div>
   </div>
 </header>
@@ -235,7 +235,7 @@ button{cursor:pointer}
 <div class="shell layout">
   <aside class="side">
     <div class="side-label">مساحة الطالب</div>
-    <nav class="nav" id="sideNav"></nav>
+    <nav class="nav" id="sideNav" aria-label="التنقل الرئيسي"></nav>
     <div class="semester">
       <small>الفصل الدراسي</small>
       <strong>الأول · ٢٠٢٦ / ٢٠٢٧</strong>
@@ -247,74 +247,183 @@ button{cursor:pointer}
   </main>
 </div>
 
-<nav class="bottom" id="bottomNav"></nav>
-<div class="toast" id="toast"></div>
-<div class="modal-back" id="modalBack" data-action="close-modal-backdrop">
-  <div class="modal" id="modal"></div>
+<nav class="bottom" id="bottomNav" aria-label="التنقل السفلي"></nav>
+<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+<div class="modal-back" id="modalBack" role="dialog" aria-modal="true" aria-labelledby="modalTitle" aria-hidden="true" data-action="close-modal-backdrop">
+  <div class="modal" id="modal" tabindex="-1"></div>
 </div>
 
 <script>
-const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
-if (tg) {
+let _tgInited = false;
+function getTg() {
+  return (window.Telegram && window.Telegram.WebApp) ? window.Telegram.WebApp : null;
+}
+function isInTelegram() {
+  const curTg = getTg();
+  return Boolean(curTg && curTg.initData);
+}
+function initTelegramWebApp() {
+  if (_tgInited) return;
+  const curTg = getTg();
+  if (!curTg) return;
+  _tgInited = true;
   try {
-    tg.ready();
-    tg.expand();
-    if (tg.setHeaderColor) tg.setHeaderColor('#ffffff');
-    if (tg.setBackgroundColor) tg.setBackgroundColor('#f4f7fb');
+    curTg.ready();
+    curTg.expand();
+    if (curTg.setHeaderColor) curTg.setHeaderColor('#ffffff');
+    if (curTg.setBackgroundColor) curTg.setBackgroundColor('#f4f7fb');
   } catch (e) {}
 }
+initTelegramWebApp();
 
 function getTelegramId() {
-  if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.id) {
-    return String(tg.initDataUnsafe.user.id);
+  const curTg = getTg();
+  if (curTg && curTg.initDataUnsafe && curTg.initDataUnsafe.user && curTg.initDataUnsafe.user.id) {
+    return String(curTg.initDataUnsafe.user.id);
   }
   const p = new URLSearchParams(window.location.search);
   return p.get('tid') || '';
 }
 
-// ── Phone-app (PWA) support: device token, pairing, install, offline ──
-const APP_TOKEN_KEY = 'mutahAppToken';
-const getAppToken = () => { try { return localStorage.getItem(APP_TOKEN_KEY) || ''; } catch (e) { return ''; } };
-const inTelegram = !!(tg && tg.initData);
+// ── Phone-app (PWA) support: HttpOnly cookie + CSRF, pairing, install, offline ──
+const STORAGE_KEY = 'mutahStudentNotebook';
+const CHECK_INTERVAL_MIN = 5;
+const CHECK_INTERVAL_MAX = 1440;
+let isDeviceLinked = false;
 const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 
-const _nativeFetch = window.fetch.bind(window);
-window.fetch = function (input, init) {
-  const url = typeof input === 'string' ? input : (input && input.url) || '';
-  const isApi = url.startsWith('/api/');
-  if (isApi) {
-    init = init || {};
-    const h = new Headers(init.headers || {});
-    const t = getAppToken();
-    if (t) h.set('Authorization', 'Bearer ' + t);
-    // H1: pass Telegram initData exclusively via header, never in URL or JSON body
-    const initData = (tg && tg.initData) ? String(tg.initData) : '';
-    if (initData) h.set('X-Telegram-Init-Data', initData);
-    init.headers = h;
-  }
-  return _nativeFetch(input, init).then(res => {
-    if (isApi && res.status === 401 && !url.startsWith('/api/pair')) {
-      res.clone().json().then(d => { if (d && d.auth_required) showPairing(); }).catch((err) => { console.warn('Failed to parse 401 response:', err); });
+function getCookie(name) {
+  try {
+    const raw = (typeof document !== 'undefined' && typeof document.cookie === 'string') ? document.cookie : '';
+    if (!raw) return '';
+    const prefix = name + '=';
+    for (const part of raw.split(';')) {
+      const trimmed = part.trim();
+      if (trimmed.startsWith(prefix)) {
+        return decodeURIComponent(trimmed.slice(prefix.length));
+      }
     }
-    return res;
-  });
-};
+  } catch (e) {
+    console.warn('Failed to read cookie:', e);
+  }
+  return '';
+}
+
+function isLinkedDevice() {
+  return Boolean(isDeviceLinked || getCookie('mutah_csrf'));
+}
+
+function _defaultUserProfile() {
+  return {
+    full_name: 'طالب جامعة مؤتة',
+    lms_username: '',
+    is_monitoring: true,
+    check_interval: 10,
+    last_check: 'لم يتم بعد',
+    notify_assign: true,
+    notify_quiz: true,
+    notify_resource: true,
+    notify_grade: true,
+    notify_announcement: true,
+    notify_attendance: true
+  };
+}
+
+async function clearClientSession() {
+  try { localStorage.removeItem(STORAGE_KEY); } catch (e) { console.warn('Failed to clear localStorage:', e); }
+  try {
+    const cacheApi = (typeof window !== 'undefined' && window.caches) ? window.caches : (typeof caches !== 'undefined' ? caches : null);
+    if (cacheApi && typeof cacheApi.keys === 'function') {
+      const keys = await cacheApi.keys();
+      await Promise.all(keys.filter(k => String(k).startsWith('data-')).map(k => cacheApi.delete(k)));
+    }
+  } catch (e) {
+    console.warn('Failed to clear data caches:', e);
+  }
+  try { navigator.serviceWorker?.controller?.postMessage('clear-data'); } catch (e) {}
+
+  isLoggedIn = false;
+  isDeviceLinked = false;
+  selectedCourse = null;
+  userProfile = _defaultUserProfile();
+  courses = [];
+  tasks = [];
+  grades = [];
+  attendanceList = [];
+  announcements = [];
+  files = [];
+  doneSet = new Set();
+  readSet = new Set();
+  notes = {};
+  reminders = [];
+  courseMeta = {};
+  limit = 20;
+  syncLogs = [];
+}
+
+async function apiFetch(url, options = {}) {
+  const opts = Object.assign({}, options);
+  const method = String(opts.method || 'GET').toUpperCase();
+  opts.method = method;
+  opts.credentials = 'same-origin';
+
+  const headers = new Headers(opts.headers || {});
+  // H1: pass Telegram initData exclusively via header, never in URL or JSON body
+  const curTg = getTg();
+  const initData = (curTg && curTg.initData) ? String(curTg.initData) : '';
+  if (initData) {
+    headers.set('X-Telegram-Init-Data', initData);
+  }
+  // H16: attach CSRF token from mutah_csrf cookie on state-changing requests
+  if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
+    const csrf = getCookie('mutah_csrf');
+    if (csrf) {
+      headers.set('X-CSRF-Token', csrf);
+    }
+  }
+  opts.headers = headers;
+
+  const res = await window.fetch(url, opts);
+  if (res && res.status === 401) {
+    const urlStr = typeof url === 'string' ? url : (url && url.url) || '';
+    await clearClientSession();
+    if (!urlStr.startsWith('/api/pair')) {
+      try {
+        const d = await res.clone().json();
+        if (d && d.auth_required) showPairing();
+      } catch (err) {
+        console.warn('Failed to parse 401 response:', err);
+      }
+    }
+  }
+  return res;
+}
 
 function showPairing(msg) {
-  document.getElementById('pairView').style.display = 'flex';
+  const pv = document.getElementById('pairView');
+  if (pv) {
+    pv.style.display = 'flex';
+    pv.setAttribute && pv.setAttribute('aria-hidden', 'false');
+  }
   if (msg) document.getElementById('pairErr').textContent = msg;
 }
-function hidePairing() { document.getElementById('pairView').style.display = 'none'; }
+function hidePairing() {
+  const pv = document.getElementById('pairView');
+  if (pv) {
+    pv.style.display = 'none';
+    pv.setAttribute && pv.setAttribute('aria-hidden', 'true');
+  }
+}
 
 async function pairWithCode(code) {
-  const res = await fetch('/api/pair', {
+  const res = await apiFetch('/api/pair', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ code, device: (isStandalone() ? 'تطبيق مثبّت · ' : 'متصفح · ') + navigator.userAgent.slice(0, 80) })
   });
-  const d = await res.json();
-  if (!d.success) throw new Error(d.error || 'تعذر ربط الجهاز');
-  localStorage.setItem(APP_TOKEN_KEY, d.token);
+  const d = await res.json().catch(() => ({}));
+  if (!res.ok || !d.success) throw new Error(d.error || 'تعذر ربط الجهاز');
+  isDeviceLinked = true;
   return true;
 }
 
@@ -340,10 +449,8 @@ async function submitPairCode() {
 
 async function unlinkThisDevice() {
   if (!confirm('فصل هذا الجهاز عن التطبيق؟ ستحتاج رمزاً جديداً من البوت لإعادة الربط. تنبيهات تيليجرام لن تتأثر.')) return;
-  try { await fetch('/api/app-logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); } catch (e) {}
-  localStorage.removeItem(APP_TOKEN_KEY);
-  localStorage.removeItem('mutahStudentNotebook');
-  try { navigator.serviceWorker?.controller?.postMessage('clear-data'); } catch (e) {}
+  try { await apiFetch('/api/app-logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); } catch (e) {}
+  await clearClientSession();
   location.reload();
 }
 
@@ -368,10 +475,6 @@ function updateOnlineBar() {
 window.addEventListener('online', () => { updateOnlineBar(); if (isLoggedIn) fetchUserData(); });
 window.addEventListener('offline', updateOnlineBar);
 
-if ('serviceWorker' in navigator && !inTelegram && location.protocol.startsWith('http')) {
-  navigator.serviceWorker.register('/sw.js').catch(() => {});
-}
-
 const navItems = [
   ['home', '⌂', 'الرئيسية'],
   ['week', '▦', 'الأسبوع'],
@@ -392,19 +495,7 @@ let selectedCourse = null;
 let weekOffset = 0;
 let isSyncing = false;
 let isLoggedIn = false;
-let userProfile = {
-  full_name: 'طالب جامعة مؤتة',
-  lms_username: '',
-  is_monitoring: true,
-  check_interval: 10,
-  last_check: 'لم يتم بعد',
-  notify_assign: true,
-  notify_quiz: true,
-  notify_resource: true,
-  notify_grade: true,
-  notify_announcement: true,
-  notify_attendance: true
-};
+let userProfile = _defaultUserProfile();
 
 let courses = [];
 let tasks = [];
@@ -413,15 +504,28 @@ let attendanceList = [];
 let announcements = [];
 let files = [];
 
+function safeReadLocalJson(key, fallback = {}) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : fallback;
+  } catch (err) {
+    console.warn(`Corrupted localStorage JSON for ${key}, resetting:`, err);
+    try { localStorage.removeItem(key); } catch (_) {}
+    return fallback;
+  }
+}
+
 // Local + Server synced personal workspace state
-const savedLocal = JSON.parse(localStorage.getItem('mutahStudentNotebook') || '{}');
-let doneSet = new Set(savedLocal.done || []);
-let readSet = new Set(savedLocal.read || []);
-let notes = savedLocal.notes || {};
-let reminders = savedLocal.reminders || [];
-let courseMeta = savedLocal.courseMeta || {};
+const savedLocal = safeReadLocalJson(STORAGE_KEY, {});
+let doneSet = new Set(Array.isArray(savedLocal.done) ? savedLocal.done : []);
+let readSet = new Set(Array.isArray(savedLocal.read) ? savedLocal.read : []);
+let notes = (savedLocal.notes && typeof savedLocal.notes === 'object' && !Array.isArray(savedLocal.notes)) ? savedLocal.notes : {};
+let reminders = Array.isArray(savedLocal.reminders) ? savedLocal.reminders : [];
+let courseMeta = (savedLocal.courseMeta && typeof savedLocal.courseMeta === 'object' && !Array.isArray(savedLocal.courseMeta)) ? savedLocal.courseMeta : {};
 let limit = Number(savedLocal.limit) || 20;
-let syncLogs = savedLocal.logs || [];
+let syncLogs = [];
 
 // Task / Grade / File filter state
 let taskFilterState = { state: 'all', course: 'all', type: 'all' };
@@ -451,12 +555,15 @@ function persist(syncServer = true) {
     notes,
     reminders,
     courseMeta,
-    limit,
-    logs: syncLogs
+    limit
   };
-  localStorage.setItem('mutahStudentNotebook', JSON.stringify(payload));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+  } catch (err) {
+    console.warn('Failed to write localStorage:', err);
+  }
   if (syncServer && isLoggedIn) {
-    fetch('/api/user-meta', {
+    apiFetch('/api/user-meta', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -466,10 +573,11 @@ function persist(syncServer = true) {
           personal_reminders: reminders,
           read_announcements: [...readSet],
           absence_limit: limit,
-          course_meta: courseMeta,
-          sync_logs: syncLogs.slice(0, 15)
+          course_meta: courseMeta
         }
       })
+    }).then((res) => {
+      if (!res || !res.ok) console.warn('Failed to sync user-meta: HTTP', res && res.status);
     }).catch((err) => { console.warn('Failed to sync user-meta:', err); });
   }
 }
@@ -479,41 +587,136 @@ function extractTeacher(name) {
   return m ? m[1].trim() : 'هيئة التدريس';
 }
 
-function parseAnyDate(val, tsFallback) {
+const _DATE_MONTH_MAP = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12,
+  january: 1, february: 2, march: 3, april: 4,
+  june: 6, july: 7, august: 8, september: 9,
+  october: 10, november: 11, december: 12,
+  'يناير': 1, 'فبراير': 2, 'مارس': 3, 'أبريل': 4, 'إبريل': 4, 'ابريل': 4,
+  'مايو': 5, 'يونيو': 6, 'يوليو': 7, 'أغسطس': 8, 'اغسطس': 8,
+  'سبتمبر': 9, 'أكتوبر': 10, 'اكتوبر': 10, 'نوفمبر': 11, 'ديسمبر': 12,
+  'كانون الثاني': 1, 'كانون ثاني': 1,
+  'شباط': 2,
+  'آذار': 3, 'أذار': 3, 'اذار': 3,
+  'نيسان': 4,
+  'أيار': 5, 'ايار': 5,
+  'حزيران': 6,
+  'تموز': 7,
+  'آب': 8, 'أب': 8, 'اب': 8,
+  'أيلول': 9, 'إيلول': 9, 'ايلول': 9,
+  'تشرين الأول': 10, 'تشرين الاول': 10, 'تشرين أول': 10, 'تشرين اول': 10,
+  'تشرين الثاني': 11, 'تشرين ثاني': 11,
+  'كانون الأول': 12, 'كانون الاول': 12, 'كانون أول': 12, 'كانون اول': 12
+};
+
+const _MONTH_ALT = Object.keys(_DATE_MONTH_MAP)
+  .sort((a, b) => b.length - a.length)
+  .map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  .join('|');
+
+const _NAMED_DATE_RE = new RegExp(
+  `(?:^|[^\\d])(\\d{1,2})\\s+(${_MONTH_ALT})\\.?(?:\\s+(\\d{4}))?(?:[,،\\s]+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?(?:\\s*(صباحاً|صباحا|مساءً|مساءا|مساء|a\\.?m\\.?|p\\.?m\\.?|ص|م))?)?`,
+  'i'
+);
+
+function _normalizeDigits(str) {
+  return String(str)
+    .replace(/[٠-٩]/g, ch => String(ch.charCodeAt(0) - 0x0660))
+    .replace(/[۰-۹]/g, ch => String(ch.charCodeAt(0) - 0x06F0));
+}
+
+function _nearestYearDate(month, day, hour, minute, second, refDate) {
+  const ref = (refDate && typeof refDate.getTime === 'function' && !isNaN(refDate.getTime())) ? refDate : new Date(Date.now());
+  const baseYear = ref.getFullYear();
+  let best = null;
+  let bestDiff = Infinity;
+  for (const y of [baseYear - 1, baseYear, baseYear + 1]) {
+    const cand = new Date(y, month - 1, day, hour, minute, second);
+    if (isNaN(cand.getTime())) continue;
+    if (cand.getMonth() !== month - 1 || cand.getDate() !== day) continue;
+    const diff = Math.abs(cand.getTime() - ref.getTime());
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = cand;
+    }
+  }
+  return best;
+}
+
+function parseAnyDate(val, tsFallback, nowOverride) {
   if (tsFallback && Number(tsFallback) > 0) return new Date(Number(tsFallback) * 1000);
   if (!val) return null;
-  if (val instanceof Date) return isNaN(val.getTime()) ? null : val;
+  if (val instanceof Date || (typeof val === 'object' && typeof val.getTime === 'function')) {
+    return isNaN(val.getTime()) ? null : new Date(val.getTime());
+  }
   if (typeof val === 'number') return new Date(val > 1e11 ? val : val * 1000);
-  let s = String(val).trim();
+  let s = _normalizeDigits(String(val)).replace(/\s+/g, ' ').trim();
   if (!s || s === 'لم يتم بعد' || s === 'حديثاً' || s === 'مرصود' || s === '—') return null;
-  s = s.replace(/^(Due|Closes|Closed|Opened|Opens)\s*:\s*/i, '').trim();
+  s = s.replace(/^(?:Due|Closes|Closed|Opened|Opens|تاريخ الاستحقاق|يغلق|مغلق|يفتح)\s*[:：]\s*/i, '').trim();
 
-  // Moodle 5.x yearless dates like "Saturday, 28 November, 11:59 PM" default to year 2001 in V8 unless we inject the year
-  if (!/\b20\d{2}\b/.test(s)) {
-    const ym = s.match(/(\b\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\b)/i);
-    if (ym) {
-      const nowY = new Date().getFullYear();
-      s = s.slice(0, ym.index + ym[0].length) + ' ' + nowY + s.slice(ym.index + ym[0].length);
+  // 1. Explicit ISO / SQL YYYY-MM-DD[ T]HH:MM(:SS)? — Safari-safe (never passes space-separated string to new Date())
+  const isoM = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?(?:\.(\d+))?(Z|[+-]\d{2}:?\d{2})?)?$/i);
+  if (isoM) {
+    if (isoM[8]) {
+      const normalizedIso = s.includes(' ') ? s.replace(' ', 'T') : s;
+      const dz = new Date(normalizedIso);
+      if (!isNaN(dz.getTime())) return dz;
+    }
+    const y = Number(isoM[1]);
+    const mo = Number(isoM[2]);
+    const da = Number(isoM[3]);
+    const hh = isoM[4] !== undefined ? Number(isoM[4]) : 0;
+    const mm = isoM[5] !== undefined ? Number(isoM[5]) : 0;
+    const ss = isoM[6] !== undefined ? Number(isoM[6]) : 0;
+    const dLocal = new Date(y, mo - 1, da, hh, mm, ss);
+    if (!isNaN(dLocal.getTime()) && dLocal.getMonth() === mo - 1 && dLocal.getDate() === da) return dLocal;
+    return null;
+  }
+
+  // 2. Explicit DD/MM/YYYY [HH:MM]
+  const slashM = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:[,،\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (slashM) {
+    const da = Number(slashM[1]);
+    const mo = Number(slashM[2]);
+    const y = Number(slashM[3]);
+    const hh = slashM[4] !== undefined ? Number(slashM[4]) : 23;
+    const mm = slashM[5] !== undefined ? Number(slashM[5]) : 59;
+    const ss = slashM[6] !== undefined ? Number(slashM[6]) : 0;
+    const dSlash = new Date(y, mo - 1, da, hh, mm, ss);
+    if (!isNaN(dSlash.getTime()) && dSlash.getMonth() === mo - 1 && dSlash.getDate() === da) return dSlash;
+  }
+
+  // 3. Named month dates (English + Arabic Gregorian + Arabic Levantine compound months, with optional year & AM/PM)
+  const nm = s.match(_NAMED_DATE_RE);
+  if (nm) {
+    const day = Number(nm[1]);
+    const monthKey = nm[2].replace(/\s+/g, ' ').trim().toLowerCase();
+    const month = _DATE_MONTH_MAP[monthKey];
+    if (month) {
+      let hour = nm[4] !== undefined ? Number(nm[4]) : 23;
+      const minute = nm[5] !== undefined ? Number(nm[5]) : 59;
+      const second = nm[6] !== undefined ? Number(nm[6]) : 0;
+      const ampm = (nm[7] || '').replace(/\./g, '').trim().toLowerCase();
+      const isPm = ampm === 'pm' || ampm === 'م' || ampm === 'مساءً' || ampm === 'مساءا' || ampm === 'مساء';
+      const isAm = ampm === 'am' || ampm === 'ص' || ampm === 'صباحاً' || ampm === 'صباحا';
+      if (isPm && hour >= 1 && hour < 12) hour += 12;
+      else if (isAm && hour === 12) hour = 0;
+
+      if (nm[3]) {
+        const year = Number(nm[3]);
+        const dNamed = new Date(year, month - 1, day, hour, minute, second);
+        if (!isNaN(dNamed.getTime()) && dNamed.getMonth() === month - 1 && dNamed.getDate() === day) return dNamed;
+      } else {
+        const dNearest = _nearestYearDate(month, day, hour, minute, second, nowOverride);
+        if (dNearest) return dNearest;
+      }
     }
   }
 
-  // Try standard parse
-  let d = new Date(s);
-  if (!isNaN(d.getTime())) return d;
-
-  // Try ISO with T instead of space
-  if (s.includes(' ')) {
-    d = new Date(s.replace(' ', 'T'));
-    if (!isNaN(d.getTime())) return d;
-  }
-
-  // Regex parse YYYY-MM-DD
-  const m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T](\d{1,2}):(\d{1,2})(?::(\d{1,2}))?)?/);
-  if (m) {
-    d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4] || 0), Number(m[5] || 0), Number(m[6] || 0));
-    if (!isNaN(d.getTime())) return d;
-  }
-  return null;
+  // 4. Fallback to standard parser (only for formats not already handled above)
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
 }
 const parseLmsDate = parseAnyDate;
 
@@ -593,14 +796,37 @@ function isTaskDone(t) {
 function dueInfo(t) {
   if (isTaskDone(t)) return ['مكتمل في LMS', 'pill good'];
   if (!t.dueDateObj) return ['قيد الحل', 'pill warn'];
-  const diff = t.dueDateObj.getTime() - Date.now();
-  const days = Math.ceil(diff / 86400000);
+  const nowMs = Date.now();
+  const dueMs = t.dueDateObj.getTime();
+  const diff = dueMs - nowMs;
   if (diff < 0) return ['متأخر / مغلق', 'pill red'];
-  if (days <= 2) {
-    const lbl = days <= 0 ? 'اليوم' : days === 1 ? 'غداً' : 'خلال يومين';
-    return ['قريب · ' + lbl, 'pill warn'];
+
+  const diffHours = diff / 3600000;
+  if (diffHours < 1) {
+    const mins = Math.max(1, Math.round(diff / 60000));
+    return [`قريب · خلال ${mins} دقيقة`, 'pill warn'];
   }
-  return [t.time_remaining ? `متبقي ${t.time_remaining}` : 'قادم', 'pill'];
+  if (diffHours < 24) {
+    const hrs = Math.floor(diffHours);
+    const nowDate = new Date(nowMs);
+    const dueDate = new Date(dueMs);
+    const sameCalDay = nowDate.getFullYear() === dueDate.getFullYear()
+      && nowDate.getMonth() === dueDate.getMonth()
+      && nowDate.getDate() === dueDate.getDate();
+    if (sameCalDay) {
+      return [`قريب · اليوم (${hrs} س)`, 'pill warn'];
+    }
+    return [`قريب · خلال ${hrs} ساعة`, 'pill warn'];
+  }
+
+  const nowStart = new Date(nowMs);
+  nowStart.setHours(0, 0, 0, 0);
+  const dueStart = new Date(dueMs);
+  dueStart.setHours(0, 0, 0, 0);
+  const calDays = Math.round((dueStart.getTime() - nowStart.getTime()) / 86400000);
+  if (calDays <= 1) return ['قريب · غداً', 'pill warn'];
+  if (calDays === 2) return ['قريب · خلال يومين', 'pill warn'];
+  return [t.time_remaining ? `متبقي ${t.time_remaining}` : `خلال ${calDays} أيام`, 'pill'];
 }
 
 function unreadCount() {
@@ -645,10 +871,10 @@ async function fetchUserData() {
       tid: tid,
       _t: Date.now()
     });
-    const res = await fetch('/api/user-data?' + qs.toString());
-    const data = await res.json();
+    const res = await apiFetch('/api/user-data?' + qs.toString());
+    const data = await res.json().catch(() => ({}));
 
-    if (!data.success || data.not_registered) {
+    if (!res.ok || !data.success || data.not_registered) {
       isLoggedIn = false;
       updateTopBar();
       render();
@@ -656,17 +882,18 @@ async function fetchUserData() {
     }
 
     isLoggedIn = true;
+    if (!isInTelegram()) isDeviceLinked = true;
     userProfile = data.user || userProfile;
 
     // Merge server user_meta if present
     if (data.user_meta && typeof data.user_meta === 'object') {
       const m = data.user_meta;
       if (m.notes && typeof m.notes === 'object') notes = { ...notes, ...m.notes };
-      if (Array.isArray(m.personal_reminders) && m.personal_reminders.length) reminders = m.personal_reminders;
+      if (Array.isArray(m.personal_reminders)) reminders = m.personal_reminders;
       if (Array.isArray(m.read_announcements)) m.read_announcements.forEach(id => readSet.add(String(id)));
       if (m.absence_limit) limit = Number(m.absence_limit) || 20;
       if (m.course_meta && typeof m.course_meta === 'object') courseMeta = { ...courseMeta, ...m.course_meta };
-      if (Array.isArray(m.sync_logs) && m.sync_logs.length) syncLogs = m.sync_logs;
+      if (Array.isArray(m.sync_logs)) syncLogs = m.sync_logs;
       persist(false);
     }
 
@@ -676,18 +903,22 @@ async function fetchUserData() {
       attByCourse[String(a.course_id)] = a;
     });
 
-    grades = (data.grades || []).map(g => ({
-      id: g.item_id,
-      course_id: String(g.course_id),
-      course_name: g.course_name || 'مقرر',
-      item_name: g.item_name || 'تقييم',
-      grade_val: g.grade_val || '',
-      grade_max: g.grade_max || '',
-      percentage: g.percentage || '',
-      feedback: g.feedback || '',
-      url: g.url || '',
-      updated_at: g.updated_at ? String(g.updated_at).slice(0, 10) : 'مرصود'
-    }));
+    grades = (data.grades || []).map(g => {
+      const itemUrl = g.item_url || g.url || '';
+      return {
+        id: g.item_id,
+        course_id: String(g.course_id),
+        course_name: g.course_name || 'مقرر',
+        item_name: g.item_name || 'تقييم',
+        grade_val: g.grade_val || '',
+        grade_max: g.grade_max || '',
+        percentage: g.percentage || '',
+        feedback: g.feedback || '',
+        item_url: itemUrl,
+        url: itemUrl,
+        updated_at: g.updated_at ? String(g.updated_at).slice(0, 10) : 'مرصود'
+      };
+    });
 
     const gradeByItem = {};
     grades.forEach(g => {
@@ -750,6 +981,7 @@ async function fetchUserData() {
       const matchedGrade = gradeByItem[rawCmid] || null;
       const isSub = Boolean(d.is_submitted);
       if (isSub) doneSet.add(cidStr);
+      else doneSet.delete(cidStr);
 
       return {
         id: cidStr,
@@ -820,9 +1052,10 @@ function openExternalLink(url) {
     toast('الرابط غير صالح أو غير متوفر');
     return false;
   }
-  if (tg && typeof tg.openLink === 'function') {
+  const curTg = getTg();
+  if (curTg && typeof curTg.openLink === 'function') {
     try {
-      tg.openLink(safeUrl);
+      curTg.openLink(safeUrl);
       return true;
     } catch (e) {
       console.warn('tg.openLink failed, falling back to window.open:', e);
@@ -966,10 +1199,10 @@ function go(p) {
 }
 
 function openMoreMenuModal() {
-  document.getElementById('modal').innerHTML = `
+  openModal(`
     <div class="modal-head">
-      <h2>أقسام دفتر الطالب</h2>
-      <button class="close" data-action="close-modal">×</button>
+      <h2 id="modalTitle">أقسام دفتر الطالب</h2>
+      <button type="button" class="close" aria-label="إغلاق النافذة" data-action="close-modal">×</button>
     </div>
     <p class="item-meta">انتقل لأي قسم من أقسام المتابعة الأكاديمية:</p>
     <div class="help-grid" style="margin-top:12px">
@@ -980,8 +1213,7 @@ function openMoreMenuModal() {
         </button>
       `).join('')}
     </div>
-  `;
-  document.getElementById('modalBack').style.display = 'flex';
+  `);
 }
 
 function loginBannerCard() {
@@ -1019,13 +1251,13 @@ async function submitLogin() {
     btn.textContent = 'جارٍ التحقق والاتصال بجامعة مؤتة...';
   }
   try {
-    const res = await fetch('/api/login', {
+    const res = await apiFetch('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tid: getTelegramId(), username: u, password: p })
     });
-    const d = await res.json();
-    if (d.success) {
+    const d = await res.json().catch(() => ({}));
+    if (res.ok && d.success) {
       toast('تم تسجيل الدخول بنجاح! يمكنك الآن إضافة أو استيراد مقرراتك.');
       await fetchUserData();
     } else {
@@ -1213,10 +1445,10 @@ function openScheduleModal() {
     toast('أضف مقرراتك أولاً لضبط مواعيد المحاضرات');
     return;
   }
-  document.getElementById('modal').innerHTML = `
+  openModal(`
     <div class="modal-head">
-      <h2>ضبط أوقات وقاعات المحاضرات</h2>
-      <button class="close" data-action="close-modal">×</button>
+      <h2 id="modalTitle">ضبط أوقات وقاعات المحاضرات</h2>
+      <button type="button" class="close" aria-label="إغلاق النافذة" data-action="close-modal">×</button>
     </div>
     <p class="item-meta">حدّد أيام وأوقات المحاضرات لكل مقرر ليتم عرضها تلقائياً في المخطط الأسبوعي (مثال: الأحد والثلاثاء · ١٠:٠٠):</p>
     <div class="form-grid" style="margin-top:12px">
@@ -1234,8 +1466,7 @@ function openScheduleModal() {
       <button class="btn btn-primary" data-action="save-all-schedules">حفظ الجدول الدراسي</button>
       <button class="btn" data-action="close-modal">إلغاء</button>
     </div>
-  `;
-  document.getElementById('modalBack').style.display = 'flex';
+  `);
 }
 
 function saveAllSchedules() {
@@ -1287,10 +1518,10 @@ function openAddCourseModal() {
     go('settings');
     return;
   }
-  document.getElementById('modal').innerHTML = `
+  openModal(`
     <div class="modal-head">
-      <h2>إضافة مقرر دراسي للمراقبة</h2>
-      <button class="close" data-action="close-modal">×</button>
+      <h2 id="modalTitle">إضافة مقرر دراسي للمراقبة</h2>
+      <button type="button" class="close" aria-label="إغلاق النافذة" data-action="close-modal">×</button>
     </div>
     <p class="item-meta">أدخل رقم المقرر (Course ID) أو الصق رابط صفحة المقرر من موقع جامعة مؤتة LMS:</p>
     <div class="form-grid">
@@ -1303,8 +1534,7 @@ function openAddCourseModal() {
         <button class="btn" data-action="close-and-sync-courses">استيراد كافة مقرراتي تلقائياً</button>
       </div>
     </div>
-  `;
-  document.getElementById('modalBack').style.display = 'flex';
+  `);
 }
 
 async function submitAddCourse() {
@@ -1319,13 +1549,13 @@ async function submitAddCourse() {
     btn.textContent = 'جارٍ جلب المقرر ومزامنته من LMS...';
   }
   try {
-    const res = await fetch('/api/add-course', {
+    const res = await apiFetch('/api/add-course', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tid: getTelegramId(), course_id: val })
     });
-    const d = await res.json();
-    if (d.success) {
+    const d = await res.json().catch(() => ({}));
+    if (res.ok && d.success) {
       closeModal();
       toast(`تمت إضافة المقرر: ${d.course_name}`);
       await fetchUserData();
@@ -1350,13 +1580,13 @@ async function syncAllCoursesFromLms() {
   }
   toast('جارٍ استيراد وفحص مقرراتك المسجلة من LMS...');
   try {
-    const res = await fetch('/api/sync-courses', {
+    const res = await apiFetch('/api/sync-courses', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tid: getTelegramId() })
     });
-    const d = await res.json();
-    if (d.success) {
+    const d = await res.json().catch(() => ({}));
+    if (res.ok && d.success) {
       await fetchUserData();
       toast(`تم استيراد ومزامنة ${d.synced_count} مقررات بنجاح`);
     } else {
@@ -1376,10 +1606,10 @@ function openCourse(id) {
 
 function openEditCourseMetaModal(cid) {
   const c = course(cid);
-  document.getElementById('modal').innerHTML = `
+  openModal(`
     <div class="modal-head">
-      <h2>بيانات المقرر: ${escapeHTML(c.name)}</h2>
-      <button class="close" data-action="close-modal">×</button>
+      <h2 id="modalTitle">بيانات المقرر: ${escapeHTML(c.name)}</h2>
+      <button type="button" class="close" aria-label="إغلاق النافذة" data-action="close-modal">×</button>
     </div>
     <div class="form-grid" style="margin-top:12px">
       <div>
@@ -1403,8 +1633,7 @@ function openEditCourseMetaModal(cid) {
         <button class="btn" data-action="close-modal">إلغاء</button>
       </div>
     </div>
-  `;
-  document.getElementById('modalBack').style.display = 'flex';
+  `);
 }
 
 function saveSingleCourseMeta(cid) {
@@ -1424,18 +1653,29 @@ function saveSingleCourseMeta(cid) {
 }
 
 async function toggleCourseMonitoring(cid) {
+  const targetCourse = courses.find(x => String(x.id) === String(cid));
+  const prevMonitored = targetCourse ? targetCourse.is_monitored : undefined;
+  if (targetCourse) {
+    targetCourse.is_monitored = !prevMonitored;
+    render();
+  }
   try {
-    const res = await fetch('/api/toggle-course', {
+    const res = await apiFetch('/api/toggle-course', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tid: getTelegramId(), course_id: cid })
     });
-    const d = await res.json();
-    if (d.success) {
-      await fetchUserData();
-      toast(d.is_monitored ? 'تم تفعيل مراقبة المقرر' : 'تم إيقاف مراقبة المقرر مؤقتاً');
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || !d.success) {
+      throw new Error(d.error || 'تعذر تحديث حالة مراقبة المقرر');
     }
+    await fetchUserData();
+    toast(d.is_monitored ? 'تم تفعيل مراقبة المقرر' : 'تم إيقاف مراقبة المقرر مؤقتاً');
   } catch (e) {
+    if (targetCourse && prevMonitored !== undefined) {
+      targetCourse.is_monitored = prevMonitored;
+      render();
+    }
     toast('تعذر تحديث حالة مراقبة المقرر');
   }
 }
@@ -1443,17 +1683,19 @@ async function toggleCourseMonitoring(cid) {
 async function removeCourseById(cid) {
   if (!confirm('هل أنت متأكد من إزالة هذا المقرر من قائمة المراقبة؟')) return;
   try {
-    const res = await fetch('/api/delete-course', {
+    const res = await apiFetch('/api/delete-course', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tid: getTelegramId(), course_id: cid })
     });
-    const d = await res.json();
-    if (d.success) {
+    const d = await res.json().catch(() => ({}));
+    if (res.ok && d.success) {
       selectedCourse = null;
       await fetchUserData();
       go('courses');
       toast('تم حذف المقرر من قائمة المراقبة');
+    } else {
+      toast(d.error || 'تعذر حذف المقرر');
     }
   } catch (e) {
     toast('حدث خطأ أثناء حذف المقرر');
@@ -1682,17 +1924,20 @@ function filterGrades() {
           </tr>
         </thead>
         <tbody>
-          ${rows.map(r => `
+          ${rows.map(r => {
+            const gUrl = r.item_url || r.url || '';
+            return `
             <tr>
               <td>${escapeHTML(r.course_name)}</td>
               <td>
-                ${r.url ? `<button class="text-link" style="font-weight:600" data-action="open-link" data-url="${escapeHTML(r.url)}">${escapeHTML(r.item_name)} ↗</button>` : `<b>${escapeHTML(r.item_name)}</b>`}
+                ${gUrl ? `<button class="text-link" style="font-weight:600" data-action="open-link" data-url="${escapeHTML(gUrl)}">${escapeHTML(r.item_name)} ↗</button>` : `<b>${escapeHTML(r.item_name)}</b>`}
               </td>
               <td><b style="color:var(--teal)">${escapeHTML(r.grade_val || '—')}</b></td>
               <td>${escapeHTML(r.grade_max || '—')}</td>
               <td>${escapeHTML([r.percentage, r.feedback].filter(Boolean).join(' · ') || '—')}</td>
             </tr>
-          `).join('')}
+          `;
+          }).join('')}
         </tbody>
       </table>
     </div>
@@ -1762,13 +2007,13 @@ function attendancePage() {
 function openAttendanceSessionsModal(cid) {
   const c = course(cid);
   const sessions = c.att_sessions || [];
-  document.getElementById('modal').innerHTML = `
+  openModal(`
     <div class="modal-head">
       <div>
         <span class="pill">سجل المحاضرات</span>
-        <h2 style="margin-top:6px">${escapeHTML(c.name)}</h2>
+        <h2 id="modalTitle" style="margin-top:6px">${escapeHTML(c.name)}</h2>
       </div>
-      <button class="close" data-action="close-modal">×</button>
+      <button type="button" class="close" aria-label="إغلاق النافذة" data-action="close-modal">×</button>
     </div>
     <p class="item-meta">${c.attendance} حضور · ${c.absent} غياب · الإجمالي: ${c.total} محاضرة</p>
     <div class="table-wrap" style="margin-top:10px">
@@ -1795,8 +2040,7 @@ function openAttendanceSessionsModal(cid) {
       ${c.att_url ? `<button class="btn btn-primary" data-action="open-link" data-url="${escapeHTML(c.att_url)}">فتح سجل الحضور في LMS ↗</button>` : ''}
       <button class="btn" data-action="close-modal">إغلاق</button>
     </div>
-  `;
-  document.getElementById('modalBack').style.display = 'flex';
+  `);
 }
 
 function setLimit(v) {
@@ -1848,13 +2092,13 @@ function openAnnouncementModal(id) {
   readSet.add(String(a.id));
   persist(true);
   render();
-  document.getElementById('modal').innerHTML = `
+  openModal(`
     <div class="modal-head">
       <div>
         <span class="pill">إعلان مقرر</span>
-        <h2 style="margin-top:8px">${escapeHTML(a.title)}</h2>
+        <h2 id="modalTitle" style="margin-top:8px">${escapeHTML(a.title)}</h2>
       </div>
-      <button class="close" data-action="close-modal">×</button>
+      <button type="button" class="close" aria-label="إغلاق النافذة" data-action="close-modal">×</button>
     </div>
     <p class="item-meta">${escapeHTML(a.course_name)}${a.author ? ' · الناشر: ' + escapeHTML(a.author) : ''} · ${escapeHTML(a.date)}</p>
     <div class="callout" style="white-space:pre-line">${escapeHTML(a.body)}</div>
@@ -1862,8 +2106,7 @@ function openAnnouncementModal(id) {
       ${a.url ? `<button class="btn btn-primary" data-action="open-link" data-url="${escapeHTML(a.url)}">فتح الإعلان في LMS ↗</button>` : ''}
       <button class="btn" data-action="close-modal">إغلاق</button>
     </div>
-  `;
-  document.getElementById('modalBack').style.display = 'flex';
+  `);
 }
 
 function readAnnouncement(id) {
@@ -1976,7 +2219,7 @@ function notificationsPage() {
           </div>
           <div style="display:flex;align-items:center;gap:6px">
             <span class="${escapeHTML(e.pill)}">${escapeHTML(e.kind)}</span>
-            ${typeof e.delIdx === 'number' ? `<button class="btn" style="padding:4px 8px" title="حذف التذكير" data-action="remove-personal-reminder" data-index="${Number(e.delIdx)}">×</button>` : ''}
+            ${typeof e.delIdx === 'number' ? `<button type="button" class="btn" style="padding:4px 8px" title="حذف التذكير" aria-label="حذف التذكير" data-action="remove-personal-reminder" data-index="${Number(e.delIdx)}">×</button>` : ''}
           </div>
         </article>
       `).join('') || '<div class="empty">لا توجد إشعارات أو تنبيهات معلقة حالياً.</div>'}
@@ -1987,10 +2230,10 @@ function notificationsPage() {
 
 function openCustomReminderModal(taskId = '') {
   const t = taskId ? tasks.find(x => String(x.id) === String(taskId)) : null;
-  document.getElementById('modal').innerHTML = `
+  openModal(`
     <div class="modal-head">
-      <h2>إضافة تذكير شخصي</h2>
-      <button class="close" data-action="close-modal">×</button>
+      <h2 id="modalTitle">إضافة تذكير شخصي</h2>
+      <button type="button" class="close" aria-label="إغلاق النافذة" data-action="close-modal">×</button>
     </div>
     <div class="form-grid" style="margin-top:12px">
       <div>
@@ -2006,8 +2249,7 @@ function openCustomReminderModal(taskId = '') {
         <button class="btn" data-action="close-modal">إلغاء</button>
       </div>
     </div>
-  `;
-  document.getElementById('modalBack').style.display = 'flex';
+  `);
 }
 
 function saveCustomReminder(taskId, courseName) {
@@ -2048,13 +2290,15 @@ function settingsPage() {
   ];
 
   const intervals = [
-    [1, 'كل دقيقة واحدة'],
-    [2, 'كل دقيقتين'],
     [5, 'كل ٥ دقائق'],
     [10, 'كل ١٠ دقائق'],
     [15, 'كل ١٥ دقيقة'],
     [30, 'كل ٣٠ دقيقة'],
-    [60, 'كل ساعة']
+    [60, 'كل ساعة'],
+    [120, 'كل ساعتين'],
+    [360, 'كل ٦ ساعات'],
+    [720, 'كل ١٢ ساعة'],
+    [1440, 'مرة يومياً (٢٤ ساعة)']
   ];
 
   return `
@@ -2064,7 +2308,7 @@ function settingsPage() {
       ${prefItems.map(([k, t, d]) => `
         <div class="setting">
           <div><strong>${t}</strong><p>${d}</p></div>
-          <input class="switch" type="checkbox" ${userProfile[k] ? 'checked' : ''} data-change="set-server-pref" data-key="${escapeHTML(k)}">
+          <input class="switch" type="checkbox" ${userProfile[k] ? 'checked' : ''} data-change="set-server-pref" data-key="${escapeHTML(k)}" aria-label="${escapeHTML(t)}">
         </div>
       `).join('')}
     </div>
@@ -2074,9 +2318,9 @@ function settingsPage() {
       <div class="setting">
         <div>
           <strong>تكرار الفحص التلقائي</strong>
-          <p>الفترة الزمنية بين كل دورة فحص آلي لحسابك في LMS.</p>
+          <p>الفترة الزمنية بين كل دورة فحص آلي لحسابك في LMS (من ٥ دقائق إلى ٢٤ ساعة).</p>
         </div>
-        <select class="field" data-change="set-server-interval">
+        <select class="field" data-change="set-server-interval" aria-label="تكرار الفحص التلقائي">
           ${intervals.map(([n, lbl]) => `<option value="${n}" ${Number(userProfile.check_interval) === n ? 'selected' : ''}>${lbl}</option>`).join('')}
         </select>
       </div>
@@ -2085,7 +2329,7 @@ function settingsPage() {
           <strong>تشغيل المراقبة التلقائية النشطة</strong>
           <p>فحص المقررات في الخلفية على مدار الساعة وإرسال تنبيهات تيليجرام.</p>
         </div>
-        <input class="switch" type="checkbox" ${userProfile.is_monitoring ? 'checked' : ''} data-change="set-server-monitoring">
+        <input class="switch" type="checkbox" ${userProfile.is_monitoring ? 'checked' : ''} data-change="set-server-monitoring" aria-label="تشغيل المراقبة التلقائية النشطة">
       </div>
       <div style="padding:12px 14px">
         <button class="btn btn-primary" data-action="sync-now">↻ فحص فوري الآن لكافة المقررات</button>
@@ -2116,8 +2360,8 @@ function settingsPage() {
 }
 
 function appDevicePanel() {
-  if (inTelegram) return '';
-  const linked = !!getAppToken();
+  if (isInTelegram()) return '';
+  const linked = isLinkedDevice();
   const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const installed = isStandalone();
   return `
@@ -2148,45 +2392,76 @@ const _ALLOWED_PREF_KEYS = new Set([
 
 async function setServerPref(key, val) {
   if (!_ALLOWED_PREF_KEYS.has(key)) return;
-  userProfile[key] = Boolean(val);
+  const prev = userProfile[key];
+  const next = Boolean(val);
+  userProfile[key] = next;
   try {
-    await fetch('/api/update-settings', {
+    const res = await apiFetch('/api/update-settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tid: getTelegramId(), [key]: Boolean(val) })
+      body: JSON.stringify({ tid: getTelegramId(), [key]: next })
     });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || d.success === false) {
+      throw new Error(d.error || 'تعذر حفظ الإعدادات');
+    }
     toast('تم حفظ تفضيل الإشعارات في النظام');
   } catch (e) {
+    userProfile[key] = prev;
+    render();
     toast('تعذر حفظ الإعدادات');
   }
 }
 
 async function setServerInterval(val) {
-  const num = Number(val) || 10;
+  const num = Number(val);
+  if (!Number.isInteger(num) || num < CHECK_INTERVAL_MIN || num > CHECK_INTERVAL_MAX) {
+    toast(`فترة الفحص يجب أن تكون بين ${CHECK_INTERVAL_MIN} و${CHECK_INTERVAL_MAX} دقيقة`);
+    render();
+    return false;
+  }
+  const prev = userProfile.check_interval;
   userProfile.check_interval = num;
   try {
-    await fetch('/api/update-settings', {
+    const res = await apiFetch('/api/update-settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tid: getTelegramId(), check_interval: num })
     });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || d.success === false) {
+      throw new Error(d.error || 'تعذر حفظ فترة الفحص');
+    }
     toast(`تم ضبط فترة الفحص التلقائي: كل ${num} دقائق`);
+    return true;
   } catch (e) {
+    userProfile.check_interval = prev;
+    render();
     toast('تعذر حفظ فترة الفحص');
+    return false;
   }
 }
 
 async function setServerMonitoring(val) {
-  userProfile.is_monitoring = Boolean(val);
+  const prev = userProfile.is_monitoring;
+  const next = Boolean(val);
+  userProfile.is_monitoring = next;
   updateTopBar();
   try {
-    await fetch('/api/update-settings', {
+    const res = await apiFetch('/api/update-settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tid: getTelegramId(), is_monitoring: Boolean(val) })
+      body: JSON.stringify({ tid: getTelegramId(), is_monitoring: next })
     });
-    toast(val ? 'تم تفعيل المراقبة التلقائية' : 'تم إيقاف المراقبة التلقائية');
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || d.success === false) {
+      throw new Error(d.error || 'تعذر تغيير حالة المراقبة');
+    }
+    toast(next ? 'تم تفعيل المراقبة التلقائية' : 'تم إيقاف المراقبة التلقائية');
   } catch (e) {
+    userProfile.is_monitoring = prev;
+    updateTopBar();
+    render();
     toast('تعذر تغيير حالة المراقبة');
   }
 }
@@ -2194,22 +2469,19 @@ async function setServerMonitoring(val) {
 async function logoutAccount() {
   if (!confirm('هل تريد بالتأكيد تسجيل الخروج من حسابك الأكاديمي وإيقاف المراقبة؟')) return;
   try {
-    const res = await fetch('/api/logout', {
+    const res = await apiFetch('/api/logout', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tid: getTelegramId() })
     });
-    const d = await res.json();
-    if (d.success) {
-      isLoggedIn = false;
-      courses = [];
-      tasks = [];
-      grades = [];
-      announcements = [];
-      files = [];
+    const d = await res.json().catch(() => ({}));
+    if (res.ok && d.success) {
+      await clearClientSession();
       updateTopBar();
       render();
       toast('تم تسجيل الخروج من الحساب بنجاح');
+    } else {
+      toast(d.error || 'حدث خطأ أثناء تسجيل الخروج');
     }
   } catch (e) {
     toast('حدث خطأ أثناء تسجيل الخروج');
@@ -2266,6 +2538,31 @@ function helpPage() {
   `;
 }
 
+let _lastFocusedEl = null;
+
+function isModalOpen() {
+  const back = document.getElementById('modalBack');
+  return Boolean(back && back.style.display === 'flex');
+}
+
+function openModal(html) {
+  const back = document.getElementById('modalBack');
+  const modal = document.getElementById('modal');
+  if (!back || !modal) return;
+  if (!isModalOpen() && document.activeElement && typeof document.activeElement.focus === 'function') {
+    _lastFocusedEl = document.activeElement;
+  }
+  modal.innerHTML = html;
+  back.style.display = 'flex';
+  back.setAttribute && back.setAttribute('aria-hidden', 'false');
+  const focusTarget = (typeof modal.querySelector === 'function'
+    ? modal.querySelector('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')
+    : null) || modal;
+  if (focusTarget && typeof focusTarget.focus === 'function') {
+    try { focusTarget.focus(); } catch (_) {}
+  }
+}
+
 function taskDetail(id) {
   const t = tasks.find(x => String(x.id) === String(id));
   if (!t) return;
@@ -2275,13 +2572,13 @@ function taskDetail(id) {
   const [statusLbl, statusCls] = dueInfo(t);
   const pillMod = statusCls === 'pill red' ? 'red' : statusCls === 'pill warn' ? 'warn' : statusCls === 'pill good' ? 'good' : '';
 
-  document.getElementById('modal').innerHTML = `
+  openModal(`
     <div class="modal-head">
       <div>
         <span class="pill ${pillMod}">${escapeHTML(t.type)}</span>
-        <h2 style="margin-top:8px">${escapeHTML(t.title)}</h2>
+        <h2 id="modalTitle" style="margin-top:8px">${escapeHTML(t.title)}</h2>
       </div>
-      <button class="close" data-action="close-modal">×</button>
+      <button type="button" class="close" aria-label="إغلاق النافذة" data-action="close-modal">×</button>
     </div>
     <p class="item-meta">${escapeHTML(t.course_name)} · ${escapeHTML(c.teacher)}</p>
     <div class="callout">
@@ -2301,12 +2598,20 @@ function taskDetail(id) {
       <button class="btn btn-primary" data-action="save-note" data-id="${escapeHTML(t.id)}">حفظ الملاحظة</button>
       <span class="tag">تُحفظ في حسابك وعلى هذا الجهاز</span>
     </div>
-  `;
-  document.getElementById('modalBack').style.display = 'flex';
+  `);
 }
 
 function closeModal() {
-  document.getElementById('modalBack').style.display = 'none';
+  const back = document.getElementById('modalBack');
+  if (back) {
+    back.style.display = 'none';
+    back.setAttribute && back.setAttribute('aria-hidden', 'true');
+  }
+  const prev = _lastFocusedEl;
+  _lastFocusedEl = null;
+  if (prev && typeof prev.focus === 'function') {
+    try { prev.focus(); } catch (_) {}
+  }
 }
 
 async function toggleDone(id, reopenModal = false) {
@@ -2323,19 +2628,39 @@ async function toggleDone(id, reopenModal = false) {
   render();
   if (reopenModal) taskDetail(sid);
 
+  const rawCourse = t ? t.course : '';
+  const courseIdVal = (rawCourse !== '' && !isNaN(Number(rawCourse))) ? Number(rawCourse) : rawCourse;
+  const itemType = t ? (t.raw_type || (sid.startsWith('quiz_') ? 'quiz' : 'assign')) : (sid.startsWith('quiz_') ? 'quiz' : 'assign');
+
   try {
-    await fetch('/api/mark-submitted', {
+    const res = await apiFetch('/api/mark-submitted', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         tid: getTelegramId(),
         content_id: sid,
+        item_key: sid,
+        course_id: courseIdVal,
+        title: t ? t.title : '',
+        url: t ? t.url : '',
+        item_type: itemType,
         is_submitted: nextDone ? 1 : 0
       })
     });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || d.success === false) {
+      throw new Error(d.error || 'تعذر تحديث حالة المهمة');
+    }
     toast(nextDone ? 'تم تسجيل الإنجاز وإيقاف تذكيرات المهمة' : 'أعيدت المهمة إلى قائمة قيد الحل');
   } catch (e) {
-    toast('تم تحديث الحالة محلياً');
+    // H10 rollback optimistic update on HTTP error or network failure
+    if (currentlyDone) doneSet.add(sid);
+    else doneSet.delete(sid);
+    if (t) t.done = currentlyDone;
+    persist(false);
+    render();
+    if (reopenModal) taskDetail(sid);
+    toast('تعذر تحديث حالة المهمة على الخادم');
   }
 }
 
@@ -2393,14 +2718,14 @@ async function syncNow() {
   toast('جارٍ فحص كافة المقررات والواجبات في LMS...');
 
   try {
-    const res = await fetch('/api/force-check', {
+    const res = await apiFetch('/api/force-check', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tid: getTelegramId() })
     });
-    const d = await res.json();
-    await fetchUserData();
-    if (d.success) {
+    const d = await res.json().catch(() => ({}));
+    if (res.ok && d.success) {
+      await fetchUserData();
       toast(d.new_items > 0 ? `اكتمل الفحص: تم رصد ${d.new_items} تحديث جديد` : 'اكتمل الفحص الفوري — جميع البيانات محدّثة');
     } else {
       toast(d.error || 'تعذر إكمال الفحص الفوري');
@@ -2515,6 +2840,11 @@ document.addEventListener('input', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && isModalOpen()) {
+    if (typeof e.preventDefault === 'function') e.preventDefault();
+    closeModal();
+    return;
+  }
   const el = e.target && typeof e.target.closest === 'function' ? e.target.closest('[data-keydown]') : null;
   if (!el) return;
   const action = el.dataset && el.dataset.keydown;
@@ -2533,8 +2863,12 @@ document.addEventListener('error', (e) => {
   }
 }, true);
 
-// Initial render & live fetch
-(async function boot() {
+// Initial render & live fetch (waits for DOMContentLoaded when telegram-web-app.js is deferred)
+async function boot() {
+  initTelegramWebApp();
+  if ('serviceWorker' in navigator && !isInTelegram() && location.protocol.startsWith('http')) {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  }
   updateOnlineBar();
   const params = new URLSearchParams(location.search);
   const go0 = params.get('go');
@@ -2542,7 +2876,7 @@ document.addEventListener('error', (e) => {
   render();
 
   const urlCode = params.get('code');
-  if (urlCode && !inTelegram) {
+  if (urlCode && !isInTelegram()) {
     // Link from the bot: pair automatically, then clean the URL
     try { await pairWithCode(urlCode); toast('تم ربط الجهاز بنجاح'); }
     catch (e) { showPairing(e.message); }
@@ -2551,7 +2885,13 @@ document.addEventListener('error', (e) => {
   fetchUserData();
   // Live refresh of relative time in header every 30s
   setInterval(updateTopBar, 30000);
-})();
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', boot, { once: true });
+} else {
+  boot();
+}
 
 </script>
 </body>

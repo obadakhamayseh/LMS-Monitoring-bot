@@ -106,10 +106,8 @@ def web_server(tmp_path, monkeypatch):
     monkeypatch.setattr(webapp_server, "TELEGRAM_BOT_TOKEN", TEST_BOT_TOKEN)
     monkeypatch.setattr(webapp_server, "OWNER_TELEGRAM_ID", TEST_OWNER_ID)
 
-    # Clear in-memory pairing state between tests
-    with webapp_server._pair_lock:
-        webapp_server._pair_codes.clear()
-        webapp_server._pair_fail_times.clear()
+    # Clear per-IP pairing rate-limit state between tests (H2)
+    webapp_server.reset_pair_rate_limits()
 
     db.init_db()
     db.save_user(TEST_OWNER_ID, "20240001", "secret_pass", "99", "Test Owner")
@@ -346,27 +344,36 @@ def test_h1_init_data_in_query_string_and_json_body_ignored_401(web_server):
     assert status_post == 401
 
 
-def test_h1_pairing_and_bearer_auth_still_work(web_server):
+def test_h1_pairing_and_cookie_auth_still_work(web_server):
     host, port = web_server
     code = webapp_server.create_pairing_code(TEST_OWNER_ID)
 
-    status_pair, _, body_pair = _http_req(
-        host,
-        port,
-        "POST",
-        "/api/pair",
-        body=json.dumps({"code": code, "device": "pytest"}).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-    )
+    conn = http.client.HTTPConnection(host, port, timeout=3.0)
+    try:
+        conn.request(
+            "POST",
+            "/api/pair",
+            body=json.dumps({"code": code, "device": "pytest"}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+        )
+        resp = conn.getresponse()
+        body_pair = resp.read().decode("utf-8", errors="replace")
+        set_cookies = [v for k, v in resp.getheaders() if k.lower() == "set-cookie"]
+        status_pair = resp.status
+    finally:
+        conn.close()
+
     assert status_pair == 200
-    token = json.loads(body_pair)["token"]
+    assert json.loads(body_pair)["success"] is True
+    session_cookie = next((c.split(";", 1)[0] for c in set_cookies if c.startswith("mutah_session=")), "")
+    assert session_cookie.startswith("mutah_session=")
 
     status_get, _, body_get = _http_req(
         host,
         port,
         "GET",
         "/api/user-data",
-        headers={"Authorization": f"Bearer {token}"},
+        headers={"Cookie": session_cookie},
     )
     assert status_get == 200
     assert json.loads(body_get)["success"] is True

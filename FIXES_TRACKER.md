@@ -22,20 +22,20 @@
 
 | ID | الوصف | الحالة | الملفات المعدّلة | الاختبار / الدليل |
 |---|---|---|---|---|
-| H5 | توحيد مفاتيح الحقول (`item_url`/`att_url`) + إزالة `sync_logs` + `toggleDone(0)` + `/api/mark-submitted` + JSONB `\|\|` + إحياء التذكير | ⬜ | | |
-| H4 | `db.init_db()` قبل `web_thread` + `_ENGINE` مقفلة + ترويسات أمان (CSP/HSTS/XCTO/no-store) + تقييد CORS + timeouts | ⬜ | | |
-| H3 | `ConnectionPool` (`psycopg_pool`) + معاملات ذرية (`delete_user`) + عدم إعادة `IntegrityError` + SQLite FK/WAL + فهارس + مراجعة `DIRECT_URL` | ⬜ | | |
-| H6 | `courses.is_seeded` للإعلانات والحضور + `notified` بعد نجاح `_send` + عدم حذف التذكير عند فراغ `due_str` | ⬜ | | |
-| H2 | `clearClientSession()` + `sw.js` لا يخزّن 401/403 + حذف `app_sessions` + TTL لرموز الأجهزة + rate limit لـ `/api/pair` لكل IP | ⬜ | | |
-| H7 | فحص `due` قبل `_ensure_logged_in` + تقليل Keepalive + Exponential Backoff + تهدئة `last_request_at` + إلغاء تحليل BS4 المزدوج | ⬜ | | |
-| H8 | الحضور: `col_map` ديناميكي + `Group` + `P/A/L/E` + استبعاد `allowsubmissionsfromdate` + تمرير AJAX عبر `LMSHttpClient` | ⬜ | | |
-| H10 | الواجهة: `try/catch` حول `JSON.parse` + `parseAnyDate` (أقرب سنة/عربي/Safari) + إصلاح `dueInfo` + فحص `res.ok` مع Rollback | ⬜ | | |
-| H12 | `ParseMode.HTML` مع `html.escape` + تقسيم آمن بدل `[:3900]` + دالة إرسال تحترم `RetryAfter` وتعالج `Forbidden` | ⬜ | | |
-| H13 | تشغيل `logout()` وعمليات DB الثقيلة في `run_in_executor` + انتظار المهام الجارية قبل `close()` في `stop()` | ⬜ | | |
-| H14 | `sw.js` (`/logo.png`, فحص `res.ok`, معالجة فشل `addAll`) + `webapp.html` (`defer` لـ telegram-web-app.js، إزالة `user-scalable=no`، ARIA/Escape/Focus) | ⬜ | | |
-| H15 | إلغاء N+1 في `/api/user-data` و`/api/force-check` + احترام `notify_quiz` في `get_pending_reminders` | ⬜ | | |
-| H16 | استبدال `mutahAppToken` بكوكي `HttpOnly; Secure; SameSite=Strict` + `apiFetch()` صريحة + توحيد حدود `check_interval` (5–1440) | ⬜ | | |
-| C9 | الاستضافة: `healthCheckPath: /health` في `render.yaml` + توثيق UptimeRobot + تخزين `_pair_codes` في DB | ⬜ | | |
+| H5 | توحيد مفاتيح الحقول (`item_url`/`att_url`) + إزالة `sync_logs` + `toggleDone(0)` + `/api/mark-submitted` + JSONB `\|\|` + إحياء التذكير | ✅ | database.py, webapp_server.py, bot.py, webapp.html | `tests/test_database_p1.py` (`merge_user_meta` + `mark_item_submitted`), `tests/test_webserver_p1.py` (`test_h5_*`), `tests/test_bot_p1.py` (`test_h5_*`), `tests/test_frontend_p1.py` (`test_h5_*`: 3 passed) |
+| H4 | `db.init_db()` قبل `web_thread` + `_ENGINE` مقفلة + ترويسات أمان (CSP/HSTS/XCTO/no-store) + تقييد CORS + timeouts | ✅ | bot.py, monitor.py, webapp_server.py | `tests/test_bot_p1.py` (`test_h4_*`), `tests/test_monitor_p1.py` (`test_h4_and_h13_*`), `tests/test_webserver_p1.py` (`test_h4_*`) |
+| H3 | `ConnectionPool` (`psycopg_pool`) + معاملات ذرية (`delete_user`) + عدم إعادة `IntegrityError` + SQLite FK/WAL + فهارس + مراجعة `DIRECT_URL` | ✅ | database.py, requirements.txt, README.md | `tests/test_database_p1.py` (16 passed) + `tests/test_security_c4.py` (8 passed) |
+| H6 | `courses.is_seeded` للإعلانات والحضور + `notified` بعد نجاح `_send` + عدم حذف التذكير عند فراغ `due_str` | ✅ | database.py, monitor.py, reminder.py | `tests/test_database_p1.py` (`test_h6_*`), `tests/test_monitor_p1.py` (`test_h6_*`), `tests/test_reminder_p1.py` (`test_h6_*`) |
+| H2 | `clearClientSession()` + `sw.js` لا يخزّن 401/403 + حذف `app_sessions` + TTL لرموز الأجهزة + rate limit لـ `/api/pair` لكل IP | ✅ | database.py, webapp_server.py, webapp.html, sw.js | `tests/test_database_p1.py` (`test_h2_*`, `test_h3_h2_*`), `tests/test_webserver_p1.py` (`test_h2_*`), `tests/test_frontend_p1.py` (`test_h2_*`: 2 passed) |
+| H7 | فحص `due` قبل `_ensure_logged_in` + تقليل Keepalive + Exponential Backoff + تهدئة `last_request_at` + إلغاء تحليل BS4 المزدوج | ✅ | lms_scraper.py, monitor.py | `tests/test_scraper_p1.py` (`test_h7_*`), `tests/test_monitor_p1.py` (`test_h7_*`) |
+| H8 | الحضور: `col_map` ديناميكي + `Group` + `P/A/L/E` + استبعاد `allowsubmissionsfromdate` + تمرير AJAX عبر `LMSHttpClient` | ✅ | lms_scraper.py, monitor.py | `tests/test_scraper_p1.py` (`test_h8_*`: 4 tests) |
+| H10 | الواجهة: `try/catch` حول `JSON.parse` + `parseAnyDate` (أقرب سنة/عربي/Safari) + إصلاح `dueInfo` + فحص `res.ok` مع Rollback | ✅ | webapp.html | `tests/test_frontend_p1.py` (`test_h10_*`: 4 passed) |
+| H12 | `ParseMode.HTML` مع `html.escape` + تقسيم آمن بدل `[:3900]` + دالة إرسال تحترم `RetryAfter` وتعالج `Forbidden` | ✅ | telegram_utils.py, bot.py, monitor.py, reminder.py | `tests/test_bot_p1.py` (`test_h12_*`: 9 passed), `tests/test_monitor_p1.py` (`test_h12_*`, `test_h6_and_h12_*`), `tests/test_reminder_p1.py` (`test_h12_*`) |
+| H13 | تشغيل `logout()` وعمليات DB الثقيلة في `run_in_executor` + انتظار المهام الجارية قبل `close()` في `stop()` | ✅ | bot.py, monitor.py, reminder.py | `tests/test_bot_p1.py` (`test_h13_*`, `test_h4_and_h13_*`), `tests/test_monitor_p1.py` (`test_h4_and_h13_*`, `test_h13_*`) |
+| H14 | `sw.js` (`/logo.png`, فحص `res.ok`, معالجة فشل `addAll`) + `webapp.html` (`defer` لـ telegram-web-app.js، إزالة `user-scalable=no`، ARIA/Escape/Focus) | ✅ | sw.js, webapp.html | `tests/test_frontend_p1.py` (`test_h14_*`: 2 passed) |
+| H15 | إلغاء N+1 في `/api/user-data` و`/api/force-check` + احترام `notify_quiz` في `get_pending_reminders` | ✅ | database.py, webapp_server.py | `tests/test_database_p1.py` (`test_h15_*`), `tests/test_webserver_p1.py` (`test_h15_*`) |
+| H16 | استبدال `mutahAppToken` بكوكي `HttpOnly; Secure; SameSite=Strict` + `apiFetch()` صريحة + توحيد حدود `check_interval` (5–1440) | ✅ | webapp_server.py, bot.py, webapp.html | `tests/test_webserver_p1.py` (`test_h16_*`), `tests/test_bot_p1.py` (`test_h16_*`: 13 passed), `tests/test_frontend_p1.py` (`test_h16_*`: 2 passed) + `tests/test_frontend_security.py` (10 passed) |
+| C9 | الاستضافة: `healthCheckPath: /health` في `render.yaml` + توثيق UptimeRobot + تخزين `_pair_codes` في DB | ✅ | database.py, webapp_server.py, render.yaml, .env.example, README.md | `tests/test_database_p1.py` (`test_h2_c9_*`, `test_c9_*`), `tests/test_webserver_p1.py` (`test_c9_*`) |
 
 ## المرحلة P2 — إعادة الهيكلة والمعايير الصناعية
 

@@ -1,17 +1,18 @@
+import asyncio
+import functools
+import logging
 import re
 import time
-import asyncio
-import logging
 from datetime import datetime
 from typing import Optional
 from zoneinfo import ZoneInfo
+
 from telegram import Bot
-from telegram.constants import ParseMode
-from telegram.error import TelegramError
+
 import database as db
+from telegram_utils import escape_html, html_link, send_html_message
 
 logger = logging.getLogger(__name__)
-MD = ParseMode.MARKDOWN
 JORDAN_TZ = ZoneInfo("Asia/Amman")
 
 # Month names (English full/short, Arabic Gregorian, Arabic Levantine incl. compound names)
@@ -55,6 +56,7 @@ def _now_jordan() -> datetime:
     """Return the current time in Asia/Amman (isolated for deterministic testing)."""
     return datetime.now(JORDAN_TZ)
 
+
 REMIND_MSG = {
     "24h": "🔴",
     "3h":  "🟠",
@@ -62,17 +64,11 @@ REMIND_MSG = {
 }
 
 REMIND_LABEL = {
-    "24h": "باقي *24 ساعة*",
-    "3h":  "باقي *3 ساعات*",
-    "1h":  "باقي *ساعة واحدة فقط!*",
+    "24h": "باقي <b>24 ساعة</b>",
+    "3h":  "باقي <b>3 ساعات</b>",
+    "1h":  "باقي <b>ساعة واحدة فقط!</b>",
 }
 
-def _esc(t):
-    if not t: return ""
-    t = str(t)
-    for ch in ["_", "*", "`", "["]:
-        t = t.replace(ch, f"\\{ch}")
-    return t
 
 def _parse_due_date(due_str: str) -> Optional[int]:
     if not due_str:
@@ -145,12 +141,25 @@ def _parse_due_date(due_str: str) -> Optional[int]:
     logger.debug("Could not parse due date: %r", due_str)
     return None
 
+
 class ReminderEngine:
 
     def __init__(self, bot: Bot):
-        self.bot  = bot
+        self.bot = bot
         self._running = False
-        self._task    = None
+        self._task = None
+
+    async def _run_db(self, fn, *args, **kwargs):
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, functools.partial(fn, *args, **kwargs))
+
+    async def _on_forbidden(self, chat_id: int) -> None:
+        fn = getattr(db, "set_user_notifications_enabled", None)
+        if callable(fn):
+            try:
+                await self._run_db(fn, int(chat_id), False)
+            except Exception as exc:
+                logger.warning(f"Failed to disable notifications after Forbidden for {chat_id}: {exc}")
 
     async def start(self):
         if self._running:
@@ -178,95 +187,84 @@ class ReminderEngine:
             await asyncio.sleep(60)
 
     async def _check_reminders(self):
-        now_ts  = int(time.time())
-        pending = db.get_pending_reminders(now_ts)
+        now_ts = int(time.time())
+        pending = await self._run_db(db.get_pending_reminders, now_ts)
 
         for rem in pending:
-            tid      = rem["telegram_id"]
-            rid      = rem["id"]
-            due_ts   = rem["due_ts"]
-            diff     = due_ts - now_ts
+            tid = rem["telegram_id"]
+            rid = rem["id"]
+            due_ts = rem["due_ts"]
+            diff = due_ts - now_ts
 
             if not rem["reminded_24h"] and diff <= 86400 and diff > 10800:
-                slot  = "24h"
+                slot = "24h"
                 field = "reminded_24h"
             elif not rem["reminded_3h"] and diff <= 10800 and diff > 3600:
-                slot  = "3h"
+                slot = "3h"
                 field = "reminded_3h"
             elif not rem["reminded_1h"] and diff <= 3600:
-                slot  = "1h"
+                slot = "1h"
                 field = "reminded_1h"
             else:
                 continue
 
+            # H6: Mark reminded ONLY AFTER HTML send succeeds
             if await self._send_reminder(tid, rem, slot):
-                db.mark_reminded(rid, field)
+                await self._run_db(db.mark_reminded, rid, field)
 
-    async def _send_reminder(self, tid: int, rem: dict, slot: str):
+    async def _send_reminder(self, tid: int, rem: dict, slot: str) -> bool:
         emoji = REMIND_MSG[slot]
         label = REMIND_LABEL[slot]
-        name  = _esc(rem.get("content_name", "واجب"))
-        url   = rem.get("content_url", "")
-        due   = _esc(rem.get("due_str", ""))
+        raw_name = rem.get("content_name", "واجب")
+        url = rem.get("content_url", "")
+        due = escape_html(rem.get("due_str", ""))
 
-        course = db.get_course(tid, rem["course_id"])
-        cname  = _esc(course["course_name"]) if course else "مادة"
+        course = await self._run_db(db.get_course, tid, rem["course_id"])
+        cname = escape_html(course["course_name"]) if course else "مادة"
+        task_link = html_link(raw_name, url)
 
         text = (
-            f"{emoji} *تذكير بموعد تسليم واجب!*\n"
+            f"{emoji} <b>تذكير بموعد تسليم واجب!</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
             f"⏳ {label}\n\n"
-            f"📖 المادة: *{cname}*\n"
-            f"📝 الواجب: [{name}]({url})\n"
-            f"⏰ الموعد: `{due}`\n"
+            f"📖 المادة: <b>{cname}</b>\n"
+            f"📝 الواجب: {task_link}\n"
+            f"⏰ الموعد: <code>{due}</code>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"_لا تنسَ التسليم قبل فوات الأوان!_"
+            f"<i>لا تنسَ التسليم قبل فوات الأوان!</i>"
         )
-        try:
-            await self.bot.send_message(
-                chat_id=tid, text=text,
-                parse_mode=MD, disable_web_page_preview=True
-            )
-            logger.info(f"Reminder sent ({slot}) to {tid} for '{rem.get('content_name')}'")
-            return True
-        except TelegramError as e:
-            logger.error(f"Reminder send error: {e}")
-            try:
-                await self.bot.send_message(
-                    chat_id=tid, text=text,
-                    parse_mode=None, disable_web_page_preview=True
-                )
-                return True
-            except Exception as retry_error:
-                logger.error(f"Reminder retry failed for {tid}: {retry_error}")
-                return False
-        except Exception as e:
-            logger.error(f"Reminder send error: {e}")
-            return False
+        ok = await send_html_message(
+            self.bot,
+            tid,
+            text,
+            disable_web_page_preview=True,
+            on_forbidden=self._on_forbidden,
+        )
+        if ok:
+            logger.info(f"Reminder sent ({slot}) to {tid} for '{raw_name}'")
+        return ok
 
-    def register_assignments(self, telegram_id: int, course_id: int,
-                              assignments: list):
+    def register_assignments(self, telegram_id: int, course_id: int, assignments: list):
         for a in assignments:
-            due_str = a.get("due_date", "")
+            due_str = (a.get("due_date") or "").strip()
+            # H6: Never delete an existing reminder when due_str is empty or transiently unparseable
             if not due_str:
-                db.delete_reminder(telegram_id, a["id"])
                 continue
             due_ts = _parse_due_date(due_str)
             if not due_ts:
-                db.delete_reminder(telegram_id, a["id"])
                 continue
             if due_ts <= int(time.time()):
                 db.delete_reminder(telegram_id, a["id"])
                 continue
             is_sub = 1 if a.get("is_submitted") else 0
             db.upsert_reminder(
-                telegram_id  = telegram_id,
-                course_id    = course_id,
-                content_id   = a["id"],
-                content_name = a["name"],
-                content_url  = a["url"],
-                due_ts       = due_ts,
-                due_str      = due_str,
-                is_submitted = is_sub,
+                telegram_id=telegram_id,
+                course_id=course_id,
+                content_id=a["id"],
+                content_name=a["name"],
+                content_url=a["url"],
+                due_ts=due_ts,
+                due_str=due_str,
+                is_submitted=is_sub,
             )
             logger.debug(f"Reminder registered: {a['name']} @ {due_str} (submitted: {is_sub})")

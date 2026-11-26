@@ -109,3 +109,21 @@ CHECK_INTERVAL_MINUTES = 10
 - **ترحيل كلمات المرور القديمة وتدوير توكن البوت:** عند التشغيل تستدعي `init_db()` ترحيلاً تلقائياً متكرر الأمان (idempotent) يحوّل كلمات المرور القديمة المشفّرة سابقاً بمفتاح مشتق من `TELEGRAM_BOT_TOKEN` أو المخزّنة كنص صريح إلى الصيغة الجديدة `enc:v1:` باستخدام `ENCRYPTION_KEY` (يجب إبقاء `TELEGRAM_BOT_TOKEN` القديم مضبوطاً في أول تشغيل للترحيل، وأي سجل يتعذر فك تشفيره يُسجَّل كخطأ دون حذفه أو إيقاف التشغيل). **بعد إتمام الترحيل، يصبح التشفير مستقلاً تماماً عن `TELEGRAM_BOT_TOKEN` ولن يؤدي تدوير أو تغيير توكن البوت إلى كسر كلمات المرور المخزّنة.**
 - **معرّف المالك (`OWNER_TELEGRAM_ID`):** إلزامي في متغيرات البيئة بلا قيمة افتراضية ويُتحقق منه عند الإقلاع.
 - يحاول البوت حذف رسائل بيانات الدخول من تيليجرام فور استلامها لحماية خصوصية الطالب.
+
+---
+
+## ☁️ الاستضافة على Render Free + UptimeRobot وسياسة قاعدة البيانات
+
+### 1. إبقاء الخدمة نشطة على Render Free (`UptimeRobot` + `/health`)
+- يُنشر التطبيق كخدمة `type: web` على Render Free مع `healthCheckPath: /health` في `render.yaml` (تعيد نقطة `/health` حالة `200` عند سلامة قاعدة البيانات أو `503` عند تعذّر الاتصال).
+- لأن خطة Render Free تدخل الحاوية في السبات بعد **15 دقيقة** من الخمول، أنشئ مراقباً مجانياً في **UptimeRobot** من نوع `HTTP(s)` يرسل طلباً كل **5 دقائق** إلى:
+  ```text
+  https://<your-service>.onrender.com/health
+  ```
+- تُحفظ أكواد الاقتران المؤقتة (`pair_codes`) وجلسات الأجهزة (`app_sessions` بمدة صلاحية افتراضية 30 يوماً) داخل قاعدة البيانات حتى لا تضيع عند إعادة تشغيل الحاوية.
+- تأكد من ضبط جميع متغيرات البيئة المطلوبة في لوحة Render قبل النشر: `TELEGRAM_BOT_TOKEN`، `OWNER_TELEGRAM_ID`، `ENCRYPTION_KEY`، `WEBAPP_URL`، `DATABASE_URL`، و`DIRECT_URL`.
+
+### 2. سياسة اتصال PostgreSQL (`DATABASE_URL` مقابل `DIRECT_URL` / PgBouncer)
+- **التشغيل اليومي (Runtime Pool):** يفضّل النظام `DATABASE_URL` (منفذ PgBouncer Transaction Pooler مثل `:6543` مع `?pgbouncer=true`) عبر `psycopg_pool.ConnectionPool` مع تعطيل الـ Prepared Statements تلقائياً (`prepare_threshold=None`) عند اكتشاف PgBouncer لتجنّب استنزاف اتصالات Supabase المباشرة.
+- **الترحيل وتهيئة الجداول (`init_db`):** عند توفر `DIRECT_URL` (المنفذ المباشر `:5432`) يستخدمه النظام لتشغيل عمليات DDL/الترحيل عند الإقلاع ثم يغلقه، وإلا يعود تلقائياً إلى `DATABASE_URL`.
+- **SQLite محلياً:** عند عدم ضبط رابط PostgreSQL، يفعّل النظام تلقائياً `PRAGMA foreign_keys = ON` و`PRAGMA journal_mode = WAL` و`PRAGMA busy_timeout = 10000`.
