@@ -341,13 +341,12 @@ class MonitorEngine:
                 if not lc_str:
                     return True
                 try:
-                    last_dt = datetime.fromisoformat(lc_str.replace("Z", "+00:00"))
+                    last_dt = datetime.fromisoformat(lc_str.replace("Z", "+00:00").replace("z", "+00:00"))
                 except ValueError:
                     last_dt = datetime.strptime(lc_str[:19], "%Y-%m-%d %H:%M:%S")
-            if last_dt.tzinfo is not None:
-                elapsed = (datetime.now(timezone.utc) - last_dt.astimezone(timezone.utc)).total_seconds()
-            else:
-                elapsed = (datetime.now() - last_dt).total_seconds()
+            if last_dt.tzinfo is None:
+                last_dt = last_dt.replace(tzinfo=timezone.utc)
+            elapsed = (datetime.now(timezone.utc) - last_dt.astimezone(timezone.utc)).total_seconds()
             interval_min = max(1, int(user.get("check_interval", 10)))
             return elapsed >= interval_min * 60
         except (TypeError, ValueError):
@@ -899,7 +898,9 @@ class MonitorEngine:
                 if not s1 or not s2:
                     return False
                 try:
-                    return abs(float(s1) - float(s2)) < 1e-6
+                    n1 = float(s1.replace("٫", ".").replace(",", "."))
+                    n2 = float(s2.replace("٫", ".").replace(",", "."))
+                    return abs(n1 - n2) < 1e-6
                 except ValueError:
                     return s1.casefold() == s2.casefold()
 
@@ -920,10 +921,7 @@ class MonitorEngine:
                 should_notify = (
                     bool(grade_val)
                     and not _same_grade_val(grade_val, old_val)
-                    and (
-                        bool(user.get("notify_grade", 1))
-                        or (is_quiz_grade and bool(user.get("notify_quiz", 1)))
-                    )
+                    and bool(user.get("notify_grade", 1))
                 )
 
                 if should_notify:

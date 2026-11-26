@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import logging.handlers
 
 from telegram import BotCommand, MenuButtonWebApp, WebAppInfo
 from telegram.ext import Application
@@ -52,6 +53,7 @@ from handlers.common import (
     get_engine,
     get_reminder_engine,
     get_webapp_url,
+    owner_guard,
     set_engine,
     set_reminder_engine,
     validate_check_interval,
@@ -88,12 +90,19 @@ from webapp_server import (
     stop_webapp_server_async,
 )
 
+_BOT_LOG_HANDLER = logging.handlers.RotatingFileHandler(
+    "bot.log",
+    maxBytes=5 * 1024 * 1024,
+    backupCount=3,
+    encoding="utf-8",
+    delay=True,
+)
 logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
     level=logging.INFO,
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("bot.log", encoding="utf-8"),
+        _BOT_LOG_HANDLER,
     ],
 )
 logger = logging.getLogger("bot")
@@ -132,9 +141,10 @@ async def post_init(app: Application) -> None:
     if webapp_url:
         try:
             await app.bot.set_chat_menu_button(
-                menu_button=MenuButtonWebApp(text="📱 لوحة التحكم", web_app=WebAppInfo(url=webapp_url))
+                chat_id=OWNER_TELEGRAM_ID,
+                menu_button=MenuButtonWebApp(text="📱 لوحة التحكم", web_app=WebAppInfo(url=webapp_url)),
             )
-            logger.info("Telegram MenuButtonWebApp configured: %s", webapp_url)
+            logger.info("Telegram MenuButtonWebApp configured for owner: %s", webapp_url)
         except Exception as exc:
             logger.warning("Could not configure chat menu button: %s", exc)
 
@@ -209,9 +219,9 @@ __all__ = [
     "cancel_conv", "cmd_app", "cmd_courses", "cmd_help", "cmd_logout", "cmd_pair", "cmd_start", "cmd_unlink",
     "create_pairing_code", "db", "error_handler", "fallback_callback", "get_engine", "get_reminder_engine",
     "get_webapp_url", "handle_callback", "handle_confirm_logout", "handle_logout_prompt", "handle_text",
-    "init_webapp_engines", "logger", "login_got_pass", "login_got_user", "login_start", "main", "post_init",
-    "post_shutdown", "register_handlers", "set_engine", "set_reminder_engine", "start_webapp_server_async",
-    "stop_webapp_server_async", "validate_check_interval",
+    "init_webapp_engines", "logger", "login_got_pass", "login_got_user", "login_start", "main", "owner_guard",
+    "post_init", "post_shutdown", "register_handlers", "set_engine", "set_reminder_engine",
+    "start_webapp_server_async", "stop_webapp_server_async", "validate_check_interval",
 ]
 
 if __name__ == "__main__":

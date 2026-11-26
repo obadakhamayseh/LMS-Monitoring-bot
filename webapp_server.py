@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 import hashlib
 import hmac
 import http.cookies
@@ -42,10 +43,13 @@ CSRF_COOKIE_NAME = "mutah_csrf"
 CSRF_HEADER_NAME = "X-CSRF-Token"
 SESSION_COOKIE_MAX_AGE = 30 * 86400  # 30 days (matches DB app_sessions TTL)
 
-# Validation & hardening constants (H4, H16, F2)
+# Validation & hardening constants (H4, H16, F2, M-VALID)
 CHECK_INTERVAL_MIN = 5
 CHECK_INTERVAL_MAX = 1440
+COURSE_ID_MIN = 1
+COURSE_ID_MAX = 999_999_999
 REQUEST_TIMEOUT_SECONDS = 15
+_ARABIC_DIGITS_TRANS = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
 
 # General per-IP API rate limit (F2)
 API_RATE_LIMIT_MAX = 120
@@ -165,6 +169,28 @@ def _json_serial(obj: Any) -> str:
     if hasattr(obj, "isoformat"):
         return obj.isoformat()
     return str(obj)
+
+
+def _normalize_utc_iso(value: Any) -> str:
+    """Normalize legacy naive SQLite/PG timestamps or datetime objects to explicit UTC ISO-8601 (M-UTC)."""
+    if value is None:
+        return ""
+    if isinstance(value, datetime):
+        dt = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+        return dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    text = str(value).strip()
+    if not text:
+        return ""
+    candidate = text[:-1] + "+00:00" if text.endswith(("Z", "z")) else text
+    try:
+        dt = datetime.fromisoformat(candidate)
+    except ValueError:
+        return text
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    else:
+        dt = dt.astimezone(timezone.utc)
+    return dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _json_response(
@@ -444,20 +470,55 @@ class LoginRequest(_BaseApiModel):
         return norm
 
 
+def _validate_course_id(raw: Any, *, allow_lms_url: bool = False) -> int:
+    """Strictly validate positive numeric Moodle course ID in [1, 999999999] (M-VALID)."""
+    if isinstance(raw, bool) or raw is None:
+        raise ValueError("course_id غير صالح")
+    if isinstance(raw, int):
+        if COURSE_ID_MIN <= raw <= COURSE_ID_MAX:
+            return raw
+        raise ValueError("course_id غير صالح")
+    if not isinstance(raw, str):
+        raise ValueError("course_id غير صالح")
+
+    s = raw.strip().translate(_ARABIC_DIGITS_TRANS)
+    if not s:
+        raise ValueError("course_id مطلوب")
+
+    if allow_lms_url and (s.startswith("http://") or s.startswith("https://")):
+        try:
+            parts = urllib.parse.urlsplit(s)
+        except ValueError as exc:
+            raise ValueError("يرجى إدخال رقم مادة صحيح أو رابط المقرر") from exc
+        if (
+            parts.scheme.lower() in ("http", "https")
+            and parts.netloc
+            and ".." not in parts.path
+            and not any(ch in s for ch in (" ", "\t", "\r", "\n", ";"))
+        ):
+            qs = urllib.parse.parse_qs(parts.query, keep_blank_values=True, strict_parsing=False)
+            candidates = qs.get("id") or qs.get("course") or []
+            if len(candidates) == 1 and re.fullmatch(r"[0-9]+", candidates[0]):
+                val = int(candidates[0])
+                if COURSE_ID_MIN <= val <= COURSE_ID_MAX:
+                    return val
+        raise ValueError("يرجى إدخال رقم مادة صحيح أو رابط المقرر")
+
+    if not re.fullmatch(r"[0-9]+", s):
+        raise ValueError("course_id غير صالح")
+    val = int(s)
+    if val < COURSE_ID_MIN or val > COURSE_ID_MAX:
+        raise ValueError("course_id غير صالح")
+    return val
+
+
 class AddCourseRequest(_BaseApiModel):
-    course_id: int | str
+    course_id: int
 
     @field_validator("course_id", mode="before")
     @classmethod
-    def _validate_course_input(cls, v: Any) -> str:
-        if isinstance(v, bool) or v is None or not isinstance(v, (int, str)):
-            raise ValueError("يرجى إدخال رقم مادة صحيح أو رابط المقرر")
-        raw = str(v).strip().translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789"))
-        match = re.search(r"(?:id=|course=)(\d+)", raw)
-        cid_str = match.group(1) if match else raw
-        if not cid_str.isdigit():
-            raise ValueError("يرجى إدخال رقم مادة صحيح أو رابط المقرر")
-        return cid_str
+    def _validate_course_input(cls, v: Any) -> int:
+        return _validate_course_id(v, allow_lms_url=True)
 
 
 class ToggleCourseRequest(_BaseApiModel):
@@ -465,19 +526,8 @@ class ToggleCourseRequest(_BaseApiModel):
 
     @field_validator("course_id", mode="before")
     @classmethod
-    def _validate_course_id(cls, v: Any) -> int:
-        if isinstance(v, bool) or v is None or v == "":
-            raise ValueError("course_id مطلوب")
-        if isinstance(v, int):
-            if v <= 0:
-                raise ValueError("course_id غير صالح")
-            return v
-        if isinstance(v, str):
-            s = v.strip()
-            if not s or not re.fullmatch(r"\d+", s):
-                raise ValueError("course_id غير صالح")
-            return int(s)
-        raise ValueError("course_id غير صالح")
+    def _validate_course_input(cls, v: Any) -> int:
+        return _validate_course_id(v)
 
 
 class DeleteCourseRequest(_BaseApiModel):
@@ -494,15 +544,7 @@ class DeleteCourseRequest(_BaseApiModel):
             out["clear_all"] = True
             out["course_id"] = None
             return out
-        raw_cid = out.get("course_id")
-        if raw_cid is None or raw_cid == "" or isinstance(raw_cid, bool):
-            raise ValueError("course_id مطلوب")
-        if isinstance(raw_cid, int):
-            out["course_id"] = raw_cid
-        elif isinstance(raw_cid, str) and re.fullmatch(r"\d+", raw_cid.strip()):
-            out["course_id"] = int(raw_cid.strip())
-        else:
-            raise ValueError("course_id غير صالح")
+        out["course_id"] = _validate_course_id(out.get("course_id"))
         return out
 
 
@@ -539,7 +581,7 @@ class UserMetaRequest(_BaseApiModel):
 class MarkSubmittedRequest(_BaseApiModel):
     item_key: str | None = None
     content_id: str | None = None
-    course_id: int | str | None = None
+    course_id: int | None = None
     title: str | None = None
     content_name: str | None = None
     url: str | None = None
@@ -547,6 +589,13 @@ class MarkSubmittedRequest(_BaseApiModel):
     item_type: str | None = None
     content_type: str | None = None
     is_submitted: bool | int | str = 1
+
+    @field_validator("course_id", mode="before")
+    @classmethod
+    def _validate_optional_course_id(cls, v: Any) -> int | None:
+        if v is None:
+            return None
+        return _validate_course_id(v)
 
     @model_validator(mode="after")
     def _require_item_key(self) -> MarkSubmittedRequest:
@@ -755,6 +804,62 @@ def _build_raw_headers(
     ]
     filtered.extend(updates)
     return filtered
+
+
+class AccessErrorLoggingMiddleware:
+    """Outermost ASGI middleware: structured 4xx (WARNING) & 5xx (ERROR) logging without secrets (M-VALID)."""
+
+    def __init__(self, asgi_app) -> None:
+        self.app = asgi_app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        method = str(scope.get("method") or "GET").upper().replace("\r", "").replace("\n", "")
+        # ASGI path excludes query_string so ?code= or query tokens never enter logs
+        raw_path = str(scope.get("path") or "/")
+        safe_path = raw_path.split("?", 1)[0].replace("\r", "").replace("\n", "")
+        headers = _scope_headers_dict(scope)
+        client_ip = _client_ip_from_scope(scope, headers).replace("\r", "").replace("\n", "")
+        logged_response = False
+
+        async def send_wrapper(message) -> None:
+            nonlocal logged_response
+            if message["type"] == "http.response.start":
+                status_code = int(message.get("status", 0))
+                if status_code >= 500:
+                    logged_response = True
+                    logger.error(
+                        "HTTP %s %s -> %d (ip=%s)",
+                        method,
+                        safe_path,
+                        status_code,
+                        client_ip,
+                    )
+                elif status_code >= 400:
+                    logged_response = True
+                    logger.warning(
+                        "HTTP %s %s -> %d (ip=%s)",
+                        method,
+                        safe_path,
+                        status_code,
+                        client_ip,
+                    )
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        except Exception:
+            if not logged_response:
+                logger.error(
+                    "HTTP %s %s -> 500 (ip=%s)",
+                    method,
+                    safe_path,
+                    client_ip,
+                )
+            raise
 
 
 class SecurityAndCorsMiddleware:
@@ -1042,7 +1147,7 @@ def _build_user_data_payload(tid: int) -> dict[str, Any]:
         "notify_grade": bool(user.get("notify_grade", 1)),
         "notify_announcement": bool(user.get("notify_announcement", 1)),
         "notify_attendance": bool(user.get("notify_attendance", 1)),
-        "last_check": user.get("last_check") or "لم يتم بعد",
+        "last_check": _normalize_utc_iso(user.get("last_check")) or "لم يتم بعد",
     }
 
     courses = db.get_user_courses(tid)
@@ -1529,6 +1634,7 @@ def create_app() -> FastAPI:
     application.add_middleware(RateLimitMiddleware)
     application.add_middleware(BodyGuardMiddleware)
     application.add_middleware(SecurityAndCorsMiddleware)
+    application.add_middleware(AccessErrorLoggingMiddleware)
 
     # ── Health & Root Routes ──
 
@@ -1729,12 +1835,7 @@ def create_app() -> FastAPI:
                 return 404, {"success": False, "not_registered": True, "error": "المستخدم غير مسجل"}
             item_key = str(body.item_key or body.content_id or "").strip()
             is_sub = _parse_bool_flag(body.is_submitted, default=1)
-            course_id_val: int | None = None
-            if body.course_id is not None and str(body.course_id).strip() != "":
-                try:
-                    course_id_val = int(body.course_id)
-                except (TypeError, ValueError):
-                    course_id_val = None
+            course_id_val: int | None = body.course_id
             title = str(body.title or body.content_name or "")
             url = str(body.url or body.content_url or "")
             item_type = str(

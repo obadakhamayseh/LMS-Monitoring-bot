@@ -84,7 +84,7 @@ def test_p2_all_handler_modules_import_and_register_cleanly():
     err_handlers = []
 
     fake_app = MagicMock()
-    fake_app.add_handler = MagicMock(side_effect=lambda h: registered.append(h))
+    fake_app.add_handler = MagicMock(side_effect=lambda h, *args, **kwargs: registered.append(h))
     fake_app.add_error_handler = MagicMock(side_effect=lambda h: err_handlers.append(h))
 
     register_handlers(fake_app)

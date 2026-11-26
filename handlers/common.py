@@ -18,7 +18,7 @@ from telegram import (
 )
 from telegram.constants import ParseMode
 from telegram.error import BadRequest
-from telegram.ext import ContextTypes, ConversationHandler
+from telegram.ext import ApplicationHandlerStop, ContextTypes, ConversationHandler
 
 from config import OWNER_TELEGRAM_ID
 import database as db
@@ -315,6 +315,19 @@ async def error_handler(update: object, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 def _is_owner(update: Update) -> bool:
     u = update.effective_user
     return bool(u and int(u.id) == int(OWNER_TELEGRAM_ID))
+
+
+async def owner_guard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Centralized owner-only update gate registered in group=-1 (M-GUARD)."""
+    user = getattr(update, "effective_user", None)
+    raw_uid = getattr(user, "id", None) if user is not None else None
+    try:
+        is_owner = raw_uid is not None and int(raw_uid) == int(OWNER_TELEGRAM_ID)
+    except (TypeError, ValueError):
+        is_owner = False
+    if not is_owner:
+        logger.warning("Unauthorized update blocked (user_id=%s)", raw_uid)
+        raise ApplicationHandlerStop
 
 
 async def _reject_unauthorized(update: Update) -> int:

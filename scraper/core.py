@@ -7,7 +7,7 @@ import re
 import sys
 import threading
 from typing import Any
-from urllib.parse import unquote, urljoin
+from urllib.parse import unquote
 
 import requests
 from bs4 import BeautifulSoup
@@ -61,8 +61,9 @@ from scraper.parsers import (
     parse_forum_announcements_soup,
     parse_grades_soup,
     parse_resources_from_course_soup,
+    resolve_lms_url,
 )
-from scraper.quizzes import parse_quiz_grade_text, parse_quiz_status_soup
+from scraper.quizzes import build_quiz_attempt_col_map, parse_quiz_grade_text, parse_quiz_status_soup
 
 logger = logging.getLogger(__name__)
 
@@ -200,6 +201,10 @@ class LMSScraper:
         return parse_quiz_grade_text(raw_text)
 
     @staticmethod
+    def _build_quiz_attempt_col_map(tbl: Any) -> tuple[Any | None, dict[str, int], dict[str, str]]:
+        return build_quiz_attempt_col_map(tbl)
+
+    @staticmethod
     def _read_bounded_html(resp: Any, max_bytes: int = MAX_INTERSTITIAL_HTML_BYTES) -> str | None:
         return read_bounded_html(resp, max_bytes=max_bytes)
 
@@ -335,7 +340,7 @@ class LMSScraper:
         """Make a lightweight authenticated request to keep an active monitor session warm."""
         resp = None
         try:
-            resp = self.authenticated_get(f"{LMS_BASE_URL}/my/", timeout=15)
+            resp = self.authenticated_get(resolve_lms_url("my/"), timeout=15)
             resp.raise_for_status()
             return self.logged_in
         except Exception as exc:
@@ -352,7 +357,7 @@ class LMSScraper:
         try:
             if self.logged_in and self.sesskey:
                 resp = self.http.get(
-                    f"{LMS_BASE_URL}/login/logout.php?sesskey={self.sesskey}",
+                    resolve_lms_url(f"login/logout.php?sesskey={self.sesskey}"),
                     timeout=10,
                     allow_redirects=True,
                     allow_waf_cooldown=True,
@@ -420,7 +425,7 @@ class LMSScraper:
             if login_form:
                 action = (login_form.get("action") or "").strip()
                 if action:
-                    post_url = action if action.startswith("http") else urljoin(LMS_BASE_URL + "/", action)
+                    post_url = resolve_lms_url(action)
                 for inp in login_form.find_all("input"):
                     name = inp.get("name")
                     if not name:
@@ -483,7 +488,7 @@ class LMSScraper:
 
             my_resp = None
             try:
-                my_resp = self.http.get(f"{LMS_BASE_URL}/my/", timeout=15, allow_waf_cooldown=True)
+                my_resp = self.http.get(resolve_lms_url("my/"), timeout=15, allow_waf_cooldown=True)
                 if (
                     my_resp.status_code == 200
                     and not self._is_waf_challenge(my_resp)
@@ -655,7 +660,7 @@ class LMSScraper:
         if not raw_name or len(raw_name.strip()) <= 3:
             resp = None
             try:
-                resp = self.http.get(f"{LMS_BASE_URL}/user/profile.php", timeout=15)
+                resp = self.http.get(resolve_lms_url("user/profile.php"), timeout=15)
                 if resp.status_code == 200 and not self._is_waf_challenge(resp):
                     prof_soup = _parse_html(resp.text, "lxml")
                     self._extract_sesskey(prof_soup)
@@ -696,7 +701,7 @@ class LMSScraper:
         # 1. Try /my/courses.php and extract sesskey
         resp = None
         try:
-            resp = self.authenticated_get(f"{LMS_BASE_URL}/my/courses.php", timeout=30)
+            resp = self.authenticated_get(resolve_lms_url("my/courses.php"), timeout=30)
             soup = self._soup_from_response(resp)
             self._extract_sesskey(soup)
             self._extract_courses_from_soup(soup, courses, seen_ids)
@@ -714,9 +719,9 @@ class LMSScraper:
             for classification in ("all", "inprogress", "All"):
                 ajax_resp = None
                 try:
-                    ajax_url = (
-                        f"{LMS_BASE_URL}/lib/ajax/service.php"
-                        f"?sesskey={self.sesskey}&info=core_course_get_enrolled_courses_by_timeline_classification"
+                    ajax_url = resolve_lms_url(
+                        f"lib/ajax/service.php?sesskey={self.sesskey}"
+                        "&info=core_course_get_enrolled_courses_by_timeline_classification"
                     )
                     payload = [{
                         "index": 0,
@@ -740,7 +745,7 @@ class LMSScraper:
                                 if cid <= 1 or cid in seen_ids:
                                     continue
                                 cname = (c_item.get("fullname") or c_item.get("shortname") or f"مادة {cid}").strip()
-                                view_url = c_item.get("viewurl") or f"{LMS_BASE_URL}/course/view.php?id={cid}"
+                                view_url = resolve_lms_url(c_item.get("viewurl") or f"course/view.php?id={cid}")
                                 seen_ids.add(cid)
                                 courses.append({"id": cid, "name": cname, "url": view_url})
                             if courses:
@@ -758,7 +763,7 @@ class LMSScraper:
         if not courses:
             resp = None
             try:
-                resp = self.authenticated_get(f"{LMS_BASE_URL}/my/", timeout=30)
+                resp = self.authenticated_get(resolve_lms_url("my/"), timeout=30)
                 soup = self._soup_from_response(resp)
                 self._extract_sesskey(soup)
                 self._extract_courses_from_soup(soup, courses, seen_ids)
@@ -775,10 +780,10 @@ class LMSScraper:
         if not courses:
             resp = None
             try:
-                prof_url = (
-                    f"{LMS_BASE_URL}/user/profile.php?id={self.user_id}&showallcourses=1"
+                prof_url = resolve_lms_url(
+                    f"user/profile.php?id={self.user_id}&showallcourses=1"
                     if self.user_id
-                    else f"{LMS_BASE_URL}/user/profile.php?showallcourses=1"
+                    else "user/profile.php?showallcourses=1"
                 )
                 resp = self.authenticated_get(prof_url, timeout=30)
                 soup = self._soup_from_response(resp)
@@ -980,7 +985,7 @@ class LMSScraper:
                         "grade_max": q.get("grade_max") or "",
                         "percentage": q.get("percentage") or "",
                         "feedback": q.get("feedback") or "",
-                        "url": q.get("url") or f"{LMS_BASE_URL}/mod/quiz/view.php?id={cmid}",
+                        "url": resolve_lms_url(q.get("url") or f"mod/quiz/view.php?id={cmid}"),
                         "course_id": course_id,
                         "is_quiz": True,
                     }
@@ -1029,7 +1034,7 @@ class LMSScraper:
         raise_auth_errors: bool = False,
         status_out: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        url = f"{LMS_BASE_URL}/mod/{mod_type}/index.php?id={course_id}"
+        url = resolve_lms_url(f"mod/{mod_type}/index.php?id={course_id}")
         activities: list[dict[str, Any]] = []
         resp = None
 
@@ -1076,7 +1081,7 @@ class LMSScraper:
         status_out: dict[str, Any] | None = None,
     ) -> Any:
         resources: list[dict[str, Any]] = []
-        url = f"{LMS_BASE_URL}/course/view.php?id={course_id}"
+        url = resolve_lms_url(f"course/view.php?id={course_id}")
         resp = None
 
         try:
@@ -1118,7 +1123,7 @@ class LMSScraper:
         resp = None
 
         try:
-            url = f"{LMS_BASE_URL}/course/view.php?id={course_id}"
+            url = resolve_lms_url(f"course/view.php?id={course_id}")
             resp = self.authenticated_get(url, timeout=30)
 
             if resp.status_code == 404 or "login" in (getattr(resp, "url", "") or ""):
@@ -1249,7 +1254,7 @@ class LMSScraper:
             if raw_url and raw_url != url:
                 candidates.append(raw_url)
             candidates.append(url)
-            req_headers = {"Referer": referer} if referer else {"Referer": f"{LMS_BASE_URL}/my/"}
+            req_headers = {"Referer": referer} if referer else {"Referer": resolve_lms_url("my/")}
 
             for cand in candidates:
                 r = self.authenticated_get(
@@ -1295,8 +1300,7 @@ class LMSScraper:
                 if not target_href:
                     return None
 
-                if not target_href.startswith("http"):
-                    target_href = urljoin(LMS_BASE_URL + "/", target_href)
+                target_href = resolve_lms_url(target_href)
 
                 resp = self.authenticated_get(target_href, timeout=30, stream=True, allow_redirects=True)
                 if resp.status_code != 200:
@@ -1367,7 +1371,7 @@ class LMSScraper:
     def get_course_grades(self, course_id: int, *, raise_auth_errors: bool = False) -> list[dict[str, Any]]:
         """Scrape Moodle User Grade Report (/grade/report/user/index.php?id=course_id)."""
         grades: list[dict[str, Any]] = []
-        url = f"{LMS_BASE_URL}/grade/report/user/index.php?id={course_id}"
+        url = resolve_lms_url(f"grade/report/user/index.php?id={course_id}")
         resp = None
         try:
             resp = self.authenticated_get(url, timeout=25)
@@ -1402,7 +1406,7 @@ class LMSScraper:
                 forum_links = extract_forum_links(course_soup, seen_forums=seen_forums)
 
             if not forum_links:
-                idx_url = f"{LMS_BASE_URL}/mod/forum/index.php?id={course_id}"
+                idx_url = resolve_lms_url(f"mod/forum/index.php?id={course_id}")
                 resp = None
                 try:
                     resp = self.authenticated_get(idx_url, timeout=20)
@@ -1413,7 +1417,7 @@ class LMSScraper:
                     _close_response(resp)
 
             seen_discuss: set[str] = set()
-            for f_url, f_name in forum_links[:4]:
+            for f_url, f_name in forum_links:
                 f_resp = None
                 try:
                     f_resp = self.authenticated_get(f_url, timeout=20)
@@ -1471,7 +1475,7 @@ class LMSScraper:
                 resp = None
                 try:
                     resp = self.authenticated_get(
-                        f"{LMS_BASE_URL}/course/view.php", params={"id": course_id}, timeout=20
+                        resolve_lms_url("course/view.php"), params={"id": course_id}, timeout=20
                     )
                     if resp.status_code != 200 or "/login/" in (getattr(resp, "url", "") or ""):
                         return attendance_records
@@ -1484,7 +1488,7 @@ class LMSScraper:
             for cmid, title, base_url in att_links:
                 r = None
                 try:
-                    full_url = f"{LMS_BASE_URL}/mod/attendance/view.php?id={cmid}&view=5"
+                    full_url = resolve_lms_url(f"mod/attendance/view.php?id={cmid}&view=5")
                     r = self.authenticated_get(full_url, timeout=20)
                     if r.status_code != 200 or "/login/" in (getattr(r, "url", "") or ""):
                         continue

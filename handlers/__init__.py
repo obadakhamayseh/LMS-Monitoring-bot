@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from telegram import Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
     CommandHandler,
     ConversationHandler,
     MessageHandler,
+    TypeHandler,
     filters,
 )
 
@@ -29,13 +31,16 @@ from handlers.common import (
     STATE_LOGIN_PASS,
     STATE_LOGIN_USER,
     error_handler,
+    owner_guard,
 )
 from handlers.courses import add_course_got_id, add_course_start, cmd_courses
 from handlers.views import cmd_help
 
 
 def register_handlers(app: Application) -> None:
-    """Register all commands, conversations, callback handlers, and the global error handler."""
+    """Register owner guard (group=-1), commands, conversations, callbacks, and error handler."""
+    app.add_handler(TypeHandler(Update, owner_guard), group=-1)
+
     conv_handler = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(login_start, pattern="^login_start$"),

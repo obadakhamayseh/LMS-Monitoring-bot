@@ -168,6 +168,8 @@ function render() {
   `;
 
   document.getElementById('bellCount').textContent = unreadCount() ? ` ${unreadCount()}` : '';
+  const semEl = document.getElementById('semesterLabel');
+  if (semEl) semEl.textContent = getCurrentSemesterLabel();
 
   const el = document.getElementById('content');
   const pages = {
@@ -275,7 +277,7 @@ function homePage() {
         <h1>${greet}، ${escapeHTML(firstName)}</h1>
         <p>موجزك الأكاديمي لليوم · ${escapeHTML(todayStr)}</p>
       </div>
-      <span class="tag">الفصل الأول ٢٠٢٦/٢٧</span>
+      <span class="tag">${escapeHTML(getCurrentSemesterLabel())}</span>
     </div>
     ${!isLoggedIn ? loginBannerCard() : urgent}
     <div class="section-head">

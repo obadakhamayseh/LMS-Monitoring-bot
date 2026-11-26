@@ -16,6 +16,30 @@ from scraper.dates import looks_like_date, normalize_due_date_year
 
 logger = logging.getLogger(__name__)
 
+_ANNOUNCEMENT_FORUM_KEYWORDS = (
+    "إعلانات",
+    "اعلانات",
+    "announcements",
+    "news",
+    "أخبار",
+    "اخبار",
+)
+
+
+def resolve_lms_url(href: str) -> str:
+    """Resolve an LMS relative, protocol-relative, or absolute URL safely via urljoin."""
+    raw = (href or "").strip()
+    if not raw:
+        return ""
+    base = f"{LMS_BASE_URL.rstrip('/')}/"
+    return urljoin(base, raw)
+
+
+def is_announcement_forum(forum_name: str) -> bool:
+    """Return True if a forum name matches Announcements / News forum keywords."""
+    cleaned = _ARABIC_DIACRITICS_RE.sub("", str(forum_name or "")).strip().lower()
+    return any(k in cleaned for k in _ANNOUNCEMENT_FORUM_KEYWORDS)
+
 _NEGATIVE_SUBMISSION_RE = re.compile(
     r"not\s+submitted|no\s+submissions?\s+have\s+been\s+made(?:\s+yet)?|"
     r"no\s+submissions?|no\s+attempts?(?:\s+have\s+been\s+made)?|"
@@ -221,7 +245,7 @@ def extract_courses_from_soup(soup: BeautifulSoup, courses: list[dict[str, Any]]
             continue
 
         seen_ids.add(cid)
-        course_url = f"{LMS_BASE_URL}/course/view.php?id={cid}"
+        course_url = resolve_lms_url(f"course/view.php?id={cid}")
         courses.append({
             "id": cid,
             "name": name or f"مادة {cid}",
@@ -481,21 +505,19 @@ def parse_resources_from_course_soup(soup: BeautifulSoup, course_id: int) -> lis
     """Extract course resources (files, folders, URLs, pages, forums, scorm, books) from course HTML."""
     resources: list[dict[str, Any]] = []
     resource_patterns = [
-        r"/mod/resource/view\.php\?id=\d+",
-        r"/mod/folder/view\.php\?id=\d+",
-        r"/mod/url/view\.php\?id=\d+",
-        r"/mod/page/view\.php\?id=\d+",
-        r"/mod/forum/view\.php\?id=\d+",
-        r"/mod/scorm/view\.php\?id=\d+",
-        r"/mod/book/view\.php\?id=\d+",
+        r"(?:^|/)mod/resource/view\.php\?id=\d+",
+        r"(?:^|/)mod/folder/view\.php\?id=\d+",
+        r"(?:^|/)mod/url/view\.php\?id=\d+",
+        r"(?:^|/)mod/page/view\.php\?id=\d+",
+        r"(?:^|/)mod/forum/view\.php\?id=\d+",
+        r"(?:^|/)mod/scorm/view\.php\?id=\d+",
+        r"(?:^|/)mod/book/view\.php\?id=\d+",
     ]
     combined = "|".join(resource_patterns)
 
     seen: set[str] = set()
-    for a in soup.find_all("a", href=re.compile(combined)):
-        raw_href = a.get("href", "")
-        if not raw_href.startswith("http"):
-            raw_href = urljoin(LMS_BASE_URL + "/", raw_href)
+    for a in soup.find_all("a", href=re.compile(combined, re.I)):
+        raw_href = resolve_lms_url(a.get("href", ""))
         clean_href = clean_url(raw_href)
 
         id_match = re.search(r"id=(\d+)", clean_href)
@@ -735,19 +757,18 @@ def parse_grades_soup(soup: BeautifulSoup, course_id: int, fallback_url: str = "
 
 
 def extract_forum_links(soup: BeautifulSoup, seen_forums: set[str] | None = None) -> list[tuple[str, str]]:
-    """Extract unique `/mod/forum/view.php?id=<cmid>` links from course or forum index HTML."""
+    """Extract unique `/mod/forum/view.php?id=<cmid>` links, prioritizing Announcements/News forums first."""
     seen = seen_forums if seen_forums is not None else set()
     forum_links: list[tuple[str, str]] = []
-    for a in soup.find_all("a", href=re.compile(r"/mod/forum/view\.php\?id=\d+")):
-        href = a.get("href", "")
-        if not href.startswith("http"):
-            href = urljoin(LMS_BASE_URL + "/", href)
+    for a in soup.find_all("a", href=re.compile(r"(?:^|/)mod/forum/view\.php\?id=\d+", re.I)):
+        href = clean_url(resolve_lms_url(a.get("href", "")))
         m = re.search(r"id=(\d+)", href)
         if not m or m.group(1) in seen:
             continue
         seen.add(m.group(1))
         fname = clean_link_text(a) or "منتدى الإعلانات"
         forum_links.append((href, fname))
+    forum_links.sort(key=lambda item: (0 if is_announcement_forum(item[1]) else 1))
     return forum_links
 
 
@@ -821,26 +842,33 @@ def parse_forum_announcements_soup(
 
 
 def parse_announcement_details_soup(soup: BeautifulSoup) -> dict[str, str]:
-    """Parse body text, author, and date from an individual forum discussion page."""
+    """Parse body text, author, and date from an individual forum discussion page.
+
+    Author extraction is strictly scoped to the post container (`data-region="post"` / `.forumpost`)
+    so navbar/header links to the logged-in student's profile are never mistaken for the author.
+    """
     info = {"body": "", "author": "", "date": ""}
-    post_root = (
+    post_container = (
         soup.find(attrs={"data-region": "post"})
-        or soup.find(class_=re.compile(r"forumpost"))
-        or soup
+        or soup.find(class_=re.compile(r"\bforumpost\b"))
     )
+    body_root = post_container or soup
     post_body = (
-        post_root.find(class_=re.compile(r"post-content-container|posting|fullpost"))
-        or post_root.find(attrs={"data-region-content": "forum-post-core"})
+        body_root.find(class_=re.compile(r"post-content-container|posting|fullpost"))
+        or body_root.find(attrs={"data-region-content": "forum-post-core"})
     )
     if post_body:
         text = post_body.get_text("\n", strip=True)
         info["body"] = re.sub(r"\n{3,}", "\n\n", text).strip()[:900]
 
-    author_el = post_root.find("a", href=re.compile(r"/user/view\.php\?"))
-    if author_el:
-        info["author"] = author_el.get_text(strip=True)
+    if post_container is not None:
+        for author_el in post_container.find_all("a", href=re.compile(r"/user/(?:view|profile)\.php\?")):
+            author_txt = author_el.get_text(strip=True)
+            if author_txt:
+                info["author"] = author_txt
+                break
 
-    time_el = post_root.find("time") or soup.find("time")
+    time_el = (post_container.find("time") if post_container is not None else None) or soup.find("time")
     if time_el:
         info["date"] = time_el.get_text(strip=True)
 

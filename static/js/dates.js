@@ -239,3 +239,26 @@ function getWeekBounds(offset) {
   const saturday = new Date(sunday.getFullYear(), sunday.getMonth(), sunday.getDate() + 6);
   return { sunday, saturday };
 }
+
+function getCurrentSemesterLabel(now = new Date()) {
+  const d = (now && typeof now.getTime === 'function' && !isNaN(now.getTime())) ? now : new Date();
+  const y = d.getFullYear();
+  const m = d.getMonth(); // 0 = Jan .. 11 = Dec
+  if (m >= 8) return `الفصل الأول ${y}/${y + 1}`;
+  if (m === 0) return `الفصل الأول ${y - 1}/${y}`;
+  if (m >= 1 && m <= 5) return `الفصل الثاني ${y - 1}/${y}`;
+  return `الفصل الصيفي ${y - 1}/${y}`;
+}
+
+function escapeICSText(text) {
+  return String(text ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\r\n|\r|\n/g, '\\n')
+    .replace(/;/g, '\\;')
+    .replace(/,/g, '\\,');
+}
+
+function formatICSDateUTC(d) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`;
+}

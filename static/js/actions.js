@@ -260,34 +260,86 @@ function saveNote(id) {
   toast('حُفظت ملاحظتك بنجاح');
 }
 
+function _resolveTaskDueDate(t) {
+  if (!t) return null;
+  if (t.dueDateObj && typeof t.dueDateObj.getTime === 'function') {
+    return isNaN(t.dueDateObj.getTime()) ? null : t.dueDateObj;
+  }
+  if (t.due) {
+    const d = parseAnyDate(t.due);
+    if (d && !isNaN(d.getTime())) return d;
+  }
+  if (t.due_str) {
+    const d = parseAnyDate(t.due_str);
+    if (d && !isNaN(d.getTime())) return d;
+  }
+  return null;
+}
+
 function downloadICS(id) {
-  const t = tasks.find(x => String(x.id) === String(id));
-  if (!t) return;
-  const date = t.dueDateObj || new Date(Date.now() + 86400000);
-  const stamp = date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
-  const nowStamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
-  const safeUrl = safeHttpUrl(t.url) || '';
-  const ics = [
+  let targets;
+  if (Array.isArray(id)) {
+    targets = id;
+  } else if (id !== undefined && id !== null && id !== '') {
+    const found = tasks.find(x => String(x.id) === String(id));
+    targets = found ? [found] : [];
+  } else {
+    targets = tasks;
+  }
+
+  const datedItems = [];
+  for (const t of targets) {
+    const dueDate = _resolveTaskDueDate(t);
+    if (dueDate) datedItems.push({ task: t, dueDate });
+  }
+
+  if (datedItems.length === 0) {
+    toast('لا توجد مهام بموعد استحقاق صالح لتصديرها إلى التقويم');
+    return false;
+  }
+
+  const nowStamp = formatICSDateUTC(new Date());
+  const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
     'PRODID:-//Mutah Student Notebook//AR',
-    'BEGIN:VEVENT',
-    `UID:${t.id}@mulms.mutah.edu.jo`,
-    `DTSTAMP:${nowStamp}`,
-    `DTSTART:${stamp}`,
-    `SUMMARY:${t.title} (${t.course_name})`,
-    `DESCRIPTION:${t.course_name} - ${t.type}${safeUrl ? ' - ' + safeUrl : ''}`,
-    ...(safeUrl ? [`URL:${safeUrl}`] : []),
-    'END:VEVENT',
-    'END:VCALENDAR'
-  ].join('\r\n');
+    'CALSCALE:GREGORIAN'
+  ];
 
+  for (const { task: t, dueDate } of datedItems) {
+    const dtStart = formatICSDateUTC(dueDate);
+    const dtEnd = formatICSDateUTC(new Date(dueDate.getTime() + 3600000));
+    const safeUid = String(t.id ?? '').replace(/[\r\n\s]+/g, '_') || 'task';
+    const safeUrl = safeHttpUrl(t.url) || '';
+    const summary = escapeICSText(`${t.title || ''} (${t.course_name || ''})`);
+    const description = escapeICSText(`${t.course_name || ''} - ${t.type || ''}${safeUrl ? ' - ' + safeUrl : ''}`);
+    lines.push(
+      'BEGIN:VEVENT',
+      `UID:${safeUid}@mutah-lms-monitor`,
+      `DTSTAMP:${nowStamp}`,
+      `DTSTART:${dtStart}`,
+      `DTEND:${dtEnd}`,
+      `SUMMARY:${summary}`,
+      `DESCRIPTION:${description}`,
+      ...(safeUrl ? [`URL:${safeUrl}`] : []),
+      'END:VEVENT'
+    );
+  }
+
+  lines.push('END:VCALENDAR');
+  const ics = lines.join('\r\n') + '\r\n';
+
+  const url = URL.createObjectURL(new Blob([ics], { type: 'text/calendar;charset=utf-8' }));
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar;charset=utf-8' }));
-  a.download = `${t.id}.ics`;
+  a.href = url;
+  const baseName = datedItems.length === 1
+    ? String(datedItems[0].task.id || 'task').replace(/[^a-zA-Z0-9._-]+/g, '_')
+    : 'mutah-deadlines';
+  a.download = `${baseName}.ics`;
   a.click();
-  URL.revokeObjectURL(a.href);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
   toast('تم تنزيل ملف الموعد لإضافته إلى التقويم');
+  return true;
 }
 
 // PWA install & connectivity listeners
@@ -428,14 +480,22 @@ async function boot() {
   const params = new URLSearchParams(location.search);
   const go0 = params.get('go');
   if (go0 && navItems.some(n => n[0] === go0)) active = go0;
+  const urlCode = params.get('code');
+  if (params.has('code')) {
+    params.delete('code');
+    const cleanQs = params.toString();
+    const cleanUrl = location.pathname + (cleanQs ? '?' + cleanQs : '') + (location.hash || '');
+    const hist = (typeof window !== 'undefined' && window.history && typeof window.history.replaceState === 'function')
+      ? window.history
+      : ((typeof history !== 'undefined' && typeof history.replaceState === 'function') ? history : null);
+    if (hist) hist.replaceState(null, '', cleanUrl);
+  }
   render();
 
-  const urlCode = params.get('code');
   if (urlCode && !isInTelegram()) {
-    // Link from the bot: pair automatically, then clean the URL
+    // Link from the bot: code already stripped from URL before network request
     try { await pairWithCode(urlCode); toast('تم ربط الجهاز بنجاح'); }
     catch (e) { showPairing(e.message); }
-    history.replaceState(null, '', location.pathname);
   }
   fetchUserData();
   // Live refresh of relative time in header every 30s

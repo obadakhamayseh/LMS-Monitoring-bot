@@ -8,6 +8,7 @@ from typing import Any
 from bs4 import BeautifulSoup
 
 from scraper.client import _ARABIC_DIACRITICS_RE, clean_url
+from scraper.parsers import resolve_lms_url
 
 
 def parse_attendance_status_category(status_text: str) -> str | None:
@@ -63,8 +64,8 @@ def extract_attendance_links(soup: BeautifulSoup, clean_link_text_fn: Any) -> li
     """Discover unique `/mod/attendance/view.php?id=<cmid>` links from a course page soup."""
     att_links: list[tuple[str, str, str]] = []
     seen_cmids: set[str] = set()
-    for a in soup.find_all("a", href=re.compile(r"/mod/attendance/view\.php\?id=\d+")):
-        clean_href = clean_url(a.get("href", ""))
+    for a in soup.find_all("a", href=re.compile(r"(?:^|/)mod/attendance/view\.php\?id=\d+", re.I)):
+        clean_href = clean_url(resolve_lms_url(a.get("href", "")))
         m = re.search(r"id=(\d+)", clean_href)
         if not m:
             continue

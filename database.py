@@ -6,7 +6,7 @@ import secrets
 import sqlite3
 import logging
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -846,13 +846,40 @@ def update_check_interval(telegram_id, minutes: int):
                    (minutes, telegram_id))
 
 
-def update_last_check(telegram_id):
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+def utc_now_iso() -> str:
+    """Return current UTC timestamp in explicit ISO-8601 format (ending in 'Z')."""
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def update_last_check(telegram_id, checked_at: datetime | str | None = None) -> str:
+    """Persist `users.last_check` in explicit UTC ISO-8601 format (e.g. '2026-11-26T22:30:00Z')."""
+    if isinstance(checked_at, datetime):
+        dt = (
+            checked_at.astimezone(timezone.utc)
+            if checked_at.tzinfo is not None
+            else checked_at.replace(tzinfo=timezone.utc)
+        )
+        now_str = dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    elif isinstance(checked_at, str) and checked_at.strip():
+        raw = checked_at.strip()
+        try:
+            parsed = datetime.fromisoformat(raw.replace("Z", "+00:00").replace("z", "+00:00"))
+        except ValueError:
+            parsed = datetime.strptime(raw[:19], "%Y-%m-%d %H:%M:%S")
+        dt = (
+            parsed.astimezone(timezone.utc)
+            if parsed.tzinfo is not None
+            else parsed.replace(tzinfo=timezone.utc)
+        )
+        now_str = dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    else:
+        now_str = utc_now_iso()
     with DBContext() as db:
         db.execute(
             "UPDATE users SET last_check=? WHERE telegram_id=?",
-            (now_str, telegram_id)
+            (now_str, telegram_id),
         )
+    return now_str
 
 
 def _parse_user_meta(raw: Any) -> dict:

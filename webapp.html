@@ -1,84 +1,102 @@
 <!doctype html>
 <html lang="ar" dir="rtl">
+
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#2457a7">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="دفتر الطالب">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
-<link rel="manifest" href="/manifest.webmanifest">
-<link rel="icon" type="image/png" href="/logo.png">
-<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
-<title>دفتر الطالب | جامعة مؤتة</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/css/app.css">
-<script src="https://telegram.org/js/telegram-web-app.js" defer></script>
-<script src="/static/js/state.js" defer></script>
-<script src="/static/js/dates.js" defer></script>
-<script src="/static/js/api.js" defer></script>
-<script src="/static/js/render.js" defer></script>
-<script src="/static/js/actions.js" defer></script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="referrer" content="no-referrer">
+  <meta name="theme-color" content="#2457a7">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="دفتر الطالب">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" type="image/png" href="/logo.png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <title>دفتر الطالب | جامعة مؤتة</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
+  <script src="/static/js/state.js" defer></script>
+  <script src="/static/js/dates.js" defer></script>
+  <script src="/static/js/api.js" defer></script>
+  <script src="/static/js/render.js" defer></script>
+  <script src="/static/js/actions.js" defer></script>
 </head>
+
 <body>
-<div class="offline-bar" id="offlineBar" role="status" aria-live="polite">أنت غير متصل بالإنترنت — يتم عرض آخر بيانات تمت مزامنتها</div>
-<div class="pair-view" id="pairView" role="dialog" aria-modal="true" aria-labelledby="pairTitle" aria-hidden="true">
-  <div class="pair-card">
-    <div style="text-align:center">
-      <img src="/logo.png" style="width:68px;height:68px;border-radius:18px;box-shadow:0 8px 24px rgba(36,87,167,0.22);display:inline-block;margin-bottom:12px;object-fit:cover" alt="شعار دفتر الطالب" data-img-fallback="hide">
+  <div class="offline-bar" id="offlineBar" role="status" aria-live="polite">أنت غير متصل بالإنترنت — يتم عرض آخر بيانات
+    تمت مزامنتها</div>
+  <div class="pair-view" id="pairView" role="dialog" aria-modal="true" aria-labelledby="pairTitle" aria-hidden="true">
+    <div class="pair-card">
+      <div style="text-align:center">
+        <img src="/logo.png"
+          style="width:68px;height:68px;border-radius:18px;box-shadow:0 8px 24px rgba(36,87,167,0.22);display:inline-block;margin-bottom:12px;object-fit:cover"
+          alt="شعار دفتر الطالب" data-img-fallback="hide">
+      </div>
+      <h1 id="pairTitle">ربط هذا الجهاز بدفتر الطالب</h1>
+      <p>التطبيق خاص بصاحبه فقط. اربط هذا الهاتف مرة واحدة ثم يبقى مسجلاً حتى تفصله بنفسك. التنبيهات تستمر بالوصول عبر
+        تيليجرام كالمعتاد.</p>
+      <ol>
+        <li>افتح بوت تيليجرام وأرسل الأمر <b>/app</b></li>
+        <li>انسخ الرمز المكوّن من ٨ أرقام (صالح ١٠ دقائق)</li>
+        <li>أدخله هنا واضغط «ربط الجهاز»</li>
+      </ol>
+      <input class="field" id="pairCode" inputmode="numeric" autocomplete="one-time-code" maxlength="12"
+        placeholder="00000000" aria-label="رمز ربط الجهاز" data-keydown="submit-pair-code">
+      <div class="pair-err" id="pairErr" role="alert" aria-live="assertive"></div>
+      <button type="button" class="btn btn-primary" id="pairBtn" style="width:100%;padding:12px"
+        data-action="submit-pair-code">ربط الجهاز</button>
     </div>
-    <h1 id="pairTitle">ربط هذا الجهاز بدفتر الطالب</h1>
-    <p>التطبيق خاص بصاحبه فقط. اربط هذا الهاتف مرة واحدة ثم يبقى مسجلاً حتى تفصله بنفسك. التنبيهات تستمر بالوصول عبر تيليجرام كالمعتاد.</p>
-    <ol>
-      <li>افتح بوت تيليجرام وأرسل الأمر <b>/app</b></li>
-      <li>انسخ الرمز المكوّن من ٨ أرقام (صالح ١٠ دقائق)</li>
-      <li>أدخله هنا واضغط «ربط الجهاز»</li>
-    </ol>
-    <input class="field" id="pairCode" inputmode="numeric" autocomplete="one-time-code" maxlength="12" placeholder="00000000" aria-label="رمز ربط الجهاز" data-keydown="submit-pair-code">
-    <div class="pair-err" id="pairErr" role="alert" aria-live="assertive"></div>
-    <button type="button" class="btn btn-primary" id="pairBtn" style="width:100%;padding:12px" data-action="submit-pair-code">ربط الجهاز</button>
   </div>
-</div>
-<header class="top">
-  <div class="shell top-inner">
-    <div class="brand" role="button" tabindex="0" aria-label="العودة إلى الصفحة الرئيسية" data-action="go" data-page="home">
-      <img src="/logo.png" class="brand-logo" alt="شعار دفتر الطالب" data-img-fallback="next">
-      <div class="mark" style="display:none">م</div>
-      <div>
-        <strong>دفتر الطالب</strong>
-        <small>جامعة مؤتة · المتابعة الأكاديمية</small>
+  <header class="top">
+    <div class="shell top-inner">
+      <div class="brand" role="button" tabindex="0" aria-label="العودة إلى الصفحة الرئيسية" data-action="go"
+        data-page="home">
+        <img src="/logo.png" class="brand-logo" alt="شعار دفتر الطالب" data-img-fallback="next">
+        <div class="mark" style="display:none">م</div>
+        <div>
+          <strong>دفتر الطالب</strong>
+          <small>جامعة مؤتة · المتابعة الأكاديمية</small>
+        </div>
+      </div>
+      <div class="right-head">
+        <div class="sync" id="syncBox" aria-live="polite">● <b id="syncState">مزامنة نشطة</b> <span id="syncLong"
+            class="sync-long">· آخر فحص <span id="syncWhen">الآن</span></span></div>
+        <button type="button" class="icon-btn" title="مركز الإشعارات" aria-label="مركز الإشعارات" data-action="go"
+          data-page="notifications">♧<sup id="bellCount"
+            style="font-size:8px;color:#a14f49;font-weight:700"></sup></button>
+        <button type="button" class="icon-btn" id="btnSyncTop" title="مزامنة الآن من LMS"
+          aria-label="مزامنة الآن من LMS" data-action="sync-now">↻</button>
+        <button type="button" class="avatar" id="userAvatar" title="الإعدادات والحساب" aria-label="الإعدادات والحساب"
+          data-action="go" data-page="settings">ط</button>
       </div>
     </div>
-    <div class="right-head">
-      <div class="sync" id="syncBox" aria-live="polite">● <b id="syncState">مزامنة نشطة</b> <span id="syncLong" class="sync-long">· آخر فحص <span id="syncWhen">الآن</span></span></div>
-      <button type="button" class="icon-btn" title="مركز الإشعارات" aria-label="مركز الإشعارات" data-action="go" data-page="notifications">♧<sup id="bellCount" style="font-size:8px;color:#a14f49;font-weight:700"></sup></button>
-      <button type="button" class="icon-btn" id="btnSyncTop" title="مزامنة الآن من LMS" aria-label="مزامنة الآن من LMS" data-action="sync-now">↻</button>
-      <button type="button" class="avatar" id="userAvatar" title="الإعدادات والحساب" aria-label="الإعدادات والحساب" data-action="go" data-page="settings">ط</button>
-    </div>
+  </header>
+
+  <div class="shell layout">
+    <aside class="side">
+      <div class="side-label">مساحة الطالب</div>
+      <nav class="nav" id="sideNav" aria-label="التنقل الرئيسي"></nav>
+      <div class="semester">
+        <small>الفصل الدراسي</small>
+        <strong id="semesterLabel"></strong>
+      </div>
+      <p class="footnote" id="sideStatusNote">متصل بنظام التعليم الإلكتروني (Moodle LMS) لجامعة مؤتة</p>
+    </aside>
+    <main class="content" id="content">
+      <div class="empty">جارٍ تحميل بياناتك الأكاديمية...</div>
+    </main>
   </div>
-</header>
 
-<div class="shell layout">
-  <aside class="side">
-    <div class="side-label">مساحة الطالب</div>
-    <nav class="nav" id="sideNav" aria-label="التنقل الرئيسي"></nav>
-    <div class="semester">
-      <small>الفصل الدراسي</small>
-      <strong>الأول · ٢٠٢٦ / ٢٠٢٧</strong>
-    </div>
-    <p class="footnote" id="sideStatusNote">متصل بنظام التعليم الإلكتروني (Moodle LMS) لجامعة مؤتة</p>
-  </aside>
-  <main class="content" id="content">
-    <div class="empty">جارٍ تحميل بياناتك الأكاديمية...</div>
-  </main>
-</div>
-
-<nav class="bottom" id="bottomNav" aria-label="التنقل السفلي"></nav>
-<div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
-<div class="modal-back" id="modalBack" role="dialog" aria-modal="true" aria-labelledby="modalTitle" aria-hidden="true" data-action="close-modal-backdrop">
-  <div class="modal" id="modal" tabindex="-1"></div>
-</div>
+  <nav class="bottom" id="bottomNav" aria-label="التنقل السفلي"></nav>
+  <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+  <div class="modal-back" id="modalBack" role="dialog" aria-modal="true" aria-labelledby="modalTitle" aria-hidden="true"
+    data-action="close-modal-backdrop">
+    <div class="modal" id="modal" tabindex="-1"></div>
+  </div>
 </body>
+
 </html>
