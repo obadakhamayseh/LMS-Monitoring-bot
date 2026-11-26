@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 import json
 import logging
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from telegram import InlineKeyboardButton, Update
 from telegram.ext import ContextTypes, ConversationHandler
@@ -25,9 +27,11 @@ from handlers.common import (
     get_webapp_url,
     resolve_hook,
 )
+from services.observability import get_observability
 from telegram_utils import escape_html, html_link
 
 logger = logging.getLogger("bot.handlers.views")
+JORDAN_TZ = ZoneInfo("Asia/Amman")
 
 _DEFAULT_SEND = _send
 _DEFAULT_SEND_SECTIONS = _send_sections
@@ -619,6 +623,9 @@ async def _render_settings(msg_obj: Any, user: dict, edit: bool = False) -> None
     g = "🔔 مفعل" if user.get("notify_grade", 1) else "🔕 معطل"
     ann = "🔔 مفعل" if user.get("notify_announcement", 1) else "🔕 معطل"
     att = "🔔 مفعل" if user.get("notify_attendance", 1) else "🔕 معطل"
+    dig = "🔔 مفعل" if user.get("digest_enabled", 1) else "🔕 معطل"
+    risk = "🔔 مفعل" if user.get("notify_absence_risk", 1) else "🔕 معطل"
+    api = "⚡ مفعل" if user.get("use_moodle_api", 0) else "🔒 معطل"
     iv = user.get("check_interval", 10)
     iv_txt = _format_interval(iv)
 
@@ -636,6 +643,13 @@ async def _render_settings(msg_obj: Any, user: dict, edit: bool = False) -> None
         ],
         [
             InlineKeyboardButton(f"📢 إعلانات الدكاترة: {ann}", callback_data="sett_announcement"),
+        ],
+        [
+            InlineKeyboardButton(f"☀️ الملخص الصباحي: {dig}", callback_data="sett_digest"),
+            InlineKeyboardButton(f"⚠️ خطر الغياب: {risk}", callback_data="sett_absence_risk"),
+        ],
+        [
+            InlineKeyboardButton(f"⚡ Moodle API الهجين: {api}", callback_data="sett_moodle_api"),
         ],
         [
             InlineKeyboardButton(f"{'✔ ' if iv == 5 else ''}5 د", callback_data="iv_5"),
@@ -666,7 +680,10 @@ async def _render_settings(msg_obj: Any, user: dict, edit: bool = False) -> None
         f"  • الملفات والموارد: {r}\n"
         f"  • رادار العلامات: {g}\n"
         f"  • رادار الحضور والغياب: {att}\n"
-        f"  • إعلانات الدكاترة: {ann}\n\n"
+        f"  • إعلانات الدكاترة: {ann}\n"
+        f"  • الملخص الصباحي (48س): {dig}\n"
+        f"  • تنبيهات خطر الغياب: {risk}\n"
+        f"  • Moodle API الهجين: {api}\n\n"
         f"⏱️ <b>فترة الفحص الدوري:</b> كل <code>{escape_html(iv_txt)}</code>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"<i>اضغط على أي زر لتفعيل/تعطيل الإشعار أو تحديد فترة الفحص:</i>",
@@ -683,6 +700,7 @@ async def _render_help(msg_obj: Any, edit: bool = False) -> None:
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         "• /start — فتح القائمة الرئيسية\n"
         "• /courses — عرض المواد المراقَبة\n"
+        "• /status — عرض حالة النظام والمراقبة\n"
         "• /pair أو /app — ربط تطبيق الهاتف (PWA)\n"
         "• /unlink — فصل جميع الأجهزة المرتبطة\n"
         "• /logout — تسجيل الخروج وحذف الجلسة\n"
@@ -691,6 +709,80 @@ async def _render_help(msg_obj: Any, edit: bool = False) -> None:
         _back_kb("main_menu"),
         edit=edit,
     )
+
+
+def _format_uptime(seconds: float) -> str:
+    secs = max(0, int(seconds))
+    days, rem = divmod(secs, 86400)
+    hours, rem = divmod(rem, 3600)
+    minutes, sec = divmod(rem, 60)
+    parts: list[str] = []
+    if days:
+        parts.append(f"{days}d")
+    if hours or days:
+        parts.append(f"{hours}h")
+    if minutes or hours or days:
+        parts.append(f"{minutes}m")
+    parts.append(f"{sec}s")
+    return " ".join(parts)
+
+
+def _format_last_check_amman_utc(iso_utc: Any) -> str:
+    if not iso_utc:
+        return "لم يتم بعد"
+    raw = str(iso_utc).strip()
+    try:
+        dt_utc = datetime.fromisoformat(raw.replace("Z", "+00:00").replace("z", "+00:00"))
+        if dt_utc.tzinfo is None:
+            dt_utc = dt_utc.replace(tzinfo=timezone.utc)
+        else:
+            dt_utc = dt_utc.astimezone(timezone.utc)
+        dt_amman = dt_utc.astimezone(JORDAN_TZ)
+        utc_str = dt_utc.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        amman_str = dt_amman.strftime("%Y-%m-%d %H:%M:%S")
+        return f"{amman_str} (Amman) | {utc_str} (UTC)"
+    except ValueError:
+        return raw
+
+
+async def _render_status_view(msg_obj: Any, edit: bool = False) -> None:
+    send_fn = resolve_hook("_send", _send, _DEFAULT_SEND)
+    snap = get_observability().snapshot()
+    mon_state = "🟢 يعمل (Running)" if snap.get("monitor_running") else "🔴 متوقف (Stopped)"
+    waf_state = "🔴 محظور مؤقتاً (WAF Active)" if snap.get("waf_blocked") else "🟢 طبيعي (OK)"
+    last_ok = escape_html(_format_last_check_amman_utc(snap.get("last_successful_check_at")))
+    total_checks = int(snap.get("total_checks", 0))
+    err_count = int(snap.get("error_count", 0))
+    err_rate_pct = float(snap.get("error_rate", 0.0)) * 100.0
+    api_reqs = int(snap.get("api_requests_total", 0))
+    scrape_reqs = int(snap.get("scrape_requests_total", 0))
+    saved_reqs = int(snap.get("requests_saved_total", 0))
+    uptime_txt = escape_html(_format_uptime(float(snap.get("uptime_seconds", 0.0))))
+
+    lines = [
+        "🩺 <b>حالة النظام والمراقبة (/status)</b>",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        f"📡 حالة المراقب: <b>{mon_state}</b>",
+        f"🛡️ حالة WAF: <b>{waf_state}</b>",
+        f"⏰ آخر فحص ناجح:\n   <code>{last_ok}</code>",
+        f"⏱️ مدة التشغيل (Uptime): <code>{uptime_txt}</code>",
+        "━━━━━━━━━━━━━━━━━━━━━━",
+        f"📊 إجمالي الفحوصات: <b>{total_checks}</b>",
+        f"❌ الأخطاء: <b>{err_count}</b> (نسبة الخطأ: <code>{err_rate_pct:.1f}%</code>)",
+        f"⚡ طلبات Moodle API: <b>{api_reqs}</b> | طلبات Scraping: <b>{scrape_reqs}</b>",
+        f"📉 الطلبات الموفّرة (API-First): <b>{saved_reqs}</b>",
+    ]
+    if snap.get("last_error"):
+        lines.append(f"⚠️ آخر خطأ: <code>{escape_html(str(snap['last_error'])[:160])}</code>")
+
+    await send_fn(msg_obj, "\n".join(lines), _back_kb("main_menu"), edit=edit)
+
+
+async def status_cmd(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
+    if not _is_owner(update):
+        return await _reject_unauthorized(update)
+    await _render_status_view(update.message, edit=False)
+    return ConversationHandler.END
 
 
 async def cmd_help(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:

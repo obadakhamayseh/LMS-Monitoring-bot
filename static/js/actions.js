@@ -396,7 +396,12 @@ const _CLICK_ACTIONS = Object.assign(Object.create(null), {
   'install-app': () => installApp(),
   'unlink-device': () => unlinkThisDevice(),
   'download-ics': (el) => downloadICS(el.dataset.id),
-  'save-note': (el) => saveNote(el.dataset.id)
+  'save-note': (el) => saveNote(el.dataset.id),
+  'copy-ical-url': () => copyCalendarFeedUrl(),
+  'rotate-ical-token': () => rotateCalendarToken(),
+  'revoke-ical-token': () => revokeCalendarToken(),
+  'subscribe-web-push': () => subscribeWebPush(),
+  'unsubscribe-web-push': () => unsubscribeWebPush()
 });
 
 const _CHANGE_ACTIONS = Object.assign(Object.create(null), {
@@ -407,7 +412,9 @@ const _CHANGE_ACTIONS = Object.assign(Object.create(null), {
   'set-limit': (el) => setLimit(el.value),
   'set-server-pref': (el) => setServerPref(el.dataset.key, el.checked),
   'set-server-interval': (el) => setServerInterval(el.value),
-  'set-server-monitoring': (el) => setServerMonitoring(el.checked)
+  'set-server-monitoring': (el) => setServerMonitoring(el.checked),
+  'set-digest-time': (el) => setDigestTime(el.value),
+  'set-max-absence-pct': (el) => setMaxAbsencePct(el.value)
 });
 
 const _INPUT_ACTIONS = Object.assign(Object.create(null), {

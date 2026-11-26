@@ -10,7 +10,9 @@ from zoneinfo import ZoneInfo
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram import Bot
 
+import config
 import database as db
+from services.web_push import send_web_push_to_user
 from telegram_utils import escape_html, html_link, send_html_message
 
 logger = logging.getLogger(__name__)
@@ -145,11 +147,13 @@ def _parse_due_date(due_str: str) -> Optional[int]:
 
 class ReminderEngine:
     POLL_INTERVAL_SECONDS = 60
+    DIGEST_POLL_INTERVAL_SECONDS = 60
     TICK_TIMEOUT_SECONDS = 120.0
     MISFIRE_GRACE_TIME = 30
     TICK_BACKOFF_BASE = 30.0
     TICK_BACKOFF_MAX = 300.0
     JOB_ID = "reminder_poll_tick"
+    DIGEST_JOB_ID = "reminder_daily_digest_tick"
 
     def __init__(self, bot: Bot):
         self.bot = bot
@@ -206,6 +210,17 @@ class ReminderEngine:
             misfire_grace_time=self.MISFIRE_GRACE_TIME,
             replace_existing=True,
             next_run_time=datetime.now(JORDAN_TZ),
+        )
+        scheduler.add_job(
+            self._scheduled_digest_tick,
+            trigger="interval",
+            seconds=self.DIGEST_POLL_INTERVAL_SECONDS,
+            id=self.DIGEST_JOB_ID,
+            name="ReminderEngine daily digest check",
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=self.MISFIRE_GRACE_TIME,
+            replace_existing=True,
         )
         scheduler.start()
         self._scheduler = scheduler
@@ -290,6 +305,86 @@ class ReminderEngine:
             if await self._send_reminder(tid, rem, slot):
                 await self._run_db(db.mark_reminded, rid, field)
 
+    async def _fire_web_push(
+        self,
+        user: Optional[dict],
+        tid: int,
+        title: str,
+        body: str,
+        url: str = "/webapp",
+    ) -> None:
+        """Secondary Web Push channel (F7): non-blocking and strictly isolated from Telegram."""
+        if not getattr(config, "ENABLE_WEB_PUSH", False):
+            return
+        if user is not None and not user.get("enable_web_push", 1):
+            return
+        try:
+            await asyncio.to_thread(send_web_push_to_user, db, tid, title, body, url)
+        except Exception as exc:
+            logger.warning("Web Push secondary hook failed for user %s: %s", tid, exc)
+
+    async def _scheduled_digest_tick(self) -> None:
+        if not self._running:
+            return
+        task = self._track_task(self._check_daily_digests())
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=self.TICK_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+            logger.error("Daily digest tick timed out after %.1fs", self.TICK_TIMEOUT_SECONDS)
+        except asyncio.CancelledError:
+            task.cancel()
+            raise
+        except Exception as exc:
+            logger.error("Daily digest tick error: %s", exc)
+
+    async def _check_daily_digests(self, now: Optional[datetime] = None) -> int:
+        """Evaluate and deliver due morning digests (Asia/Amman), marking sent ONLY AFTER delivery."""
+        if not getattr(config, "ENABLE_DAILY_DIGEST", True):
+            return 0
+        from services.digest_service import build_daily_digest, is_digest_due
+
+        fetch_users = getattr(db, "get_digest_users", None)
+        if callable(fetch_users):
+            users = await self._run_db(fetch_users)
+        else:
+            users = await self._run_db(db.get_all_monitoring_users)
+
+        sent_count = 0
+        for user in users or []:
+            due, today_amman_iso = is_digest_due(user, now=now)
+            if not due:
+                continue
+            tid = int(user["telegram_id"])
+            digest_html = await self._run_db(build_daily_digest, db, tid, now)
+            if not digest_html:
+                continue
+            ok = await send_html_message(
+                self.bot,
+                tid,
+                digest_html,
+                disable_web_page_preview=True,
+                on_forbidden=self._on_forbidden,
+            )
+            if ok:
+                mark_fn = getattr(db, "mark_digest_sent", None)
+                if callable(mark_fn):
+                    await self._run_db(mark_fn, tid, today_amman_iso)
+                await self._fire_web_push(
+                    user,
+                    tid,
+                    "☀️ الملخص الصباحي اليومي",
+                    "لديك مهام قادمة خلال 48 ساعة أو تنبيهات حضور.",
+                    "/webapp",
+                )
+                sent_count += 1
+                logger.info("Daily digest sent to %s for %s", tid, today_amman_iso)
+        return sent_count
+
     async def _send_reminder(self, tid: int, rem: dict, slot: str) -> bool:
         emoji = REMIND_MSG[slot]
         label = REMIND_LABEL[slot]
@@ -298,7 +393,8 @@ class ReminderEngine:
         due = escape_html(rem.get("due_str", ""))
 
         course = await self._run_db(db.get_course, tid, rem["course_id"])
-        cname = escape_html(course["course_name"]) if course else "مادة"
+        raw_cname = course["course_name"] if course else "مادة"
+        cname = escape_html(raw_cname)
         task_link = html_link(raw_name, url)
 
         text = (
@@ -320,6 +416,13 @@ class ReminderEngine:
         )
         if ok:
             logger.info("Reminder sent (%s) to %s for '%s'", slot, tid, raw_name)
+            await self._fire_web_push(
+                None,
+                tid,
+                f"⏰ تذكير ({slot}): {raw_name}",
+                f"{raw_cname} — الموعد: {rem.get('due_str', '')}",
+                "/webapp",
+            )
         return ok
 
     def register_assignments(self, telegram_id: int, course_id: int, assignments: list):

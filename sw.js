@@ -4,7 +4,7 @@
    - /api/user-data: network-first, falls back to the last cached snapshot.
    - 401/403 responses evict cached user-data and are never cached; no non-OK response is cached.
    - Other API calls are never cached. */
-const VERSION = 'v4';
+const VERSION = 'v5';
 const SHELL_CACHE = 'shell-' + VERSION;
 const DATA_CACHE = 'data-' + VERSION;
 const FONT_CACHE = 'fonts-' + VERSION;
@@ -131,4 +131,94 @@ self.addEventListener('fetch', (event) => {
       )
     );
   }
+});
+
+function _safePushUrl(raw) {
+  if (typeof raw !== 'string') return '/webapp';
+  const s = raw.trim();
+  if (!s || /[\u0000-\u001F\u007F]/.test(s)) return '/webapp';
+  // Allow same-origin relative paths starting with single '/' (reject protocol-relative '//')
+  if (s.startsWith('/') && !s.startsWith('//')) return s;
+  // Allow explicit https:// URLs only
+  if (/^https:\/\//i.test(s)) {
+    try {
+      const parsed = new URL(s);
+      if (parsed.protocol === 'https:') return parsed.href;
+    } catch (_) {}
+  }
+  return '/webapp';
+}
+
+self.addEventListener('push', (event) => {
+  let title = 'دفتر الطالب';
+  let body = '';
+  let url = '/webapp';
+  let tag = 'mutah-lms';
+
+  if (event && event.data) {
+    let parsed = null;
+    try {
+      parsed = event.data.json();
+    } catch (_) {
+      try {
+        const txt = event.data.text();
+        if (typeof txt === 'string' && txt.trim()) {
+          try {
+            parsed = JSON.parse(txt);
+          } catch (__) {
+            body = txt.trim();
+          }
+        }
+      } catch (__) {}
+    }
+    if (parsed && typeof parsed === 'object') {
+      if (typeof parsed.title === 'string' && parsed.title.trim()) title = parsed.title.trim();
+      if (typeof parsed.body === 'string') body = parsed.body;
+      if (typeof parsed.url === 'string') url = _safePushUrl(parsed.url);
+      if (typeof parsed.tag === 'string' && parsed.tag.trim()) tag = parsed.tag.trim();
+    }
+  }
+
+  const options = {
+    body,
+    icon: '/logo.png',
+    badge: '/logo.png',
+    tag,
+    data: { url: _safePushUrl(url) }
+  };
+
+  if (self.registration && typeof self.registration.showNotification === 'function') {
+    event.waitUntil(self.registration.showNotification(title, options));
+  }
+});
+
+self.addEventListener('notificationclick', (event) => {
+  if (event && event.notification && typeof event.notification.close === 'function') {
+    event.notification.close();
+  }
+  const rawUrl = event && event.notification && event.notification.data && event.notification.data.url;
+  const targetUrl = _safePushUrl(rawUrl);
+  const resolvedTarget = new URL(targetUrl, self.location.origin).href;
+
+  event.waitUntil((async () => {
+    if (self.clients && typeof self.clients.matchAll === 'function') {
+      const windowClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      for (const client of windowClients) {
+        try {
+          const clientOrigin = new URL(client.url).origin;
+          const targetOrigin = new URL(resolvedTarget).origin;
+          if (clientOrigin === targetOrigin && typeof client.focus === 'function') {
+            if (typeof client.navigate === 'function' && client.url !== resolvedTarget) {
+              try { await client.navigate(resolvedTarget); } catch (_) {}
+            }
+            return await client.focus();
+          }
+        } catch (_) {}
+      }
+    }
+    if (self.clients && typeof self.clients.openWindow === 'function') {
+      return await self.clients.openWindow(resolvedTarget);
+    }
+    return undefined;
+  })());
 });

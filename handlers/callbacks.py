@@ -64,6 +64,12 @@ _NOTIFY_SETTING_MAP: dict[str, tuple[str, str]] = {
     "sett_attendance": ("attendance", "notify_attendance"),
 }
 
+_FEATURE_SETTING_MAP: dict[str, tuple[str, int]] = {
+    "sett_digest": ("digest_enabled", 1),
+    "sett_absence_risk": ("notify_absence_risk", 1),
+    "sett_moodle_api": ("use_moodle_api", 0),
+}
+
 
 async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_owner(update):
@@ -203,6 +209,13 @@ async def _dispatch_callback(
         if user:
             kw_key, col_key = _NOTIFY_SETTING_MAP[data]
             await _run_blocking(db.update_notify_settings, tid, **{kw_key: not user.get(col_key, 1)})
+            await render_settings_fn(q.message, await _run_blocking(db.get_user, tid), edit=True)
+
+    elif data in _FEATURE_SETTING_MAP:
+        if user:
+            col_key, default_val = _FEATURE_SETTING_MAP[data]
+            new_val = 0 if user.get(col_key, default_val) else 1
+            await _run_blocking(db.update_settings, tid, **{col_key: new_val})
             await render_settings_fn(q.message, await _run_blocking(db.get_user, tid), edit=True)
 
     elif data.startswith("iv_"):

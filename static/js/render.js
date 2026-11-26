@@ -193,6 +193,9 @@ function render() {
 function go(p) {
   active = p;
   render();
+  if (p === 'settings' && typeof loadSettingsAuxData === 'function') {
+    loadSettingsAuxData();
+  }
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
@@ -742,19 +745,45 @@ function filterGrades() {
   `;
 }
 
+function getCourseAbsenceRisk(courseId) {
+  if (!Array.isArray(absenceRisks)) return null;
+  return absenceRisks.find(r => String(r.course_id) === String(courseId)) || null;
+}
+
+function renderAbsenceRiskBadge(risk) {
+  if (!risk || typeof risk !== 'object') return '';
+  const level = String(risk.risk_level || '').toLowerCase();
+  const rem = Number.isFinite(Number(risk.remaining)) ? Math.max(0, Math.floor(Number(risk.remaining))) : null;
+  const remText = rem !== null ? `بقي ${rem} غيابات` : '';
+  let cls = 'pill good';
+  let statusTxt = 'آمن';
+  if (level === 'deprived') {
+    cls = 'pill red';
+    statusTxt = 'حرمان';
+  } else if (level === 'critical') {
+    cls = 'pill red';
+    statusTxt = 'خطر حرمان';
+  } else if (level === 'warning') {
+    cls = 'pill warn';
+    statusTxt = 'تحذير غياب';
+  }
+  const label = remText ? `${statusTxt} · ${remText}` : statusTxt;
+  return `<span class="${cls}" data-risk-level="${escapeHTML(level || 'safe')}">${escapeHTML(label)}</span>`;
+}
+
 function attendancePage() {
   const withAtt = courses.filter(c => c.total > 0 || c.att_sessions.length > 0);
   const withoutAtt = courses.filter(c => c.total === 0 && c.att_sessions.length === 0);
 
   return `
-    ${header('الحضور والغياب', 'السجل التفصيلي والنسبة لكل مقرر مع تنبيه غياب شخصي قابل للضبط.')}
+    ${header('الحضور والغياب', 'السجل التفصيلي والنسبة لكل مقرر مع تنبيه غياب شخصي قابل للضبط وحساب الغيابات المتبقية.')}
     <div class="toolbar">
       <label class="tag" style="padding:6px 10px;font-size:11px">
         حد التنبيه الشخصي:
         <input id="absenceLimit" type="number" value="${limit}" min="5" max="50" style="width:45px;border:1px solid var(--line);border-radius:5px;background:#fff;padding:2px 4px;text-align:center" data-change="set-limit">
         ٪ من الغياب
       </label>
-      <span class="tag">النسبة الرسمية تعتمد على سياسة الجامعة</span>
+      <span class="tag">الحد الأقصى للغياب: ${escapeHTML(String(userProfile.max_absence_pct ?? 15))}٪</span>
       <button class="btn" style="margin-right:auto" data-action="sync-now">↻ تحديث السجلات</button>
     </div>
     <div class="course-list">
@@ -762,6 +791,9 @@ function attendancePage() {
         const rate = Math.max(0, Math.min(100, c.total ? Math.round((c.attendance / c.total) * 100) : 100));
         const miss = Math.max(0, Math.min(100, c.total ? Math.round((c.absent / c.total) * 100) : 0));
         const alert = c.total > 0 && miss >= limit;
+        const risk = getCourseAbsenceRisk(c.id);
+        const riskBadge = renderAbsenceRiskBadge(risk);
+        const riskDanger = risk && (risk.risk_level === 'critical' || risk.risk_level === 'deprived');
         return `
           <article class="card">
             <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;flex-wrap:wrap">
@@ -772,13 +804,15 @@ function attendancePage() {
                   ${c.att_points ? ` · النقاط: ${escapeHTML(c.att_points)}` : ''}
                 </div>
               </div>
-              <div style="display:flex;gap:6px;align-items:center">
+              <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
                 <span class="${alert ? 'pill red' : 'pill good'}">${alert ? 'تنبيه غياب (' + miss + '٪)' : rate + '٪ حضور'}</span>
+                ${riskBadge}
                 ${c.att_sessions && c.att_sessions.length ? `<button class="btn" data-action="open-attendance-sessions" data-id="${escapeHTML(c.id)}">سجل الجلسات (${c.att_sessions.length})</button>` : ''}
                 ${c.att_url ? `<button class="btn" data-action="open-link" data-url="${escapeHTML(c.att_url)}">LMS ↗</button>` : ''}
               </div>
             </div>
-            <div class="progress"><i style="width:${rate}%;background:${alert ? 'var(--red)' : 'var(--teal)'}"></i></div>
+            <div class="progress"><i style="width:${rate}%;background:${(alert || riskDanger) ? 'var(--red)' : 'var(--teal)'}"></i></div>
+            ${risk && risk.at_risk && risk.message ? `<p class="item-meta" style="color:${riskDanger ? 'var(--red)' : 'var(--amber)'};font-weight:600;margin-top:7px">${escapeHTML(risk.message)}</p>` : ''}
             ${alert ? `<p class="item-meta" style="color:var(--red);font-weight:600;margin-top:7px">⚠️ تنبيه: نسبة الغياب في هذا المقرر (${miss}٪) وصلت أو تجاوزت حد التنبيه الشخصي (${limit}٪).</p>` : ''}
           </article>
         `;
@@ -787,15 +821,21 @@ function attendancePage() {
     ${withoutAtt.length ? `
       <div class="section-head"><h2>مقررات بدون أداة حضور إلكتروني في LMS</h2></div>
       <div class="course-list">
-        ${withoutAtt.map(c => `
+        ${withoutAtt.map(c => {
+          const risk = getCourseAbsenceRisk(c.id);
+          return `
           <article class="course">
             <div>
               <strong class="course-title">${escapeHTML(c.name)}</strong>
               <div class="course-meta">${escapeHTML(c.code)} · لم يضف مدرس المساق جدول حضور إلكتروني في صفحة المقرر</div>
             </div>
-            <span class="pill neutral">غير مفعّل في LMS</span>
+            <div class="course-end">
+              ${renderAbsenceRiskBadge(risk)}
+              <span class="pill neutral">غير مفعّل في LMS</span>
+            </div>
           </article>
-        `).join('')}
+        `;
+        }).join('')}
       </div>
     ` : ''}
     <p class="footnote">استخدم حد التنبيه للمتابعة الشخصية؛ يرسل البوت أيضاً إشعاراً فورياً عبر تيليجرام عند رصد أي محاضرة جديدة في سجل الحضور.</p>
@@ -1027,6 +1067,78 @@ function openCustomReminderModal(taskId = '') {
   `);
 }
 
+function webPushSettingsCard() {
+  const browserOk = typeof isWebPushBrowserSupported === 'function' ? isWebPushBrowserSupported() : false;
+  const serverOk = Boolean(featureFlags.web_push_global || webPushState.serverEnabled);
+  if (!browserOk || !serverOk) {
+    return `
+      <div class="section-head"><h2>إشعارات المتصفح والتطبيق (Web Push)</h2></div>
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div>
+            <strong>إشعارات Web Push (VAPID)</strong>
+            <div class="item-meta">${!serverOk ? 'إشعارات Web Push غير مفعّلة على الخادم حالياً (تتطلب ضبط مفاتيح VAPID).' : 'هذا المتصفح لا يدعم إشعارات Web Push.'}</div>
+          </div>
+          <span class="pill neutral">غير متاح</span>
+        </div>
+        <div class="actions">
+          <button type="button" class="btn" disabled>إشعارات المتصفح غير متاحة</button>
+        </div>
+      </div>
+    `;
+  }
+  const subscribed = Boolean(webPushState.subscribed);
+  const busy = Boolean(webPushState.busy);
+  return `
+    <div class="section-head"><h2>إشعارات المتصفح والتطبيق (Web Push)</h2></div>
+    <div class="card" style="padding:0">
+      <div class="setting">
+        <div>
+          <strong>تفعيل قناة إشعارات Web Push</strong>
+          <p>استلام نسخة فورية من تنبيهات تيليجرام كإشعارات متصفح وتطبيق على هذا الجهاز.</p>
+        </div>
+        <input class="switch" type="checkbox" ${userProfile.enable_web_push ? 'checked' : ''} data-change="set-server-pref" data-key="enable_web_push" aria-label="تفعيل قناة إشعارات Web Push">
+      </div>
+      <div style="padding:12px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <span class="pill ${subscribed ? 'good' : 'neutral'}">${subscribed ? 'مشترك على هذا الجهاز' : 'غير مشترك بعد'}</span>
+        <div class="actions" style="margin-top:0">
+          ${subscribed
+            ? `<button type="button" class="btn btn-danger" ${busy ? 'disabled' : ''} data-action="unsubscribe-web-push">إيقاف إشعارات هذا الجهاز</button>`
+            : `<button type="button" class="btn btn-primary" ${busy ? 'disabled' : ''} data-action="subscribe-web-push">تفعيل إشعارات المتصفح (Web Push)</button>`}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function icalFeedSettingsCard() {
+  if (featureFlags.ical_global === false) return '';
+  const fullUrl = typeof buildFullIcalUrl === 'function' ? buildFullIcalUrl(icalState.feed_url) : '';
+  const enabled = Boolean(userProfile.enable_ical_feed);
+  return `
+    <div class="section-head"><h2>تغذية التقويم الحيّة (Live iCal Feed)</h2></div>
+    <div class="card" style="padding:0">
+      <div class="setting">
+        <div>
+          <strong>تفعيل تغذية التقويم الحيّة (.ics)</strong>
+          <p>اشترك بمواعيد واجباتك واختباراتك تلقائياً في Google Calendar وApple Calendar وOutlook.</p>
+        </div>
+        <input class="switch" type="checkbox" ${enabled ? 'checked' : ''} data-change="set-server-pref" data-key="enable_ical_feed" aria-label="تفعيل تغذية التقويم الحيّة">
+      </div>
+      <div style="padding:12px 14px">
+        ${fullUrl
+          ? `<input id="icalFeedUrl" class="field" style="width:100%;margin-bottom:8px" dir="ltr" readonly value="${escapeHTML(fullUrl)}" aria-label="رابط تغذية التقويم">`
+          : `<p class="item-meta" style="margin-bottom:8px">اضغط «توليد / تدوير الرابط» لإنشاء رابط اشتراك سري خاص بك.</p>`}
+        <div class="actions" style="margin-top:0">
+          <button type="button" class="btn btn-primary" data-action="copy-ical-url">نسخ رابط التقويم</button>
+          <button type="button" class="btn" data-action="rotate-ical-token">توليد / تدوير الرابط</button>
+          <button type="button" class="btn btn-danger" data-action="revoke-ical-token">إلغاء الرابط</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function settingsPage() {
   const prefItems = [
     ['notify_assign', 'الواجبات والمواعيد', 'إشعار فوري عند نشر واجب جديد أو تذكيرات العد التنازلي (٢٤ ساعة، ٣ ساعات، ساعة)'],
@@ -1049,8 +1161,15 @@ function settingsPage() {
     [1440, 'مرة يومياً (٢٤ ساعة)']
   ];
 
+  const maxPctVal = Number(userProfile.max_absence_pct) || 15;
+  const pctChoices = [10, 15, 20, 25, 30];
+  if (!pctChoices.includes(maxPctVal) && maxPctVal >= 1 && maxPctVal <= 50) {
+    pctChoices.push(maxPctVal);
+    pctChoices.sort((a, b) => a - b);
+  }
+
   return `
-    ${header('الإعدادات والحساب', 'تحكم بتفضيلات الإشعارات الفورية في تيليجرام، دورة الفحص التلقائي، وإدارة حسابك الأكاديمي.')}
+    ${header('الإعدادات والحساب', 'تحكم بتفضيلات الإشعارات الفورية في تيليجرام، دورة الفحص التلقائي، التقويم الحي، الملخص اليومي، وإدارة حسابك الأكاديمي.')}
     <div class="section-head"><h2>تفضيلات إشعارات تيليجرام والمنصة</h2></div>
     <div class="card" style="padding:0">
       ${prefItems.map(([k, t, d]) => `
@@ -1060,6 +1179,48 @@ function settingsPage() {
         </div>
       `).join('')}
     </div>
+
+    ${featureFlags.digest_global !== false ? `
+      <div class="section-head"><h2>الملخص اليومي الصباحي (Daily Digest)</h2></div>
+      <div class="card" style="padding:0">
+        <div class="setting">
+          <div>
+            <strong>تفعيل الملخص اليومي</strong>
+            <p>رسالة صباحية بتوقيت عمّان تلخّص مهام الـ ٤٨ ساعة القادمة والمقررات المعرّضة لخطر الغياب.</p>
+          </div>
+          <input class="switch" type="checkbox" ${userProfile.digest_enabled ? 'checked' : ''} data-change="set-server-pref" data-key="digest_enabled" aria-label="تفعيل الملخص اليومي">
+        </div>
+        <div class="setting">
+          <div>
+            <strong>وقت إرسال الملخص اليومي</strong>
+            <p>اختر ساعة الإرسال اليومي (بصيغة HH:MM بتوقيت Asia/Amman).</p>
+          </div>
+          <input id="digestTimeInput" type="time" class="field" dir="ltr" value="${escapeHTML(userProfile.digest_time || '08:00')}" data-change="set-digest-time" aria-label="وقت إرسال الملخص اليومي">
+        </div>
+      </div>
+    ` : ''}
+
+    ${featureFlags.absence_risk_global !== false ? `
+      <div class="section-head"><h2>رادار خطر الغياب والحرمان (Absence Risk)</h2></div>
+      <div class="card" style="padding:0">
+        <div class="setting">
+          <div>
+            <strong>تنبيهات خطر الحرمان بالغياب</strong>
+            <p>إرسال تحذير فوري عند اقتراب غياباتك في أي مقرر من الحد الأقصى المسموح.</p>
+          </div>
+          <input class="switch" type="checkbox" ${userProfile.notify_absence_risk ? 'checked' : ''} data-change="set-server-pref" data-key="notify_absence_risk" aria-label="تنبيهات خطر الحرمان بالغياب">
+        </div>
+        <div class="setting">
+          <div>
+            <strong>نسبة الحد الأقصى للغياب (%)</strong>
+            <p>النسبة المعتمدة لحساب عدد الغيابات المتبقية قبل الحرمان (الافتراضي ١٥٪).</p>
+          </div>
+          <select id="maxAbsencePctInput" class="field" data-change="set-max-absence-pct" aria-label="نسبة الحد الأقصى للغياب">
+            ${pctChoices.map(p => `<option value="${p}" ${maxPctVal === p ? 'selected' : ''}>${p}٪</option>`).join('')}
+          </select>
+        </div>
+      </div>
+    ` : ''}
 
     <div class="section-head"><h2>المزامنة والفحص التلقائي</h2></div>
     <div class="card" style="padding:0">
@@ -1079,10 +1240,20 @@ function settingsPage() {
         </div>
         <input class="switch" type="checkbox" ${userProfile.is_monitoring ? 'checked' : ''} data-change="set-server-monitoring" aria-label="تشغيل المراقبة التلقائية النشطة">
       </div>
+      <div class="setting">
+        <div>
+          <strong>استخدام Moodle API الهجين (اختياري)</strong>
+          <p>معطّل افتراضياً؛ يحاول استخدام واجهة Moodle API أولاً لتقليل الطلبات ويعود تلقائياً للـ HTML Scraping عند عدم توفّرها.</p>
+        </div>
+        <input class="switch" type="checkbox" ${userProfile.use_moodle_api ? 'checked' : ''} data-change="set-server-pref" data-key="use_moodle_api" aria-label="استخدام Moodle API الهجين">
+      </div>
       <div style="padding:12px 14px">
         <button class="btn btn-primary" data-action="sync-now">↻ فحص فوري الآن لكافة المقررات</button>
       </div>
     </div>
+
+    ${icalFeedSettingsCard()}
+    ${webPushSettingsCard()}
 
     <div class="section-head"><h2>حساب الجامعة (Moodle LMS)</h2></div>
     ${isLoggedIn ? `

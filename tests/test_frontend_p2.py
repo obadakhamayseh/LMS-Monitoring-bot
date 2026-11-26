@@ -112,7 +112,8 @@ def test_every_static_js_and_sw_passes_node_check():
 @requires_node
 def test_sw_v4_precaches_and_serves_static_css_and_js():
     sw_text = SW_JS.read_text(encoding="utf-8")
-    assert "const VERSION = 'v4';" in sw_text, "sw.js VERSION must be bumped to 'v4'"
+    ver_match = re.search(r"const VERSION = 'v(\d+)';", sw_text)
+    assert ver_match and int(ver_match.group(1)) >= 4, "sw.js VERSION must be >= 'v4'"
     for asset in ["/static/css/app.css", *EXPECTED_JS_ORDER]:
         assert asset in sw_text, f"sw.js must list {asset} in SHELL_URLS"
 
@@ -189,8 +190,11 @@ const assert = require('assert');
   handlers.install({ waitUntil(p) { installP = p; } });
   await installP;
 
-  assert(cachesByName.has('shell-v4'), `Expected shell-v4 cache, got ${[...cachesByName.keys()]}`);
-  const shellStore = cachesByName.get('shell-v4');
+  const verMatch = swCode.match(/const VERSION = '(v\d+)';/);
+  assert(verMatch, 'Missing VERSION constant in sw.js');
+  const expectedShell = 'shell-' + verMatch[1];
+  assert(cachesByName.has(expectedShell), `Expected ${expectedShell} cache, got ${[...cachesByName.keys()]}`);
+  const shellStore = cachesByName.get(expectedShell);
 
   const staticAssets = [
     '/static/css/app.css',

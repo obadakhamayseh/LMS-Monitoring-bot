@@ -3,6 +3,8 @@
 const STORAGE_KEY = 'mutahStudentNotebook';
 const CHECK_INTERVAL_MIN = 5;
 const CHECK_INTERVAL_MAX = 1440;
+const MAX_ABSENCE_PCT_MIN = 1;
+const MAX_ABSENCE_PCT_MAX = 50;
 
 const navItems = [
   ['home', '⌂', 'الرئيسية'],
@@ -20,7 +22,9 @@ const navItems = [
 
 const _ALLOWED_PREF_KEYS = new Set([
   'notify_assign', 'notify_quiz', 'notify_resource',
-  'notify_grade', 'notify_announcement', 'notify_attendance'
+  'notify_grade', 'notify_announcement', 'notify_attendance',
+  'use_moodle_api', 'enable_ical_feed', 'digest_enabled',
+  'notify_absence_risk', 'enable_web_push'
 ]);
 
 function _defaultUserProfile() {
@@ -35,7 +39,24 @@ function _defaultUserProfile() {
     notify_resource: true,
     notify_grade: true,
     notify_announcement: true,
-    notify_attendance: true
+    notify_attendance: true,
+    use_moodle_api: false,
+    enable_ical_feed: true,
+    digest_enabled: true,
+    digest_time: '08:00',
+    notify_absence_risk: true,
+    max_absence_pct: 15,
+    enable_web_push: true
+  };
+}
+
+function _defaultFeatureFlags() {
+  return {
+    moodle_api_global: false,
+    ical_global: true,
+    digest_global: true,
+    absence_risk_global: true,
+    web_push_global: false
   };
 }
 
@@ -68,6 +89,10 @@ let grades = [];
 let attendanceList = [];
 let announcements = [];
 let files = [];
+let absenceRisks = [];
+let featureFlags = _defaultFeatureFlags();
+let icalState = { loaded: false, enabled: true, has_token: false, feed_url: '' };
+let webPushState = { supported: false, serverEnabled: false, subscribed: false, busy: false, publicKey: '' };
 
 // Local + server synced personal workspace state
 const savedLocal = safeReadLocalJson(STORAGE_KEY, {});
@@ -138,6 +163,10 @@ async function clearClientSession() {
   attendanceList = [];
   announcements = [];
   files = [];
+  absenceRisks = [];
+  featureFlags = _defaultFeatureFlags();
+  icalState = { loaded: false, enabled: true, has_token: false, feed_url: '' };
+  webPushState = { supported: false, serverEnabled: false, subscribed: false, busy: false, publicKey: '' };
   doneSet = new Set();
   readSet = new Set();
   notes = {};

@@ -79,10 +79,12 @@ from handlers.views import (
     _render_stats_view,
     _show_main,
     cmd_help,
+    status_cmd,
 )
 from lms_scraper import LMSScraper
 from monitor import MonitorEngine
 from reminder import ReminderEngine
+from services.observability import configure_logging
 from webapp_server import (
     create_pairing_code,
     init_webapp_engines,
@@ -91,20 +93,14 @@ from webapp_server import (
 )
 
 _BOT_LOG_HANDLER = logging.handlers.RotatingFileHandler(
-    "bot.log",
-    maxBytes=5 * 1024 * 1024,
-    backupCount=3,
-    encoding="utf-8",
-    delay=True,
+    "bot.log", maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8", delay=True,
 )
-logging.basicConfig(
-    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    level=logging.INFO,
-    handlers=[
-        logging.StreamHandler(),
-        _BOT_LOG_HANDLER,
-    ],
-)
+_obs_file_handler = configure_logging(log_file="bot.log")
+_BOT_LOG_HANDLER.setFormatter(_obs_file_handler.formatter)
+_root_logger = logging.getLogger()
+_root_logger.removeHandler(_obs_file_handler)
+_obs_file_handler.close()
+_root_logger.addHandler(_BOT_LOG_HANDLER)
 logger = logging.getLogger("bot")
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -114,6 +110,7 @@ async def post_init(app: Application) -> None:
     await app.bot.set_my_commands([
         BotCommand("start", "🏠 القائمة الرئيسية"),
         BotCommand("courses", "📚 موادي المراقَبة"),
+        BotCommand("status", "🩺 حالة النظام والمراقبة"),
         BotCommand("app", "📲 ربط تطبيق الهاتف"),
         BotCommand("pair", "📲 ربط تطبيق الهاتف"),
         BotCommand("unlink", "🔌 فصل أجهزة التطبيق"),
@@ -221,7 +218,7 @@ __all__ = [
     "get_webapp_url", "handle_callback", "handle_confirm_logout", "handle_logout_prompt", "handle_text",
     "init_webapp_engines", "logger", "login_got_pass", "login_got_user", "login_start", "main", "owner_guard",
     "post_init", "post_shutdown", "register_handlers", "set_engine", "set_reminder_engine",
-    "start_webapp_server_async", "stop_webapp_server_async", "validate_check_interval",
+    "start_webapp_server_async", "status_cmd", "stop_webapp_server_async", "validate_check_interval",
 ]
 
 if __name__ == "__main__":

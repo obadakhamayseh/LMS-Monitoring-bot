@@ -1,4 +1,5 @@
 import os
+import hmac
 import json
 import time
 import hashlib
@@ -345,30 +346,44 @@ def init_db():
         if db.is_pg:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS users (
-                    telegram_id     BIGINT PRIMARY KEY,
-                    lms_username    TEXT    NOT NULL,
-                    lms_password    TEXT    NOT NULL,
-                    lms_user_id     TEXT,
-                    full_name       TEXT,
-                    is_monitoring   INTEGER DEFAULT 0,
-                    notify_assign   INTEGER DEFAULT 1,
-                    notify_quiz     INTEGER DEFAULT 1,
-                    notify_resource INTEGER DEFAULT 1,
-                    check_interval  INTEGER DEFAULT 10,
-                    created_at      TIMESTAMPTZ DEFAULT NOW(),
-                    last_check      TEXT
+                    telegram_id         BIGINT PRIMARY KEY,
+                    lms_username        TEXT    NOT NULL,
+                    lms_password        TEXT    NOT NULL,
+                    lms_user_id         TEXT,
+                    full_name           TEXT,
+                    is_monitoring       INTEGER DEFAULT 0,
+                    notify_assign       INTEGER DEFAULT 1,
+                    notify_quiz         INTEGER DEFAULT 1,
+                    notify_resource     INTEGER DEFAULT 1,
+                    notify_grade        INTEGER DEFAULT 1,
+                    notify_announcement INTEGER DEFAULT 1,
+                    notify_attendance   INTEGER DEFAULT 1,
+                    user_meta           TEXT    DEFAULT '{}',
+                    use_moodle_api      INTEGER DEFAULT 0,
+                    enable_ical_feed    INTEGER DEFAULT 1,
+                    digest_enabled      INTEGER DEFAULT 1,
+                    digest_time         TEXT    DEFAULT '08:00',
+                    last_digest_date    TEXT    DEFAULT '',
+                    notify_absence_risk INTEGER DEFAULT 1,
+                    max_absence_pct     REAL    DEFAULT 15.0,
+                    enable_web_push     INTEGER DEFAULT 1,
+                    check_interval      INTEGER DEFAULT 10,
+                    created_at          TIMESTAMPTZ DEFAULT NOW(),
+                    last_check          TEXT
                 )
             """)
             db.execute("""
                 CREATE TABLE IF NOT EXISTS user_courses (
-                    id           BIGSERIAL PRIMARY KEY,
-                    telegram_id  BIGINT NOT NULL,
-                    course_id    BIGINT NOT NULL,
-                    course_name  TEXT    NOT NULL,
-                    course_url   TEXT,
-                    is_monitored INTEGER DEFAULT 1,
-                    is_seeded    INTEGER DEFAULT 0,
-                    added_at     TIMESTAMPTZ DEFAULT NOW(),
+                    id              BIGSERIAL PRIMARY KEY,
+                    telegram_id     BIGINT NOT NULL,
+                    course_id       BIGINT NOT NULL,
+                    course_name     TEXT    NOT NULL,
+                    course_url      TEXT,
+                    is_monitored    INTEGER DEFAULT 1,
+                    is_seeded       INTEGER DEFAULT 0,
+                    credit_hours    INTEGER DEFAULT 3,
+                    last_risk_level TEXT    DEFAULT '',
+                    added_at        TIMESTAMPTZ DEFAULT NOW(),
                     FOREIGN KEY(telegram_id) REFERENCES users(telegram_id),
                     UNIQUE(telegram_id, course_id)
                 )
@@ -480,6 +495,28 @@ def init_db():
                     created_at   BIGINT NOT NULL
                 )
             """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS calendar_tokens (
+                    telegram_id     BIGINT PRIMARY KEY,
+                    token_hash      TEXT UNIQUE NOT NULL,
+                    encrypted_token TEXT NOT NULL,
+                    created_at      BIGINT NOT NULL,
+                    revoked         INTEGER DEFAULT 0,
+                    FOREIGN KEY(telegram_id) REFERENCES users(telegram_id)
+                )
+            """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS push_subscriptions (
+                    id           BIGSERIAL PRIMARY KEY,
+                    telegram_id  BIGINT NOT NULL,
+                    device_token TEXT DEFAULT '',
+                    endpoint     TEXT UNIQUE NOT NULL,
+                    p256dh       TEXT NOT NULL,
+                    auth         TEXT NOT NULL,
+                    created_at   BIGINT NOT NULL,
+                    FOREIGN KEY(telegram_id) REFERENCES users(telegram_id)
+                )
+            """)
         else:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS users (
@@ -494,6 +531,16 @@ def init_db():
                     notify_resource     INTEGER DEFAULT 1,
                     notify_grade        INTEGER DEFAULT 1,
                     notify_announcement INTEGER DEFAULT 1,
+                    notify_attendance   INTEGER DEFAULT 1,
+                    user_meta           TEXT    DEFAULT '{}',
+                    use_moodle_api      INTEGER DEFAULT 0,
+                    enable_ical_feed    INTEGER DEFAULT 1,
+                    digest_enabled      INTEGER DEFAULT 1,
+                    digest_time         TEXT    DEFAULT '08:00',
+                    last_digest_date    TEXT    DEFAULT '',
+                    notify_absence_risk INTEGER DEFAULT 1,
+                    max_absence_pct     REAL    DEFAULT 15.0,
+                    enable_web_push     INTEGER DEFAULT 1,
                     check_interval      INTEGER DEFAULT 10,
                     created_at          TEXT    DEFAULT (datetime('now','localtime')),
                     last_check          TEXT
@@ -501,14 +548,16 @@ def init_db():
             """)
             db.execute("""
                 CREATE TABLE IF NOT EXISTS user_courses (
-                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                    telegram_id  INTEGER NOT NULL,
-                    course_id    INTEGER NOT NULL,
-                    course_name  TEXT    NOT NULL,
-                    course_url   TEXT,
-                    is_monitored INTEGER DEFAULT 1,
-                    is_seeded    INTEGER DEFAULT 0,
-                    added_at     TEXT    DEFAULT (datetime('now','localtime')),
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    telegram_id     INTEGER NOT NULL,
+                    course_id       INTEGER NOT NULL,
+                    course_name     TEXT    NOT NULL,
+                    course_url      TEXT,
+                    is_monitored    INTEGER DEFAULT 1,
+                    is_seeded       INTEGER DEFAULT 0,
+                    credit_hours    INTEGER DEFAULT 3,
+                    last_risk_level TEXT    DEFAULT '',
+                    added_at        TEXT    DEFAULT (datetime('now','localtime')),
                     FOREIGN KEY(telegram_id) REFERENCES users(telegram_id),
                     UNIQUE(telegram_id, course_id)
                 )
@@ -620,6 +669,28 @@ def init_db():
                     created_at   INTEGER NOT NULL
                 )
             """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS calendar_tokens (
+                    telegram_id     INTEGER PRIMARY KEY,
+                    token_hash      TEXT UNIQUE NOT NULL,
+                    encrypted_token TEXT NOT NULL,
+                    created_at      INTEGER NOT NULL,
+                    revoked         INTEGER DEFAULT 0,
+                    FOREIGN KEY(telegram_id) REFERENCES users(telegram_id)
+                )
+            """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS push_subscriptions (
+                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                    telegram_id  INTEGER NOT NULL,
+                    device_token TEXT DEFAULT '',
+                    endpoint     TEXT UNIQUE NOT NULL,
+                    p256dh       TEXT NOT NULL,
+                    auth         TEXT NOT NULL,
+                    created_at   INTEGER NOT NULL,
+                    FOREIGN KEY(telegram_id) REFERENCES users(telegram_id)
+                )
+            """)
 
         # Migrate users from the old 10-hour default to the new 1-hour default
         # once, without overwriting later per-user interval choices.
@@ -646,7 +717,17 @@ def init_db():
                 db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_announcement INTEGER DEFAULT 1")
                 db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_attendance INTEGER DEFAULT 1")
                 db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS user_meta TEXT DEFAULT '{}'")
+                db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS use_moodle_api INTEGER DEFAULT 0")
+                db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS enable_ical_feed INTEGER DEFAULT 1")
+                db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS digest_enabled INTEGER DEFAULT 1")
+                db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS digest_time TEXT DEFAULT '08:00'")
+                db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_digest_date TEXT DEFAULT ''")
+                db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_absence_risk INTEGER DEFAULT 1")
+                db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS max_absence_pct REAL DEFAULT 15.0")
+                db.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS enable_web_push INTEGER DEFAULT 1")
                 db.execute("ALTER TABLE user_courses ADD COLUMN IF NOT EXISTS is_seeded INTEGER DEFAULT 0")
+                db.execute("ALTER TABLE user_courses ADD COLUMN IF NOT EXISTS credit_hours INTEGER DEFAULT 3")
+                db.execute("ALTER TABLE user_courses ADD COLUMN IF NOT EXISTS last_risk_level TEXT DEFAULT ''")
                 db.execute("ALTER TABLE app_sessions ADD COLUMN IF NOT EXISTS expires_at BIGINT")
             else:
                 cols = [r["name"] for r in db.fetchall("PRAGMA table_info(reminders)")]
@@ -664,9 +745,29 @@ def init_db():
                     db.execute("ALTER TABLE users ADD COLUMN notify_attendance INTEGER DEFAULT 1")
                 if "user_meta" not in ucols:
                     db.execute("ALTER TABLE users ADD COLUMN user_meta TEXT DEFAULT '{}'")
+                if "use_moodle_api" not in ucols:
+                    db.execute("ALTER TABLE users ADD COLUMN use_moodle_api INTEGER DEFAULT 0")
+                if "enable_ical_feed" not in ucols:
+                    db.execute("ALTER TABLE users ADD COLUMN enable_ical_feed INTEGER DEFAULT 1")
+                if "digest_enabled" not in ucols:
+                    db.execute("ALTER TABLE users ADD COLUMN digest_enabled INTEGER DEFAULT 1")
+                if "digest_time" not in ucols:
+                    db.execute("ALTER TABLE users ADD COLUMN digest_time TEXT DEFAULT '08:00'")
+                if "last_digest_date" not in ucols:
+                    db.execute("ALTER TABLE users ADD COLUMN last_digest_date TEXT DEFAULT ''")
+                if "notify_absence_risk" not in ucols:
+                    db.execute("ALTER TABLE users ADD COLUMN notify_absence_risk INTEGER DEFAULT 1")
+                if "max_absence_pct" not in ucols:
+                    db.execute("ALTER TABLE users ADD COLUMN max_absence_pct REAL DEFAULT 15.0")
+                if "enable_web_push" not in ucols:
+                    db.execute("ALTER TABLE users ADD COLUMN enable_web_push INTEGER DEFAULT 1")
                 ccols = [r["name"] for r in db.fetchall("PRAGMA table_info(user_courses)")]
                 if "is_seeded" not in ccols:
                     db.execute("ALTER TABLE user_courses ADD COLUMN is_seeded INTEGER DEFAULT 0")
+                if "credit_hours" not in ccols:
+                    db.execute("ALTER TABLE user_courses ADD COLUMN credit_hours INTEGER DEFAULT 3")
+                if "last_risk_level" not in ccols:
+                    db.execute("ALTER TABLE user_courses ADD COLUMN last_risk_level TEXT DEFAULT ''")
                 acols = [r["name"] for r in db.fetchall("PRAGMA table_info(app_sessions)")]
                 if "expires_at" not in acols:
                     db.execute("ALTER TABLE app_sessions ADD COLUMN expires_at INTEGER")
@@ -711,6 +812,15 @@ def init_db():
         )
         db.execute(
             "CREATE INDEX IF NOT EXISTS idx_pair_codes_expires ON pair_codes (expires_at)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_calendar_tokens_hash ON calendar_tokens (token_hash)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user ON push_subscriptions (telegram_id)"
+        )
+        db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_push_subscriptions_device ON push_subscriptions (device_token)"
         )
 
         # Idempotent migration of stored user passwords to enc:v1: format
@@ -824,7 +934,8 @@ def set_user_notifications_enabled(telegram_id, enabled: bool) -> None:
 
 
 def update_notify_settings(telegram_id, assign=None, quiz=None, resource=None,
-                           grade=None, announcement=None, attendance=None):
+                           grade=None, announcement=None, attendance=None,
+                           absence_risk=None):
     with DBContext() as db:
         if assign is not None:
             db.execute("UPDATE users SET notify_assign=? WHERE telegram_id=?", (int(assign), telegram_id))
@@ -838,6 +949,98 @@ def update_notify_settings(telegram_id, assign=None, quiz=None, resource=None,
             db.execute("UPDATE users SET notify_announcement=? WHERE telegram_id=?", (int(announcement), telegram_id))
         if attendance is not None:
             db.execute("UPDATE users SET notify_attendance=? WHERE telegram_id=?", (int(attendance), telegram_id))
+        if absence_risk is not None:
+            db.execute("UPDATE users SET notify_absence_risk=? WHERE telegram_id=?", (int(absence_risk), telegram_id))
+
+
+_USER_SETTINGS_BOOL_COLS: frozenset[str] = frozenset(
+    {
+        "is_monitoring",
+        "notify_assign",
+        "notify_quiz",
+        "notify_resource",
+        "notify_grade",
+        "notify_announcement",
+        "notify_attendance",
+        "use_moodle_api",
+        "enable_ical_feed",
+        "digest_enabled",
+        "notify_absence_risk",
+        "enable_web_push",
+    }
+)
+_USER_SETTINGS_INT_COLS: frozenset[str] = frozenset({"check_interval"})
+_USER_SETTINGS_FLOAT_COLS: frozenset[str] = frozenset({"max_absence_pct"})
+_USER_SETTINGS_STR_COLS: frozenset[str] = frozenset({"digest_time", "last_digest_date"})
+USER_SETTINGS_WHITELIST: frozenset[str] = (
+    _USER_SETTINGS_BOOL_COLS
+    | _USER_SETTINGS_INT_COLS
+    | _USER_SETTINGS_FLOAT_COLS
+    | _USER_SETTINGS_STR_COLS
+)
+
+
+def _coerce_bool_int(val: Any) -> int:
+    if isinstance(val, str):
+        return 1 if val.strip().lower() in ("1", "true", "yes", "on") else 0
+    return 1 if bool(val) else 0
+
+
+def update_settings(
+    telegram_id,
+    settings: Optional[dict[str, Any]] = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Update whitelisted user settings safely (ignores non-whitelisted columns and None values)."""
+    merged: dict[str, Any] = {}
+    if isinstance(settings, dict):
+        merged.update(settings)
+    merged.update(kwargs)
+
+    updates: dict[str, Any] = {}
+    for col, raw_val in merged.items():
+        if raw_val is None or col not in USER_SETTINGS_WHITELIST:
+            continue
+        if col in _USER_SETTINGS_BOOL_COLS:
+            updates[col] = _coerce_bool_int(raw_val)
+        elif col in _USER_SETTINGS_INT_COLS:
+            updates[col] = int(raw_val)
+        elif col in _USER_SETTINGS_FLOAT_COLS:
+            updates[col] = float(raw_val)
+        elif col in _USER_SETTINGS_STR_COLS:
+            updates[col] = str(raw_val).strip()
+
+    if not updates:
+        return {}
+
+    assignments = ", ".join(f"{col}=?" for col in updates)
+    params = tuple(updates.values()) + (telegram_id,)
+    with DBContext() as db:
+        db.execute(f"UPDATE users SET {assignments} WHERE telegram_id=?", params)
+    return updates
+
+
+def mark_digest_sent(telegram_id, amman_date_str: str) -> None:
+    """Record the Amman YYYY-MM-DD date on which the daily digest was sent (prevents double-send)."""
+    date_str = str(amman_date_str or "").strip()
+    with DBContext() as db:
+        db.execute(
+            "UPDATE users SET last_digest_date=? WHERE telegram_id=?",
+            (date_str, telegram_id),
+        )
+
+
+def get_digest_users() -> list[dict]:
+    """Return all users with daily digest enabled (without decrypting passwords)."""
+    with DBContext() as db:
+        return db.fetchall(
+            """SELECT telegram_id, lms_username, full_name, is_monitoring,
+                      digest_enabled, digest_time, last_digest_date,
+                      notify_assign, notify_quiz, notify_absence_risk,
+                      max_absence_pct, enable_web_push
+               FROM users
+               WHERE digest_enabled = 1"""
+        )
 
 
 def update_check_interval(telegram_id, minutes: int):
@@ -1067,6 +1270,10 @@ def get_app_session(token: str) -> Optional[dict]:
         exp = row.get("expires_at")
         if exp is None or int(exp) <= now_ts:
             db.execute("DELETE FROM app_sessions WHERE token_hash=?", (th,))
+            db.execute(
+                "DELETE FROM push_subscriptions WHERE device_token=? OR device_token=?",
+                (th, token),
+            )
             return None
 
         now = datetime.now()
@@ -1100,15 +1307,32 @@ def verify_app_token(token: str) -> Optional[int]:
     return int(sess["telegram_id"])
 
 
-def revoke_app_token(token: str):
+def delete_app_session(token: str) -> None:
+    """Delete a device session and any Web Push subscriptions bound to that device token."""
+    raw = (token or "").strip()
+    if not raw:
+        return
+    th = _hash_token(raw)
     with DBContext() as db:
-        db.execute("DELETE FROM app_sessions WHERE token_hash=?", (_hash_token(token),))
+        db.execute("DELETE FROM app_sessions WHERE token_hash=?", (th,))
+        db.execute(
+            "DELETE FROM push_subscriptions WHERE device_token=? OR device_token=?",
+            (th, raw),
+        )
+
+
+def revoke_app_token(token: str):
+    delete_app_session(token)
 
 
 def revoke_all_app_sessions(telegram_id) -> int:
     with DBContext() as db:
         n = db.fetchone("SELECT COUNT(*) AS n FROM app_sessions WHERE telegram_id=?", (int(telegram_id),))
         db.execute("DELETE FROM app_sessions WHERE telegram_id=?", (int(telegram_id),))
+        db.execute(
+            "DELETE FROM push_subscriptions WHERE telegram_id=? AND device_token <> ''",
+            (int(telegram_id),),
+        )
         return int((n or {}).get("n") or 0)
 
 
@@ -1194,6 +1418,8 @@ def cleanup_pair_codes(now_ts: Optional[int] = None) -> int:
 def delete_user(telegram_id):
     """Atomically delete a user and all dependent records across every table."""
     with DBContext() as db:
+        db.execute("DELETE FROM push_subscriptions    WHERE telegram_id=?", (telegram_id,))
+        db.execute("DELETE FROM calendar_tokens       WHERE telegram_id=?", (telegram_id,))
         db.execute("DELETE FROM app_sessions         WHERE telegram_id=?", (telegram_id,))
         db.execute("DELETE FROM pair_codes           WHERE telegram_id=?", (telegram_id,))
         db.execute("DELETE FROM course_attendance    WHERE telegram_id=?", (telegram_id,))
@@ -1232,6 +1458,28 @@ def mark_course_seeded(telegram_id, course_id, seeded: bool = True) -> None:
         db.execute(
             "UPDATE user_courses SET is_seeded=? WHERE telegram_id=? AND course_id=?",
             (1 if seeded else 0, telegram_id, course_id),
+        )
+
+
+def update_course_credit_hours(telegram_id, course_id, credit_hours: int) -> None:
+    """Update a course's credit hours (1..12) for absence-risk calculation (F6)."""
+    hours = int(credit_hours)
+    if hours < 1 or hours > 12:
+        raise ValueError(f"credit_hours must be between 1 and 12, got {credit_hours!r}")
+    with DBContext() as db:
+        db.execute(
+            "UPDATE user_courses SET credit_hours=? WHERE telegram_id=? AND course_id=?",
+            (hours, telegram_id, course_id),
+        )
+
+
+def set_course_risk_level(telegram_id, course_id, risk_level: str) -> None:
+    """Persist the last alerted absence risk level on `user_courses.last_risk_level` (F6)."""
+    level = str(risk_level or "").strip()
+    with DBContext() as db:
+        db.execute(
+            "UPDATE user_courses SET last_risk_level=? WHERE telegram_id=? AND course_id=?",
+            (level, telegram_id, course_id),
         )
 
 
@@ -1777,3 +2025,164 @@ def get_user_attendance(telegram_id, course_id=None) -> list:
             WHERE att.telegram_id = ?
             ORDER BY att.course_id ASC, att.id ASC
         """, (telegram_id,))
+
+
+# ==================== CALENDAR TOKENS (F4: Private iCal Feed) ====================
+
+
+def create_or_rotate_calendar_token(telegram_id) -> str:
+    """Generate and persist a new private iCal token (SHA-256 hash + encrypted raw token)."""
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = _hash_token(raw_token)
+    encrypted = encrypt_password(raw_token)
+    now_ts = int(time.time())
+    with DBContext() as db:
+        db.execute(
+            """INSERT INTO calendar_tokens (telegram_id, token_hash, encrypted_token, created_at, revoked)
+               VALUES (?,?,?,?,0)
+               ON CONFLICT(telegram_id) DO UPDATE SET
+                   token_hash      = excluded.token_hash,
+                   encrypted_token = excluded.encrypted_token,
+                   created_at      = excluded.created_at,
+                   revoked         = 0""",
+            (int(telegram_id), token_hash, encrypted, now_ts),
+        )
+    return raw_token
+
+
+def get_calendar_token(telegram_id) -> Optional[str]:
+    """Return the active decrypted iCal token for a user, or None if missing/revoked."""
+    with DBContext() as db:
+        row = db.fetchone(
+            "SELECT encrypted_token, revoked FROM calendar_tokens WHERE telegram_id=?",
+            (int(telegram_id),),
+        )
+    if not row or int(row.get("revoked") or 0) != 0:
+        return None
+    encrypted = row.get("encrypted_token") or ""
+    if not encrypted:
+        return None
+    return decrypt_password(encrypted)
+
+
+def revoke_calendar_token(telegram_id) -> None:
+    """Mark a user's iCal token as revoked."""
+    with DBContext() as db:
+        db.execute(
+            "UPDATE calendar_tokens SET revoked=1 WHERE telegram_id=?",
+            (int(telegram_id),),
+        )
+
+
+def resolve_calendar_token(raw_token: str) -> Optional[int]:
+    """Resolve a raw iCal feed token to telegram_id iff unrevoked and iCal feed is enabled."""
+    if not isinstance(raw_token, str):
+        return None
+    candidate = raw_token.strip()
+    if len(candidate) < 16:
+        return None
+    candidate_hash = _hash_token(candidate)
+    with DBContext() as db:
+        row = db.fetchone(
+            """SELECT ct.telegram_id, ct.token_hash, ct.revoked, u.enable_ical_feed
+               FROM calendar_tokens ct
+               JOIN users u ON u.telegram_id = ct.telegram_id
+               WHERE ct.token_hash = ?""",
+            (candidate_hash,),
+        )
+    if not row:
+        return None
+    stored_hash = str(row.get("token_hash") or "")
+    if not hmac.compare_digest(stored_hash, candidate_hash):
+        return None
+    if int(row.get("revoked") or 0) != 0:
+        return None
+    ical_enabled = row.get("enable_ical_feed")
+    if ical_enabled is not None and int(ical_enabled) == 0:
+        return None
+    return int(row["telegram_id"])
+
+
+# ==================== WEB PUSH SUBSCRIPTIONS (F7) ====================
+
+
+def _normalize_device_token_ref(device_token: str) -> str:
+    raw = (device_token or "").strip()
+    if not raw:
+        return ""
+    if len(raw) == 64 and all(c in "0123456789abcdef" for c in raw.lower()):
+        return raw.lower()
+    return _hash_token(raw)
+
+
+def save_push_subscription(
+    telegram_id,
+    endpoint: str,
+    p256dh: str,
+    auth: str,
+    device_token: str = "",
+) -> None:
+    """Persist or update a browser Web Push subscription bound to a user and optional device token."""
+    ep = str(endpoint or "").strip()
+    k_p256dh = str(p256dh or "").strip()
+    k_auth = str(auth or "").strip()
+    if not ep or not k_p256dh or not k_auth:
+        raise ValueError("endpoint, p256dh, and auth are required for push subscriptions")
+    dev_ref = _normalize_device_token_ref(device_token)
+    now_ts = int(time.time())
+    with DBContext() as db:
+        db.execute(
+            """INSERT INTO push_subscriptions (telegram_id, device_token, endpoint, p256dh, auth, created_at)
+               VALUES (?,?,?,?,?,?)
+               ON CONFLICT(endpoint) DO UPDATE SET
+                   telegram_id  = excluded.telegram_id,
+                   device_token = excluded.device_token,
+                   p256dh       = excluded.p256dh,
+                   auth         = excluded.auth,
+                   created_at   = excluded.created_at""",
+            (int(telegram_id), dev_ref, ep, k_p256dh, k_auth, now_ts),
+        )
+
+
+def delete_push_subscription(telegram_id, endpoint: str) -> None:
+    """Delete a single push subscription by user and endpoint."""
+    ep = str(endpoint or "").strip()
+    if not ep:
+        return
+    with DBContext() as db:
+        db.execute(
+            "DELETE FROM push_subscriptions WHERE telegram_id=? AND endpoint=?",
+            (int(telegram_id), ep),
+        )
+
+
+def delete_push_subscriptions_by_device(device_token: str) -> int:
+    """Delete all push subscriptions associated with a device session token (raw or hashed)."""
+    raw = (device_token or "").strip()
+    if not raw:
+        return 0
+    dev_ref = _normalize_device_token_ref(raw)
+    with DBContext() as db:
+        row = db.fetchone(
+            "SELECT COUNT(*) AS n FROM push_subscriptions WHERE device_token=? OR device_token=?",
+            (dev_ref, raw),
+        )
+        count = int((row or {}).get("n") or 0)
+        if count:
+            db.execute(
+                "DELETE FROM push_subscriptions WHERE device_token=? OR device_token=?",
+                (dev_ref, raw),
+            )
+        return count
+
+
+def get_push_subscriptions(telegram_id) -> list[dict]:
+    """Return all saved Web Push subscriptions for a user."""
+    with DBContext() as db:
+        return db.fetchall(
+            """SELECT id, telegram_id, device_token, endpoint, p256dh, auth, created_at
+               FROM push_subscriptions
+               WHERE telegram_id=?
+               ORDER BY id ASC""",
+            (int(telegram_id),),
+        )

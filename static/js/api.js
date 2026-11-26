@@ -173,7 +173,13 @@ async function fetchUserData() {
 
     isLoggedIn = true;
     if (!isInTelegram()) isDeviceLinked = true;
-    userProfile = data.user || userProfile;
+    userProfile = Object.assign(_defaultUserProfile(), data.user || {});
+    absenceRisks = Array.isArray(data.absence_risks) ? data.absence_risks : [];
+    if (data.features && typeof data.features === 'object') {
+      featureFlags = Object.assign(_defaultFeatureFlags(), data.features);
+      if (featureFlags.web_push_global) webPushState.serverEnabled = true;
+    }
+    icalState.enabled = Boolean(userProfile.enable_ical_feed);
 
     // Merge server user_meta if present
     if (data.user_meta && typeof data.user_meta === 'object') {
@@ -253,6 +259,8 @@ async function fetchUserData() {
         att_pct_str: att ? (att.percentage_str || '') : '',
         att_sessions: att ? (att.sessions || []) : [],
         att_url: att ? (att.att_url || '') : '',
+        credit_hours: Number(c.credit_hours) || 3,
+        last_risk_level: c.last_risk_level || '',
         grade: avgPct,
         graded_count: cGrades.length,
         stats: c.stats || { assignments: 0, quizzes: 0, resources: 0, tasks_total: 0, tasks_done: 0 }
@@ -437,6 +445,7 @@ async function setServerPref(key, val) {
   const prev = userProfile[key];
   const next = Boolean(val);
   userProfile[key] = next;
+  if (key === 'enable_ical_feed') icalState.enabled = next;
   try {
     const res = await apiFetch('/api/update-settings', {
       method: 'POST',
@@ -447,11 +456,375 @@ async function setServerPref(key, val) {
     if (!res.ok || d.success === false) {
       throw new Error(d.error || 'تعذر حفظ الإعدادات');
     }
-    toast('تم حفظ تفضيل الإشعارات في النظام');
+    if (active === 'settings' && (key === 'enable_ical_feed' || key === 'use_moodle_api' || key === 'digest_enabled' || key === 'notify_absence_risk' || key === 'enable_web_push')) {
+      render();
+    }
+    toast('تم حفظ الإعداد في النظام');
   } catch (e) {
     userProfile[key] = prev;
+    if (key === 'enable_ical_feed') icalState.enabled = Boolean(prev);
     render();
     toast('تعذر حفظ الإعدادات');
+  }
+}
+
+async function setDigestTime(val) {
+  const str = String(val || '').trim();
+  if (!/^([01]\d|2[0-3]):([0-5]\d)$/.test(str)) {
+    toast('يرجى إدخال وقت صحيح بصيغة HH:MM (مثال 08:00)');
+    render();
+    return false;
+  }
+  const prev = userProfile.digest_time;
+  userProfile.digest_time = str;
+  try {
+    const res = await apiFetch('/api/update-settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tid: getTelegramId(), digest_time: str })
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || d.success === false) {
+      throw new Error(d.error || 'تعذر حفظ وقت الملخص اليومي');
+    }
+    toast(`تم ضبط وقت الملخص اليومي: ${str}`);
+    return true;
+  } catch (e) {
+    userProfile.digest_time = prev;
+    render();
+    toast('تعذر حفظ وقت الملخص اليومي');
+    return false;
+  }
+}
+
+async function setMaxAbsencePct(val) {
+  const num = Number(val);
+  if (!Number.isFinite(num) || num < MAX_ABSENCE_PCT_MIN || num > MAX_ABSENCE_PCT_MAX) {
+    toast(`حد نسبة الغياب يجب أن يكون بين ${MAX_ABSENCE_PCT_MIN}٪ و${MAX_ABSENCE_PCT_MAX}٪`);
+    render();
+    return false;
+  }
+  const prev = userProfile.max_absence_pct;
+  userProfile.max_absence_pct = num;
+  try {
+    const res = await apiFetch('/api/update-settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tid: getTelegramId(), max_absence_pct: num })
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || d.success === false) {
+      throw new Error(d.error || 'تعذر حفظ حد خطر الغياب');
+    }
+    toast(`تم ضبط حد خطر الغياب: ${num}٪`);
+    return true;
+  } catch (e) {
+    userProfile.max_absence_pct = prev;
+    render();
+    toast('تعذر حفظ حد خطر الغياب');
+    return false;
+  }
+}
+
+function buildFullIcalUrl(feedUrl) {
+  if (typeof feedUrl !== 'string') return '';
+  const s = feedUrl.trim();
+  if (!s) return '';
+  if (s.startsWith('/') && !s.startsWith('//')) {
+    const origin = (typeof location !== 'undefined' && location.origin) ? location.origin : '';
+    return origin ? origin + s : s;
+  }
+  return safeHttpUrl(s) || '';
+}
+
+async function fetchCalendarToken() {
+  if (!isLoggedIn || featureFlags.ical_global === false) return null;
+  try {
+    const res = await apiFetch('/api/calendar-token');
+    const d = await res.json().catch(() => ({}));
+    if (res.ok && d.success) {
+      icalState = {
+        loaded: true,
+        enabled: Boolean(d.enabled),
+        has_token: Boolean(d.has_token),
+        feed_url: typeof d.feed_url === 'string' ? d.feed_url : ''
+      };
+      if (active === 'settings') render();
+      return d;
+    }
+  } catch (e) {
+    console.warn('Failed to fetch calendar token status:', e);
+  }
+  return null;
+}
+
+async function rotateCalendarToken() {
+  try {
+    const res = await apiFetch('/api/calendar-token/rotate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tid: getTelegramId() })
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || !d.success) {
+      throw new Error(d.error || 'تعذر توليد رابط التقويم');
+    }
+    const feedUrl = typeof d.feed_url === 'string' && d.feed_url
+      ? d.feed_url
+      : (d.token ? `/api/calendar.ics?token=${encodeURIComponent(d.token)}` : '');
+    icalState = {
+      loaded: true,
+      enabled: Boolean(userProfile.enable_ical_feed),
+      has_token: Boolean(feedUrl),
+      feed_url: feedUrl
+    };
+    if (active === 'settings') render();
+    toast('تم توليد رابط تقويم جديد (تم إبطال الرابط السابق)');
+    return true;
+  } catch (e) {
+    toast(e.message || 'تعذر توليد رابط التقويم');
+    return false;
+  }
+}
+
+async function revokeCalendarToken() {
+  try {
+    const res = await apiFetch('/api/calendar-token/revoke', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tid: getTelegramId() })
+    });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok || !d.success) {
+      throw new Error(d.error || 'تعذر إلغاء رابط التقويم');
+    }
+    icalState = {
+      loaded: true,
+      enabled: Boolean(userProfile.enable_ical_feed),
+      has_token: false,
+      feed_url: ''
+    };
+    if (active === 'settings') render();
+    toast('تم إلغاء رابط التقويم بنجاح');
+    return true;
+  } catch (e) {
+    toast(e.message || 'تعذر إلغاء رابط التقويم');
+    return false;
+  }
+}
+
+async function copyCalendarFeedUrl() {
+  const fullUrl = buildFullIcalUrl(icalState.feed_url);
+  if (!fullUrl) {
+    toast('لا يوجد رابط تقويم نشط — اضغط توليد رابط جديد أولاً');
+    return false;
+  }
+  try {
+    if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      await navigator.clipboard.writeText(fullUrl);
+      toast('تم نسخ رابط تغذية التقويم (iCal)');
+      return true;
+    }
+  } catch (e) {
+    console.warn('Clipboard write failed:', e);
+  }
+  const input = document.getElementById('icalFeedUrl');
+  if (input && typeof input.select === 'function') {
+    try { input.select(); } catch (_) {}
+  }
+  toast('حدد الرابط وانسخه يدوياً لإضافته إلى تطبيق التقويم');
+  return false;
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const str = String(base64String || '').trim();
+  const padding = '='.repeat((4 - (str.length % 4)) % 4);
+  const base64 = (str + padding).replace(/-/g, '+').replace(/_/g, '/');
+  let rawData = '';
+  if (typeof atob === 'function') {
+    rawData = atob(base64);
+  } else {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    let buffer = 0;
+    let bits = 0;
+    for (let i = 0; i < base64.length; i++) {
+      const ch = base64.charAt(i);
+      if (ch === '=') break;
+      const val = chars.indexOf(ch);
+      if (val < 0) continue;
+      buffer = (buffer << 6) | val;
+      bits += 6;
+      if (bits >= 8) {
+        bits -= 8;
+        rawData += String.fromCharCode((buffer >> bits) & 0xff);
+      }
+    }
+  }
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; i++) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
+function isWebPushBrowserSupported() {
+  return Boolean(
+    typeof navigator !== 'undefined' &&
+    'serviceWorker' in navigator &&
+    typeof window !== 'undefined' &&
+    'PushManager' in window
+  );
+}
+
+async function refreshWebPushState() {
+  const supported = isWebPushBrowserSupported();
+  webPushState.supported = supported;
+  if (!isLoggedIn) return webPushState;
+  try {
+    const res = await apiFetch('/api/push/vapid-public-key');
+    const d = await res.json().catch(() => ({}));
+    if (res.ok && d.success) {
+      webPushState.serverEnabled = Boolean(d.enabled && d.public_key);
+      webPushState.publicKey = typeof d.public_key === 'string' ? d.public_key : '';
+      featureFlags.web_push_global = webPushState.serverEnabled;
+    } else {
+      webPushState.serverEnabled = false;
+      webPushState.publicKey = '';
+    }
+  } catch (e) {
+    webPushState.serverEnabled = false;
+  }
+  if (supported && navigator.serviceWorker && navigator.serviceWorker.ready) {
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      if (reg && reg.pushManager && typeof reg.pushManager.getSubscription === 'function') {
+        const sub = await reg.pushManager.getSubscription();
+        webPushState.subscribed = Boolean(sub);
+      }
+    } catch (_) {}
+  }
+  if (active === 'settings') render();
+  return webPushState;
+}
+
+async function subscribeWebPush() {
+  if (!isWebPushBrowserSupported()) {
+    toast('هذا المتصفح لا يدعم إشعارات Web Push');
+    return false;
+  }
+  if (typeof Notification !== 'undefined' && typeof Notification.requestPermission === 'function') {
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm === 'denied') {
+        toast('تم رفض إذن الإشعارات في المتصفح');
+        return false;
+      }
+    } catch (_) {}
+  }
+  webPushState.busy = true;
+  if (active === 'settings') render();
+  try {
+    const keyRes = await apiFetch('/api/push/vapid-public-key');
+    const keyData = await keyRes.json().catch(() => ({}));
+    if (!keyRes.ok || !keyData.enabled || !keyData.public_key) {
+      webPushState.serverEnabled = false;
+      featureFlags.web_push_global = false;
+      toast('إشعارات Web Push غير مفعّلة على الخادم حالياً');
+      return false;
+    }
+    const reg = await navigator.serviceWorker.ready;
+    if (!reg || !reg.pushManager || typeof reg.pushManager.subscribe !== 'function') {
+      toast('تعذر الوصول إلى PushManager في المتصفح');
+      return false;
+    }
+    const applicationServerKey = urlBase64ToUint8Array(keyData.public_key);
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey
+    });
+    const subJson = (sub && typeof sub.toJSON === 'function') ? sub.toJSON() : sub;
+    const endpoint = subJson && subJson.endpoint ? String(subJson.endpoint) : '';
+    const keys = (subJson && subJson.keys) ? subJson.keys : {};
+    const saveRes = await apiFetch('/api/push/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        endpoint,
+        keys: {
+          p256dh: String(keys.p256dh || ''),
+          auth: String(keys.auth || '')
+        }
+      })
+    });
+    const saveData = await saveRes.json().catch(() => ({}));
+    if (!saveRes.ok || saveData.success === false) {
+      if (sub && typeof sub.unsubscribe === 'function') {
+        try { await sub.unsubscribe(); } catch (_) {}
+      }
+      throw new Error(saveData.error || 'تعذر حفظ اشتراك Web Push على الخادم');
+    }
+    webPushState.supported = true;
+    webPushState.serverEnabled = true;
+    webPushState.subscribed = true;
+    webPushState.publicKey = keyData.public_key;
+    toast('تم تفعيل إشعارات المتصفح (Web Push) لهذا الجهاز');
+    return true;
+  } catch (e) {
+    toast(e.message || 'تعذر تفعيل إشعارات Web Push');
+    return false;
+  } finally {
+    webPushState.busy = false;
+    if (active === 'settings') render();
+  }
+}
+
+async function unsubscribeWebPush() {
+  webPushState.busy = true;
+  if (active === 'settings') render();
+  try {
+    let endpoint = '';
+    if (typeof navigator !== 'undefined' && navigator.serviceWorker && navigator.serviceWorker.ready) {
+      const reg = await navigator.serviceWorker.ready;
+      if (reg && reg.pushManager && typeof reg.pushManager.getSubscription === 'function') {
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          endpoint = sub.endpoint || '';
+          if (typeof sub.unsubscribe === 'function') {
+            await sub.unsubscribe();
+          }
+        }
+      }
+    }
+    if (endpoint) {
+      const res = await apiFetch('/api/push/unsubscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ endpoint })
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || d.success === false) {
+        throw new Error(d.error || 'تعذر إلغاء اشتراك Web Push على الخادم');
+      }
+    }
+    webPushState.subscribed = false;
+    toast('تم إيقاف إشعارات المتصفح (Web Push) لهذا الجهاز');
+    return true;
+  } catch (e) {
+    toast(e.message || 'تعذر إيقاف إشعارات Web Push');
+    return false;
+  } finally {
+    webPushState.busy = false;
+    if (active === 'settings') render();
+  }
+}
+
+function loadSettingsAuxData() {
+  if (!isLoggedIn) return;
+  if (featureFlags.ical_global !== false && !icalState.loaded) {
+    fetchCalendarToken().catch(() => {});
+  }
+  if (isWebPushBrowserSupported()) {
+    refreshWebPushState().catch(() => {});
   }
 }
 

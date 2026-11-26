@@ -9,6 +9,7 @@ import hmac
 import http.cookies
 import json
 import logging
+import math
 import os
 import re
 import secrets
@@ -24,10 +25,15 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator, model_validator
 
+import config
 import database as db
 from config import OWNER_TELEGRAM_ID, TELEGRAM_BOT_TOKEN
 from lms_scraper import LMSScraper
+from services.absence_risk import evaluate_user_absence_risks
+from services.ical_service import build_ical_feed
+from services.observability import get_observability
 from services.sync_service import seed_course_snapshot
+from services.web_push import get_vapid_public_key, is_web_push_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +54,14 @@ CHECK_INTERVAL_MIN = 5
 CHECK_INTERVAL_MAX = 1440
 COURSE_ID_MIN = 1
 COURSE_ID_MAX = 999_999_999
+COURSE_CREDITS_MIN = 1
+COURSE_CREDITS_MAX = 12
+ABSENCE_PCT_MIN = 1.0
+ABSENCE_PCT_MAX = 50.0
+PUSH_ENDPOINT_MAX_LEN = 2048
 REQUEST_TIMEOUT_SECONDS = 15
 _ARABIC_DIGITS_TRANS = str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789")
+_DIGEST_TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 
 # General per-IP API rate limit (F2)
 API_RATE_LIMIT_MAX = 120
@@ -548,6 +560,77 @@ class DeleteCourseRequest(_BaseApiModel):
         return out
 
 
+def _validate_digest_time(raw: Any) -> str:
+    """Strictly validate HH:MM in 00:00..23:59."""
+    if not isinstance(raw, str):
+        raise ValueError("وقت الملخص اليومي يجب أن يكون بصيغة HH:MM (00:00..23:59)")
+    s = raw.strip().translate(_ARABIC_DIGITS_TRANS)
+    if not _DIGEST_TIME_RE.fullmatch(s):
+        raise ValueError("وقت الملخص اليومي يجب أن يكون بصيغة HH:MM (00:00..23:59)")
+    return s
+
+
+def _validate_max_absence_pct(raw: Any) -> float:
+    """Strictly validate float max_absence_pct within [1.0, 50.0]."""
+    if isinstance(raw, bool) or raw is None:
+        raise ValueError("نسبة الغياب القصوى يجب أن تكون رقماً بين 1.0 و 50.0")
+    if isinstance(raw, (int, float)):
+        val = float(raw)
+    elif isinstance(raw, str):
+        s = raw.strip().translate(_ARABIC_DIGITS_TRANS)
+        if not s:
+            raise ValueError("نسبة الغياب القصوى يجب أن تكون رقماً بين 1.0 و 50.0")
+        try:
+            val = float(s)
+        except ValueError as exc:
+            raise ValueError("نسبة الغياب القصوى يجب أن تكون رقماً بين 1.0 و 50.0") from exc
+    else:
+        raise ValueError("نسبة الغياب القصوى يجب أن تكون رقماً بين 1.0 و 50.0")
+    if not math.isfinite(val) or val < ABSENCE_PCT_MIN or val > ABSENCE_PCT_MAX:
+        raise ValueError("نسبة الغياب القصوى يجب أن تكون رقماً بين 1.0 و 50.0")
+    return round(val, 2)
+
+
+def _validate_credit_hours(raw: Any) -> int:
+    """Strictly validate integer course credit_hours within [1, 12]."""
+    if isinstance(raw, bool) or raw is None:
+        raise ValueError("عدد الساعات المعتمدة يجب أن يكون عدداً صحيحاً بين 1 و 12")
+    if isinstance(raw, float):
+        if not raw.is_integer():
+            raise ValueError("عدد الساعات المعتمدة يجب أن يكون عدداً صحيحاً بين 1 و 12")
+        val = int(raw)
+    elif isinstance(raw, int):
+        val = raw
+    elif isinstance(raw, str):
+        s = raw.strip().translate(_ARABIC_DIGITS_TRANS)
+        if not s or not re.fullmatch(r"[+-]?\d+", s):
+            raise ValueError("عدد الساعات المعتمدة يجب أن يكون عدداً صحيحاً بين 1 و 12")
+        val = int(s)
+    else:
+        raise ValueError("عدد الساعات المعتمدة يجب أن يكون عدداً صحيحاً بين 1 و 12")
+    if val < COURSE_CREDITS_MIN or val > COURSE_CREDITS_MAX:
+        raise ValueError("عدد الساعات المعتمدة يجب أن يكون عدداً صحيحاً بين 1 و 12")
+    return val
+
+
+def _validate_push_endpoint(raw: Any) -> str:
+    """Strictly validate an https:// Web Push endpoint URL (<= 2048 chars)."""
+    if not isinstance(raw, str):
+        raise ValueError("رابط الإشعار غير صالح")
+    s = raw.strip()
+    if not s or len(s) > PUSH_ENDPOINT_MAX_LEN or not s.startswith("https://"):
+        raise ValueError("رابط الإشعار يجب أن يبدأ بـ https:// ولا يتجاوز 2048 حرفاً")
+    if any(ch.isspace() or ord(ch) < 32 or ord(ch) == 127 for ch in s):
+        raise ValueError("رابط الإشعار يحتوي على أحرف غير صالحة")
+    try:
+        parts = urllib.parse.urlsplit(s)
+    except ValueError as exc:
+        raise ValueError("رابط الإشعار غير صالح") from exc
+    if parts.scheme.lower() != "https" or not parts.netloc:
+        raise ValueError("رابط الإشعار غير صالح")
+    return s
+
+
 class UpdateSettingsRequest(_BaseApiModel):
     check_interval: int | None = Field(default=None, ge=CHECK_INTERVAL_MIN, le=CHECK_INTERVAL_MAX)
     is_monitoring: bool | None = None
@@ -557,10 +640,17 @@ class UpdateSettingsRequest(_BaseApiModel):
     notify_grade: bool | None = None
     notify_announcement: bool | None = None
     notify_attendance: bool | None = None
+    use_moodle_api: bool | None = None
+    enable_ical_feed: bool | None = None
+    digest_enabled: bool | None = None
+    digest_time: str | None = None
+    notify_absence_risk: bool | None = None
+    max_absence_pct: float | None = Field(default=None, ge=ABSENCE_PCT_MIN, le=ABSENCE_PCT_MAX)
+    enable_web_push: bool | None = None
 
     @model_validator(mode="before")
     @classmethod
-    def _validate_strict_interval(cls, data: Any) -> Any:
+    def _validate_strict_fields(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
         out = dict(data)
@@ -571,7 +661,58 @@ class UpdateSettingsRequest(_BaseApiModel):
                     f"فترة الفحص يجب أن تكون عدداً صحيحاً بين {CHECK_INTERVAL_MIN} و {CHECK_INTERVAL_MAX} دقيقة"
                 )
             out["check_interval"] = validated
+        if "digest_time" in out:
+            out["digest_time"] = _validate_digest_time(out["digest_time"])
+        if "max_absence_pct" in out:
+            out["max_absence_pct"] = _validate_max_absence_pct(out["max_absence_pct"])
         return out
+
+
+class CourseCreditsRequest(_BaseApiModel):
+    course_id: int
+    credit_hours: int
+
+    @field_validator("course_id", mode="before")
+    @classmethod
+    def _validate_course_input(cls, v: Any) -> int:
+        return _validate_course_id(v)
+
+    @field_validator("credit_hours", mode="before")
+    @classmethod
+    def _validate_credits_input(cls, v: Any) -> int:
+        return _validate_credit_hours(v)
+
+
+class PushSubscriptionKeys(_BaseApiModel):
+    p256dh: StrictStr = Field(min_length=1, max_length=512)
+    auth: StrictStr = Field(min_length=1, max_length=512)
+
+    @field_validator("p256dh", "auth")
+    @classmethod
+    def _non_blank(cls, v: str) -> str:
+        s = v.strip()
+        if not s:
+            raise ValueError("مفاتيح الإشعار غير صالحة")
+        return s
+
+
+class PushSubscribeRequest(_BaseApiModel):
+    endpoint: str
+    keys: PushSubscriptionKeys
+
+    @field_validator("endpoint", mode="before")
+    @classmethod
+    def _validate_endpoint_input(cls, v: Any) -> str:
+        return _validate_push_endpoint(v)
+
+
+class PushUnsubscribeRequest(_BaseApiModel):
+    endpoint: str
+
+    @field_validator("endpoint", mode="before")
+    @classmethod
+    def _validate_endpoint_input(cls, v: Any) -> str:
+        return _validate_push_endpoint(v)
 
 
 class UserMetaRequest(_BaseApiModel):
@@ -1135,6 +1276,16 @@ def _build_user_data_payload(tid: int) -> dict[str, Any]:
             "error": "لم يتم العثور على حساب مرتبط؛ سجل دخولك أدناه",
         }
 
+    raw_max_pct = user.get("max_absence_pct")
+    try:
+        user_max_pct = (
+            float(raw_max_pct)
+            if raw_max_pct is not None
+            else float(config.DEFAULT_MAX_ABSENCE_PCT)
+        )
+    except (TypeError, ValueError):
+        user_max_pct = float(config.DEFAULT_MAX_ABSENCE_PCT)
+
     user_safe = {
         "telegram_id": user["telegram_id"],
         "lms_username": user["lms_username"],
@@ -1147,6 +1298,13 @@ def _build_user_data_payload(tid: int) -> dict[str, Any]:
         "notify_grade": bool(user.get("notify_grade", 1)),
         "notify_announcement": bool(user.get("notify_announcement", 1)),
         "notify_attendance": bool(user.get("notify_attendance", 1)),
+        "use_moodle_api": bool(user.get("use_moodle_api", 0)),
+        "enable_ical_feed": bool(user.get("enable_ical_feed", 1)),
+        "digest_enabled": bool(user.get("digest_enabled", 1)),
+        "digest_time": str(user.get("digest_time") or config.DEFAULT_DIGEST_TIME or "08:00"),
+        "notify_absence_risk": bool(user.get("notify_absence_risk", 1)),
+        "max_absence_pct": user_max_pct,
+        "enable_web_push": bool(user.get("enable_web_push", 1)),
         "last_check": _normalize_utc_iso(user.get("last_check")) or "لم يتم بعد",
     }
 
@@ -1205,6 +1363,8 @@ def _build_user_data_payload(tid: int) -> dict[str, Any]:
             "name": c["course_name"],
             "url": c.get("course_url", f"https://mulms.mutah.edu.jo/course/view.php?id={cid}"),
             "is_monitored": bool(c.get("is_monitored", 1)),
+            "credit_hours": int(c.get("credit_hours") or 3),
+            "last_risk_level": str(c.get("last_risk_level") or ""),
             "added_at": c.get("added_at", ""),
             "stats": {
                 "assignments": len(assigns),
@@ -1362,6 +1522,15 @@ def _build_user_data_payload(tid: int) -> dict[str, Any]:
         except Exception:
             user_meta = {}
 
+    absence_risks = evaluate_user_absence_risks(db, tid) if config.ENABLE_ABSENCE_RISK else []
+    features = {
+        "moodle_api_global": bool(config.ENABLE_MOODLE_API),
+        "ical_global": bool(config.ENABLE_ICAL_FEED),
+        "digest_global": bool(config.ENABLE_DAILY_DIGEST),
+        "absence_risk_global": bool(config.ENABLE_ABSENCE_RISK),
+        "web_push_global": bool(is_web_push_enabled()),
+    }
+
     return {
         "success": True,
         "user": user_safe,
@@ -1370,6 +1539,8 @@ def _build_user_data_payload(tid: int) -> dict[str, Any]:
         "grades": grades,
         "announcements": announcements,
         "attendance": attendance,
+        "absence_risks": absence_risks,
+        "features": features,
         "files": all_files,
         "user_meta": user_meta,
         "stats": stats,
@@ -1647,7 +1818,21 @@ def create_app() -> FastAPI:
         status = 200 if db_ok else 503
         if is_head:
             return Response(status_code=status, media_type="application/json; charset=utf-8")
-        payload = {"status": "ok", "db": "ok"} if db_ok else {"status": "error", "db": "error"}
+        snap = get_observability().snapshot()
+        payload: dict[str, Any] = {
+            "status": "ok" if db_ok else "error",
+            "db": "ok" if db_ok else "error",
+            "monitor_running": bool(snap.get("monitor_running", False)),
+            "last_successful_check_at": snap.get("last_successful_check_at"),
+            "waf_blocked": bool(snap.get("waf_blocked", False)),
+            "total_checks": int(snap.get("total_checks", 0)),
+            "error_count": int(snap.get("error_count", 0)),
+            "error_rate": float(snap.get("error_rate", 0.0)),
+            "api_requests_total": int(snap.get("api_requests_total", 0)),
+            "scrape_requests_total": int(snap.get("scrape_requests_total", 0)),
+            "requests_saved_total": int(snap.get("requests_saved_total", 0)),
+            "uptime_seconds": float(snap.get("uptime_seconds", 0.0)),
+        }
         return _json_response(payload, status_code=status)
 
     @application.get("/health", tags=["system"])
@@ -1892,7 +2077,175 @@ def create_app() -> FastAPI:
                     announcement=body.notify_announcement,
                     attendance=body.notify_attendance,
                 )
+            feature_updates = {
+                k: v
+                for k, v in (
+                    ("use_moodle_api", body.use_moodle_api),
+                    ("enable_ical_feed", body.enable_ical_feed),
+                    ("digest_enabled", body.digest_enabled),
+                    ("digest_time", body.digest_time),
+                    ("notify_absence_risk", body.notify_absence_risk),
+                    ("max_absence_pct", body.max_absence_pct),
+                    ("enable_web_push", body.enable_web_push),
+                )
+                if v is not None
+            }
+            if feature_updates:
+                db.update_settings(auth.tid, feature_updates)
             return 200, {"success": True, "message": "تم حفظ الإعدادات"}
+
+        status_code, payload = await asyncio.to_thread(_run)
+        return _json_response(payload, status_code=status_code)
+
+    @application.post("/api/course-credits", tags=["courses"])
+    async def api_course_credits(
+        body: CourseCreditsRequest,
+        auth: CsrfAuthDep,
+    ) -> Response:
+        def _run() -> tuple[int, dict[str, Any]]:
+            if not db.get_user(auth.tid):
+                return 404, {"success": False, "not_registered": True, "error": "المستخدم غير مسجل"}
+            if not db.get_course(auth.tid, body.course_id):
+                return 404, {"success": False, "error": "المقرر غير موجود"}
+            db.update_course_credit_hours(auth.tid, body.course_id, body.credit_hours)
+            return 200, {
+                "success": True,
+                "course_id": body.course_id,
+                "credit_hours": body.credit_hours,
+            }
+
+        status_code, payload = await asyncio.to_thread(_run)
+        return _json_response(payload, status_code=status_code)
+
+    # ── API: Live iCal Feed & Token Management (F4) ──
+
+    @application.get("/api/calendar.ics", tags=["calendar"])
+    async def api_calendar_ics(request: Request) -> Response:
+        if not config.ENABLE_ICAL_FEED:
+            return _json_response(
+                {"success": False, "error": "ميزة التقويم المباشر معطلة"},
+                status_code=404,
+            )
+        raw_token = (request.query_params.get("token") or "").strip()
+        if not raw_token:
+            return _json_response(
+                {"success": False, "error": "رمز التقويم غير صالح أو منتهي"},
+                status_code=401,
+            )
+        tid = await asyncio.to_thread(db.resolve_calendar_token, raw_token)
+        if tid is None or int(tid) != int(OWNER_TELEGRAM_ID):
+            return _json_response(
+                {"success": False, "error": "رمز التقويم غير صالح أو منتهي"},
+                status_code=401,
+            )
+        ics_text = await asyncio.to_thread(build_ical_feed, db, int(tid))
+        return Response(
+            content=ics_text.encode("utf-8"),
+            status_code=200,
+            media_type="text/calendar; charset=utf-8",
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Disposition": 'inline; filename="mutah-lms.ics"',
+            },
+        )
+
+    @application.get("/api/calendar-token", tags=["calendar"])
+    async def api_calendar_token(auth: AuthDep) -> Response:
+        def _run() -> tuple[int, dict[str, Any]]:
+            user = db.get_user(auth.tid)
+            if not user:
+                return 404, {"success": False, "not_registered": True, "error": "المستخدم غير مسجل"}
+            raw_token = db.get_calendar_token(auth.tid)
+            enabled = bool(config.ENABLE_ICAL_FEED and user.get("enable_ical_feed", 1))
+            has_token = bool(raw_token)
+            feed_url = f"/api/calendar.ics?token={raw_token}" if raw_token else ""
+            return 200, {
+                "success": True,
+                "enabled": enabled,
+                "has_token": has_token,
+                "feed_url": feed_url,
+            }
+
+        status_code, payload = await asyncio.to_thread(_run)
+        return _json_response(payload, status_code=status_code)
+
+    @application.post("/api/calendar-token/rotate", tags=["calendar"])
+    async def api_calendar_token_rotate(
+        _body: EmptyActionRequest,
+        auth: CsrfAuthDep,
+    ) -> Response:
+        def _run() -> tuple[int, dict[str, Any]]:
+            if not db.get_user(auth.tid):
+                return 404, {"success": False, "not_registered": True, "error": "المستخدم غير مسجل"}
+            raw_token = db.create_or_rotate_calendar_token(auth.tid)
+            return 200, {
+                "success": True,
+                "token": raw_token,
+                "feed_url": f"/api/calendar.ics?token={raw_token}",
+            }
+
+        status_code, payload = await asyncio.to_thread(_run)
+        return _json_response(payload, status_code=status_code)
+
+    @application.post("/api/calendar-token/revoke", tags=["calendar"])
+    async def api_calendar_token_revoke(
+        _body: EmptyActionRequest,
+        auth: CsrfAuthDep,
+    ) -> Response:
+        def _run() -> tuple[int, dict[str, Any]]:
+            if not db.get_user(auth.tid):
+                return 404, {"success": False, "not_registered": True, "error": "المستخدم غير مسجل"}
+            db.revoke_calendar_token(auth.tid)
+            return 200, {"success": True}
+
+        status_code, payload = await asyncio.to_thread(_run)
+        return _json_response(payload, status_code=status_code)
+
+    # ── API: Web Push VAPID Subscriptions (F7) ──
+
+    @application.get("/api/push/vapid-public-key", tags=["push"])
+    async def api_push_vapid_public_key(auth: AuthDep) -> Response:
+        _ = auth
+        enabled = is_web_push_enabled()
+        return _json_response(
+            {
+                "success": True,
+                "enabled": enabled,
+                "public_key": get_vapid_public_key() if enabled else "",
+            },
+            status_code=200,
+        )
+
+    @application.post("/api/push/subscribe", tags=["push"])
+    async def api_push_subscribe(
+        body: PushSubscribeRequest,
+        auth: CsrfAuthDep,
+    ) -> Response:
+        def _run() -> tuple[int, dict[str, Any]]:
+            if not db.get_user(auth.tid):
+                return 404, {"success": False, "not_registered": True, "error": "المستخدم غير مسجل"}
+            db.save_push_subscription(
+                auth.tid,
+                body.endpoint,
+                body.keys.p256dh,
+                body.keys.auth,
+                device_token=auth.session_token,
+            )
+            return 200, {"success": True}
+
+        status_code, payload = await asyncio.to_thread(_run)
+        return _json_response(payload, status_code=status_code)
+
+    @application.post("/api/push/unsubscribe", tags=["push"])
+    async def api_push_unsubscribe(
+        body: PushUnsubscribeRequest,
+        auth: CsrfAuthDep,
+    ) -> Response:
+        def _run() -> tuple[int, dict[str, Any]]:
+            if not db.get_user(auth.tid):
+                return 404, {"success": False, "not_registered": True, "error": "المستخدم غير مسجل"}
+            db.delete_push_subscription(auth.tid, body.endpoint)
+            return 200, {"success": True}
 
         status_code, payload = await asyncio.to_thread(_run)
         return _json_response(payload, status_code=status_code)

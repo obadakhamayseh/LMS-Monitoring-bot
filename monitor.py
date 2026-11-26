@@ -15,15 +15,28 @@ from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.error import Forbidden, RetryAfter, TelegramError
 
+import config
 from config import LMS_BASE_URL
 import database as db
 from lms_scraper import FetchResult, LMSAuthError, LMSScraper, LMSWafError
 from reminder import _parse_due_date
+from scraper.moodle_api import ApiCycleMetrics, MoodleApiClient, MoodleApiError
+from services.absence_risk import calculate_absence_risk
+from services.observability import get_observability
 from services.sync_service import seed_course_snapshot
+from services.web_push import send_web_push_to_user
 from telegram_utils import escape_html, html_link, send_html_message
 
 logger = logging.getLogger(__name__)
 JORDAN_TZ = ZoneInfo("Asia/Amman")
+
+_RISK_LEVEL_RANK: dict[str, int] = {
+    "": 0,
+    "safe": 0,
+    "warning": 1,
+    "critical": 2,
+    "deprived": 3,
+}
 
 
 def _canonical_content_url(url: str) -> str:
@@ -56,11 +69,13 @@ class MonitorEngine:
     INCOMPLETE_BACKOFF_MAX = 1800   # 30 minutes cap on exponential backoff
     MIN_REQUEST_COOLDOWN_SECONDS = 1.0
     POLL_INTERVAL_SECONDS = 60
+    STALE_WATCHDOG_INTERVAL_SECONDS = 60
     TICK_TIMEOUT_SECONDS = 300.0
     MISFIRE_GRACE_TIME = 30
     TICK_BACKOFF_BASE = 30.0
     TICK_BACKOFF_MAX = 300.0
     JOB_ID = "monitor_poll_tick"
+    STALE_WATCHDOG_JOB_ID = "monitor_stale_watchdog"
 
     def __init__(self, bot: Bot, reminder_engine=None):
         self.bot = bot
@@ -71,6 +86,8 @@ class MonitorEngine:
         self._state_lock = threading.RLock()
         self._active_tasks: set[asyncio.Task] = set()
         self._sessions = {}
+        self._api_clients: dict[int, MoodleApiClient] = {}
+        self._last_cycle_metrics: dict[int, ApiCycleMetrics] = {}
         self._user_locks = {}
         self._check_slots = asyncio.Semaphore(5)
         self._auth_required = set()
@@ -117,6 +134,8 @@ class MonitorEngine:
         self._incomplete_failures.pop(tid, None)
         self._last_scan_waf.pop(tid, None)
         self._last_scan_expired.pop(tid, None)
+        self._api_clients.pop(tid, None)
+        self._last_cycle_metrics.pop(tid, None)
         for key in [k for k in self._course_cache if isinstance(k, tuple) and k[0] == tid]:
             self._course_cache.pop(key, None)
 
@@ -231,12 +250,25 @@ class MonitorEngine:
             replace_existing=True,
             next_run_time=datetime.now(JORDAN_TZ),
         )
+        scheduler.add_job(
+            self._scheduled_stale_watchdog,
+            trigger="interval",
+            seconds=self.STALE_WATCHDOG_INTERVAL_SECONDS,
+            id=self.STALE_WATCHDOG_JOB_ID,
+            name="MonitorEngine stale-monitor watchdog",
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=self.MISFIRE_GRACE_TIME,
+            replace_existing=True,
+        )
         scheduler.start()
         self._scheduler = scheduler
+        get_observability().set_monitor_running(True)
         logger.info("Monitor engine started (APScheduler AsyncIOScheduler, tz=Asia/Amman)")
 
     async def stop(self):
         self._running = False
+        get_observability().set_monitor_running(False)
         scheduler = self._scheduler
         self._scheduler = None
         if scheduler is not None:
@@ -301,7 +333,184 @@ class MonitorEngine:
             self.TICK_BACKOFF_MAX,
         )
         self._tick_backoff_until = time.monotonic() + delay
+        get_observability().record_check_error(message)
         logger.error("%s (consecutive=%d; backing off %.1fs)", message, self._tick_error_count, delay)
+
+    async def _scheduled_stale_watchdog(self) -> None:
+        if not self._running:
+            return
+        try:
+            await self._check_stale_monitor()
+        except Exception as exc:
+            logger.warning("Stale monitor watchdog error: %s", exc)
+
+    async def _check_stale_monitor(self, *, now_ts: Optional[float] = None) -> bool:
+        """Alert OWNER_TELEGRAM_ID once if monitoring has gone stale while active users exist (F8)."""
+        if not getattr(config, "ENABLE_STALE_ALERT", True):
+            return False
+        obs = get_observability()
+        threshold = int(getattr(config, "STALE_MONITOR_SECONDS", 3600))
+        if not obs.should_send_stale_alert(threshold, now_ts=now_ts):
+            return False
+        users = await self._run_db(db.get_all_monitoring_users)
+        if not users:
+            return False
+
+        snap = obs.snapshot(now_ts=now_ts)
+        last_ok = escape_html(snap.get("last_successful_check_at") or "لم ينجح أي فحص منذ بدء التشغيل")
+        waf_txt = "🔴 محظور (WAF)" if snap.get("waf_blocked") else "🟢 طبيعي"
+        mins = max(1, threshold // 60)
+        alert_html = (
+            "⚠️ <b>تنبيه توقف/تأخر المراقب التلقائي (Stale Monitor)</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"لم يسجل النظام أي فحص ناجح منذ أكثر من <b>{mins}</b> دقيقة.\n"
+            f"⏰ آخر فحص ناجح (UTC): <code>{last_ok}</code>\n"
+            f"🛡️ حالة WAF: <b>{waf_txt}</b>\n"
+            f"❌ عدد الأخطاء: <b>{int(snap.get('error_count', 0))}</b>\n"
+            "💡 استخدم /status لمراجعة التفاصيل أو /start لإعادة فحص الجلسة."
+        )
+        owner_id = int(getattr(config, "OWNER_TELEGRAM_ID", 0))
+        if owner_id <= 0:
+            return False
+        sent = await send_html_message(
+            self.bot,
+            owner_id,
+            alert_html,
+            disable_web_page_preview=True,
+            on_forbidden=self._on_forbidden,
+        )
+        if sent:
+            obs.mark_stale_alerted(True)
+            logger.warning("Stale monitor alert delivered to owner %s", owner_id)
+            return True
+        return False
+
+    async def _fire_web_push(
+        self,
+        user: Optional[dict],
+        tid: int,
+        title: str,
+        body: str,
+        url: str = "/webapp",
+    ) -> None:
+        """Secondary Web Push channel (F7): non-blocking, strictly isolated from Telegram."""
+        if not getattr(config, "ENABLE_WEB_PUSH", False):
+            return
+        if user is not None and not user.get("enable_web_push", 1):
+            return
+        try:
+            await asyncio.to_thread(send_web_push_to_user, db, tid, title, body, url)
+        except Exception as exc:
+            logger.warning("Web Push secondary channel error for user %s: %s", tid, exc)
+
+    @staticmethod
+    def _should_use_moodle_api(user: dict) -> bool:
+        return bool(getattr(config, "ENABLE_MOODLE_API", False) or bool(user.get("use_moodle_api", 0)))
+
+    def _get_api_client(self, tid: int, scraper: LMSScraper) -> MoodleApiClient:
+        http_client = getattr(scraper, "http", None)
+        with self._state_lock:
+            existing = self._api_clients.get(tid)
+            if existing is not None and existing.http is http_client:
+                return existing
+            client = MoodleApiClient(http_client, base_url=getattr(config, "LMS_BASE_URL", LMS_BASE_URL))
+            self._api_clients[tid] = client
+            return client
+
+    def _run_api_prefetch_sync(
+        self,
+        tid: int,
+        user: dict,
+        courses: list,
+        scraper: LMSScraper,
+    ) -> tuple[Optional[dict[int, dict]], ApiCycleMetrics]:
+        api = self._get_api_client(tid, scraper)
+        if api.is_disabled:
+            return None, ApiCycleMetrics(
+                used_api=False,
+                api_requests=0,
+                scrape_requests=0,
+                estimated_requests_saved=0,
+                fallback_reason=api.disable_reason or "circuit_open",
+            )
+
+        api.reset_request_count()
+        course_ids = [int(c["course_id"]) for c in courses]
+        try:
+            if not api.token:
+                api.obtain_mobile_token(
+                    user.get("lms_username", ""),
+                    user.get("lms_password", ""),
+                )
+            sesskey = getattr(scraper, "sesskey", None)
+            if not api.token and not sesskey:
+                return None, ApiCycleMetrics(
+                    used_api=False,
+                    api_requests=api.request_count,
+                    scrape_requests=0,
+                    estimated_requests_saved=0,
+                    fallback_reason=api.disable_reason or "no_api_auth",
+                )
+
+            now_ts = int(time.time())
+            cal_events = api.fetch_calendar_events(
+                now_ts - 86400,
+                now_ts + 30 * 86400,
+                sesskey=sesskey,
+            )
+            assigns = api.fetch_assignments(course_ids, sesskey=sesskey)
+
+            uid = getattr(scraper, "user_id", None) or user.get("lms_user_id")
+            grades_by_course: dict[int, list[dict[str, Any]]] = {}
+            if uid:
+                for cid in course_ids:
+                    grades_by_course[cid] = api.fetch_grades(cid, uid, sesskey=sesskey)
+
+            per_course: dict[int, dict[str, list[dict[str, Any]]]] = {}
+            for cid in course_ids:
+                c_assigns = [a for a in assigns if int(a.get("course_id") or 0) == cid]
+                seen_assign_ids = {a["id"] for a in c_assigns}
+                c_quizzes: list[dict[str, Any]] = []
+                for ev in cal_events:
+                    if int(ev.get("course_id") or 0) != cid:
+                        continue
+                    if ev.get("type") == "quiz":
+                        c_quizzes.append(ev)
+                    elif ev.get("type") == "assign" and ev["id"] not in seen_assign_ids:
+                        seen_assign_ids.add(ev["id"])
+                        c_assigns.append(ev)
+
+                per_course[cid] = {
+                    "assignments": c_assigns,
+                    "quizzes": c_quizzes,
+                    "resources": [],
+                    "grades": grades_by_course.get(cid, []),
+                    "announcements": [],
+                    "attendance": [],
+                }
+
+            api_reqs = api.request_count
+            baseline_scrape_reqs = len(course_ids) * 6
+            saved = max(0, baseline_scrape_reqs - api_reqs)
+            return per_course, ApiCycleMetrics(
+                used_api=True,
+                api_requests=api_reqs,
+                scrape_requests=0,
+                estimated_requests_saved=saved,
+                fallback_reason="",
+            )
+        except LMSWafError:
+            raise
+        except (MoodleApiError, LMSAuthError, Exception) as exc:
+            reason = getattr(exc, "errorcode", "") or str(exc) or "api_error"
+            logger.info("Moodle API fallback to HTML scraper for user %s (reason=%s)", tid, reason)
+            return None, ApiCycleMetrics(
+                used_api=False,
+                api_requests=api.request_count,
+                scrape_requests=0,
+                estimated_requests_saved=0,
+                fallback_reason=reason,
+            )
 
     async def _run_tick(self):
         """Execute a single monitoring tick across all active users."""
@@ -325,6 +534,7 @@ class MonitorEngine:
             try:
                 await self._check_user(user)
             except Exception as e:
+                get_observability().record_check_error(f"Error checking user {user['telegram_id']}: {e}")
                 logger.error("Error checking user %s: %s", user["telegram_id"], e)
 
     @staticmethod
@@ -392,6 +602,8 @@ class MonitorEngine:
             logger.warning("WAF challenge during login for %s; pausing checks for %ss", tid, self.WAF_BACKOFF_SECONDS)
             with self._state_lock:
                 self._waf_backoff_until[tid] = time.monotonic() + self.WAF_BACKOFF_SECONDS
+            get_observability().record_waf_state(True, until_ts=time.time() + self.WAF_BACKOFF_SECONDS)
+            get_observability().record_check_error(scraper.error_message or "WAF challenge during login")
             return None, scraper.error_message or (
                 "جدار حماية موقع الجامعة طلب تحققاً أمنياً مؤقتاً؛ حاول مجدداً بعد عدة دقائق"
             )
@@ -400,6 +612,7 @@ class MonitorEngine:
             logger.warning("Invalid credentials for %s: %s", tid, scraper.error_message)
             with self._state_lock:
                 self._auth_required.add(tid)
+            get_observability().record_check_error(scraper.error_message or "Invalid LMS credentials")
             if notify_on_invalid:
                 await self._notify_auth_stopped(
                     tid,
@@ -415,6 +628,7 @@ class MonitorEngine:
         )
         with self._state_lock:
             self._transient_backoff_until[tid] = time.monotonic() + self.TRANSIENT_BACKOFF_SECONDS
+        get_observability().record_check_error(scraper.error_message or "Transient LMS login failure")
         return None, scraper.error_message or "فشل تسجيل الدخول إلى LMS"
 
     async def run_with_user_scraper(
@@ -506,6 +720,8 @@ class MonitorEngine:
                 logger.warning("WAF challenge during scan for %s; pausing checks for %ss", tid, self.WAF_BACKOFF_SECONDS)
                 with self._state_lock:
                     self._waf_backoff_until[tid] = time.monotonic() + self.WAF_BACKOFF_SECONDS
+                get_observability().record_waf_state(True, until_ts=time.time() + self.WAF_BACKOFF_SECONDS)
+                get_observability().record_check_error("WAF challenge during scan")
                 return
             if self._last_scan_expired.get(tid) or scraper.session_expired:
                 logger.info("Session expired during scan for %s; auto-relogging in and retrying once", tid)
@@ -517,15 +733,28 @@ class MonitorEngine:
                 if self._last_scan_waf.get(tid) or scraper.waf_blocked:
                     with self._state_lock:
                         self._waf_backoff_until[tid] = time.monotonic() + self.WAF_BACKOFF_SECONDS
+                    get_observability().record_waf_state(True, until_ts=time.time() + self.WAF_BACKOFF_SECONDS)
+                    get_observability().record_check_error("WAF challenge during scan retry")
                     return
                 if self._last_scan_expired.get(tid) or scraper.session_expired:
                     with self._state_lock:
                         self._transient_backoff_until[tid] = time.monotonic() + self.TRANSIENT_BACKOFF_SECONDS
+                    get_observability().record_check_error("Session expired repeatedly during scan")
                     return
             if complete:
                 with self._state_lock:
                     self._incomplete_failures.pop(tid, None)
                     self._transient_backoff_until.pop(tid, None)
+                    cycle_m = self._last_cycle_metrics.get(tid)
+                obs = get_observability()
+                obs.record_waf_state(False)
+                obs.record_check_success(
+                    {
+                        "api_requests": cycle_m.api_requests if cycle_m else 0,
+                        "scrape_requests": cycle_m.scrape_requests if cycle_m else 0,
+                        "requests_saved": cycle_m.estimated_requests_saved if cycle_m else 0,
+                    }
+                )
                 await self._run_db(db.update_last_check, tid)
                 try:
                     await self._run_db(
@@ -547,6 +776,7 @@ class MonitorEngine:
                         self.INCOMPLETE_BACKOFF_MAX,
                     )
                     self._transient_backoff_until[tid] = time.monotonic() + delay
+                get_observability().record_check_error(f"Incomplete scan for user {tid}")
                 logger.warning(
                     "Scan incomplete for %s (consecutive=%d); backing off for %ss",
                     tid,
@@ -671,6 +901,33 @@ class MonitorEngine:
         events = []
         self._last_scan_waf[tid] = False
         self._last_scan_expired[tid] = False
+        loop = asyncio.get_running_loop()
+
+        cycle_metrics = ApiCycleMetrics(
+            used_api=False,
+            api_requests=0,
+            scrape_requests=0,
+            estimated_requests_saved=0,
+            fallback_reason="",
+        )
+        api_prefetched: Optional[dict[int, dict]] = None
+
+        if self._should_use_moodle_api(user) and courses and getattr(scraper, "http", None) is not None:
+            try:
+                api_prefetched, cycle_metrics = await loop.run_in_executor(
+                    None,
+                    self._run_api_prefetch_sync,
+                    tid,
+                    user,
+                    courses,
+                    scraper,
+                )
+            except LMSWafError:
+                self._last_scan_waf[tid] = True
+                cycle_metrics.fallback_reason = "waf_blocked"
+                with self._state_lock:
+                    self._last_cycle_metrics[tid] = cycle_metrics
+                return 0, False
 
         # Scan courses strictly sequentially per user (thread-safe on LMSScraper and polite to NetScaler WAF)
         for course in courses:
@@ -682,10 +939,23 @@ class MonitorEngine:
             ):
                 complete = False
                 break
+            cid_int = int(course["course_id"])
+            prefetched_for_course = api_prefetched.get(cid_int) if api_prefetched is not None else None
             try:
-                course_events, course_complete, sess_expired, waf_blocked = await self._check_course_result(
-                    tid, user, scraper, course, bypass_cache=bypass_cache
-                )
+                if prefetched_for_course is not None:
+                    course_events, course_complete, sess_expired, waf_blocked = await self._check_course_result(
+                        tid,
+                        user,
+                        scraper,
+                        course,
+                        bypass_cache=bypass_cache,
+                        prefetched_content=prefetched_for_course,
+                    )
+                else:
+                    cycle_metrics.scrape_requests += 1
+                    course_events, course_complete, sess_expired, waf_blocked = await self._check_course_result(
+                        tid, user, scraper, course, bypass_cache=bypass_cache
+                    )
             except Exception as e:
                 logger.error("Error checking course %s for %s: %s", course.get("course_id"), tid, e)
                 course_events, course_complete, sess_expired, waf_blocked = [], False, False, False
@@ -701,7 +971,9 @@ class MonitorEngine:
             events.extend(course_events)
             complete = complete and course_complete
 
-        loop = asyncio.get_running_loop()
+        with self._state_lock:
+            self._last_cycle_metrics[tid] = cycle_metrics
+
         for chunk_events, message in self._build_change_chunks(events):
             # H6: NEVER persist notified/seen state before _send returns True!
             sent = await self._send(tid, message, plain=True)
@@ -712,6 +984,13 @@ class MonitorEngine:
                     else:
                         await self._run_db(self._save_change, event)
                 sent_count += len(chunk_events)
+                first_ev = chunk_events[0]
+                push_body = (
+                    f"{first_ev['course_name']}: {first_ev['name']}"
+                    if len(chunk_events) == 1
+                    else f"{len(chunk_events)} تحديثات جديدة في موادك"
+                )
+                await self._fire_web_push(user, tid, "🔔 تحديث جديد في LMS", push_body, "/webapp")
 
                 # Direct document dispatch ONLY for newly added /mod/resource/ files (bounded count & size)
                 if user.get("notify_resource", 1):
@@ -762,16 +1041,24 @@ class MonitorEngine:
         )
         return events, ok
 
-    async def _check_course_result(self, tid, user, scraper, course, bypass_cache: bool = False):
+    async def _check_course_result(
+        self,
+        tid,
+        user,
+        scraper,
+        course,
+        bypass_cache: bool = False,
+        prefetched_content: Optional[dict] = None,
+    ):
         loop = asyncio.get_running_loop()
         cid = course["course_id"]
         cname = course["course_name"]
 
         now = time.monotonic()
-        content = None
+        content = prefetched_content
         cache_key = (tid, cid)
 
-        if not bypass_cache:
+        if content is None and not bypass_cache:
             with self._state_lock:
                 cached = self._course_cache.get(cache_key)
             if cached and (now - cached[0] < self.COURSE_CACHE_TTL):
@@ -842,6 +1129,9 @@ class MonitorEngine:
                     sent = await self._send(tid, done_msg)
                     if sent:
                         await self._run_db(db.mark_assignment_submitted, tid, task_item["id"], 1)
+                        await self._fire_web_push(
+                            user, tid, f"✅ تم إنجاز {t_label}", f"{cname}: {task_item.get('name', '')}", "/webapp"
+                        )
                     else:
                         all_sends_ok = False
                 else:
@@ -961,6 +1251,9 @@ class MonitorEngine:
                         await self._run_db(
                             db.upsert_grade, tid, cid, item_id, item_name, grade_val, grade_max, pct, fb, g_url
                         )
+                        await self._fire_web_push(
+                            user, tid, f"🎯 علامة جديدة: {cname}", f"{item_name}: {grade_val}", "/webapp"
+                        )
                     else:
                         all_sends_ok = False
                 else:
@@ -1019,6 +1312,13 @@ class MonitorEngine:
                             posted_date,
                             body_text,
                             ann.get("url", ""),
+                        )
+                        await self._fire_web_push(
+                            user,
+                            tid,
+                            f"📢 إعلان جديد: {cname}",
+                            str(ann.get("title", "إعلان جديد")),
+                            "/webapp",
                         )
                     else:
                         all_sends_ok = False
@@ -1106,6 +1406,14 @@ class MonitorEngine:
                         if not await self._send(tid, "\n".join(att_lines)):
                             att_sent_ok = False
                             all_sends_ok = False
+                        else:
+                            await self._fire_web_push(
+                                user,
+                                tid,
+                                f"📋 تحديث الحضور: {cname}",
+                                f"{s.get('date', '')} — {s.get('status', '')}",
+                                "/webapp",
+                            )
 
                 # H6: Only persist attendance snapshot if no notification failed
                 if att_sent_ok:
@@ -1125,6 +1433,64 @@ class MonitorEngine:
                         sessions_json=json.dumps(new_sessions, ensure_ascii=False),
                         url=att.get("url", ""),
                     )
+
+            # F6: Absence Risk Alert (triggered on warning/critical/deprived when risk worsens)
+            if (
+                attendance_list
+                and getattr(config, "ENABLE_ABSENCE_RISK", True)
+                and user.get("notify_absence_risk", 1)
+            ):
+                total_abs = sum(max(0, int(a.get("absent_count") or 0)) for a in attendance_list)
+                total_sess = sum(
+                    max(int(a.get("total_sessions") or 0), int(a.get("taken_sessions") or 0))
+                    for a in attendance_list
+                )
+                latest_course = None
+                get_course_fn = getattr(db, "get_course", None)
+                if callable(get_course_fn):
+                    try:
+                        latest_course = await self._run_db(get_course_fn, tid, cid)
+                    except Exception:
+                        latest_course = None
+                effective_course = latest_course or course
+                credit_hours = max(1, int(effective_course.get("credit_hours") or 3))
+                max_pct = float(
+                    user.get("max_absence_pct")
+                    or getattr(config, "DEFAULT_MAX_ABSENCE_PCT", 15.0)
+                )
+                risk = calculate_absence_risk(
+                    total_abs,
+                    total_sess,
+                    credit_hours=credit_hours,
+                    max_absence_pct=max_pct,
+                    course_name=cname,
+                )
+                prev_level = str(effective_course.get("last_risk_level") or "").strip().lower()
+                new_level = str(risk.get("risk_level") or "safe").strip().lower()
+                prev_rank = _RISK_LEVEL_RANK.get(prev_level, 0)
+                new_rank = _RISK_LEVEL_RANK.get(new_level, 0)
+                set_risk_fn = getattr(db, "set_course_risk_level", None)
+
+                if risk.get("at_risk") and new_rank > prev_rank:
+                    risk_html = (
+                        f"{escape_html(risk['message'])}\n"
+                        "━━━━━━━━━━━━━━━━━━━━━━\n"
+                        f"📖 المادة: <b>{escape_html(cname)}</b>\n"
+                        f"❌ الغيابات: <code>{risk['absent_count']}</code> من <code>{risk['max_allowed']}</code>\n"
+                        f"⏳ المتبقي قبل الحرمان: <code>{risk['remaining']}</code>\n"
+                        f"📊 نسبة الغياب: <code>{risk['absence_pct']}%</code> (الحد: <code>{risk['max_absence_pct']:g}%</code>)"
+                    )
+                    sent_risk = await self._send(tid, risk_html)
+                    if sent_risk:
+                        if callable(set_risk_fn):
+                            await self._run_db(set_risk_fn, tid, cid, new_level)
+                        await self._fire_web_push(
+                            user, tid, f"⚠️ خطر الغياب: {cname}", risk["message"], "/webapp"
+                        )
+                    else:
+                        all_sends_ok = False
+                elif not risk.get("at_risk") and prev_rank > 0 and callable(set_risk_fn):
+                    await self._run_db(set_risk_fn, tid, cid, "safe")
         except Exception as atte:
             logger.warning("Error checking attendance for course %s (user %s): %s", cid, tid, atte)
 
@@ -1411,6 +1777,8 @@ class MonitorEngine:
             if self._last_scan_waf.get(tid) or scraper.waf_blocked:
                 with self._state_lock:
                     self._waf_backoff_until[tid] = time.monotonic() + self.WAF_BACKOFF_SECONDS
+                get_observability().record_waf_state(True, until_ts=time.time() + self.WAF_BACKOFF_SECONDS)
+                get_observability().record_check_error("WAF challenge during force_check")
                 return count, "جدار حماية موقع الجامعة طلب تحققاً أمنياً مؤقتاً؛ تم إيقاف الفحص مؤقتاً"
             if self._last_scan_expired.get(tid) or scraper.session_expired:
                 scraper, err = await self._ensure_logged_in(user, force_fresh=True, notify_on_invalid=False)
@@ -1418,11 +1786,22 @@ class MonitorEngine:
                     return count, err or "انتهت جلسة LMS وتعذّر تجديدها مؤقتاً"
                 count, complete = await self._scan_user(user, courses, scraper, bypass_cache=True)
                 if self._last_scan_expired.get(tid) or scraper.session_expired:
+                    get_observability().record_check_error("Session expired during force_check retry")
                     return count, "انتهت جلسة LMS؛ حاول مجدداً بعد قليل"
             if complete:
                 with self._state_lock:
                     self._incomplete_failures.pop(tid, None)
                     self._transient_backoff_until.pop(tid, None)
+                    cycle_m = self._last_cycle_metrics.get(tid)
+                obs = get_observability()
+                obs.record_waf_state(False)
+                obs.record_check_success(
+                    {
+                        "api_requests": cycle_m.api_requests if cycle_m else 0,
+                        "scrape_requests": cycle_m.scrape_requests if cycle_m else 0,
+                        "requests_saved": cycle_m.estimated_requests_saved if cycle_m else 0,
+                    }
+                )
                 await self._run_db(db.update_last_check, tid)
                 try:
                     await self._run_db(
@@ -1435,4 +1814,5 @@ class MonitorEngine:
                 except Exception:
                     pass
                 return count, "ok"
+            get_observability().record_check_error(f"Incomplete force_check for user {tid}")
             return count, "تعذر إكمال الفحص؛ ستتم إعادة المحاولة"

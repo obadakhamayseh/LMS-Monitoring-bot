@@ -297,7 +297,9 @@ def test_f2_async_uvicorn_lifecycle_and_real_tcp_pre_read_413(tmp_path, monkeypa
             async with httpx.AsyncClient(timeout=3.0) as client:
                 r_health = await client.get(f"http://127.0.0.1:{port}/health")
                 assert r_health.status_code == 200
-                assert r_health.json() == {"status": "ok", "db": "ok"}
+                health_body = r_health.json()
+                assert health_body["status"] == "ok"
+                assert health_body["db"] == "ok"
 
                 r_head = await client.head(f"http://127.0.0.1:{port}/health")
                 assert r_head.status_code == 200

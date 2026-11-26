@@ -34,7 +34,7 @@ from handlers.common import (
     owner_guard,
 )
 from handlers.courses import add_course_got_id, add_course_start, cmd_courses
-from handlers.views import cmd_help
+from handlers.views import cmd_help, status_cmd
 
 
 def register_handlers(app: Application) -> None:
@@ -76,6 +76,7 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("pair", cmd_pair))
     app.add_handler(CommandHandler("unlink", cmd_unlink))
     app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("status", status_cmd))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_error_handler(error_handler)

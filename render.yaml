@@ -19,3 +19,29 @@ services:
         sync: false
       - key: DATABASE_URL
         sync: false
+      - key: ENABLE_MOODLE_API
+        value: "0"
+      - key: ENABLE_ICAL_FEED
+        value: "1"
+      - key: ENABLE_DAILY_DIGEST
+        value: "1"
+      - key: DEFAULT_DIGEST_TIME
+        value: "08:00"
+      - key: ENABLE_ABSENCE_RISK
+        value: "1"
+      - key: DEFAULT_MAX_ABSENCE_PCT
+        value: "15.0"
+      - key: ENABLE_WEB_PUSH
+        value: "0"
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_SUBJECT
+        value: "mailto:admin@example.com"
+      - key: LOG_FORMAT
+        value: "json"
+      - key: ENABLE_STALE_ALERT
+        value: "1"
+      - key: STALE_MONITOR_SECONDS
+        value: "3600"
