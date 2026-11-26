@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Moodle 5.x Attendance Fixtures (Mutah LMS)</title>
+</head>
+<body>
+  <!-- English Attendance table with Group column and single-letter P/A/L/E/? statuses -->
+  <section id="fixture-attendance-en-group">
+    <table class="generaltable attwidth boxaligncenter">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Group</th>
+          <th>Description</th>
+          <th>Status</th>
+          <th>Points</th>
+          <th>Remarks</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Sun 15 Nov 2026 10:00AM</td>
+          <td>Section 1</td>
+          <td>Regular class session</td>
+          <td>P</td>
+          <td>2 / 2</td>
+          <td>On time</td>
+        </tr>
+        <tr>
+          <td>Tue 17 Nov 2026 10:00AM</td>
+          <td>Section 1</td>
+          <td>Lab session</td>
+          <td>A</td>
+          <td>0 / 2</td>
+          <td>Unexcused</td>
+        </tr>
+        <tr>
+          <td>Thu 19 Nov 2026 10:00AM</td>
+          <td>Section 1</td>
+          <td>Tutorial</td>
+          <td>L</td>
+          <td>1 / 2</td>
+          <td>Arrived 10m late</td>
+        </tr>
+        <tr>
+          <td>Sun 22 Nov 2026 10:00AM</td>
+          <td>Section 1</td>
+          <td>Lecture 4</td>
+          <td>E</td>
+          <td>2 / 2</td>
+          <td>Medical report</td>
+        </tr>
+        <tr>
+          <td>Tue 24 Nov 2026 10:00AM</td>
+          <td>Section 1</td>
+          <td>Future lecture</td>
+          <td>?</td>
+          <td>0 / 2</td>
+          <td></td>
+        </tr>
+      </tbody>
+    </table>
+    <table class="attlist">
+      <tr><td>Taken sessions:</td><td>4</td></tr>
+      <tr><td>Total number of sessions:</td><td>5</td></tr>
+      <tr><td>Points over taken sessions:</td><td>5 / 8</td></tr>
+      <tr><td>Percentage over taken sessions:</td><td>62.5%</td></tr>
+    </table>
+  </section>
+
+  <!-- Arabic Attendance table with reordered columns (Group before Date) -->
+  <section id="fixture-attendance-ar-reordered">
+    <table class="generaltable">
+      <tr>
+        <th>المجموعة</th>
+        <th>التاريخ</th>
+        <th>الوصف</th>
+        <th>الحالة</th>
+        <th>النقاط</th>
+        <th>ملاحظات</th>
+      </tr>
+      <tr>
+        <td>شعبة 2</td>
+        <td>الأحد 15 نوفمبر 2026</td>
+        <td>محاضرة 1</td>
+        <td>حاضر</td>
+        <td>2/2</td>
+        <td>ممتاز</td>
+      </tr>
+      <tr>
+        <td>شعبة 2</td>
+        <td>الثلاثاء 17 نوفمبر 2026</td>
+        <td>محاضرة 2</td>
+        <td>غائب</td>
+        <td>0/2</td>
+        <td>بدون عذر</td>
+      </tr>
+      <tr>
+        <td>شعبة 2</td>
+        <td>الخميس 19 نوفمبر 2026</td>
+        <td>محاضرة 3</td>
+        <td>متأخر</td>
+        <td>1/2</td>
+        <td>تأخير 5 دقائق</td>
+      </tr>
+      <tr>
+        <td>شعبة 2</td>
+        <td>الأحد 22 نوفمبر 2026</td>
+        <td>محاضرة 4</td>
+        <td>معذور</td>
+        <td>2/2</td>
+        <td>عذر طبي</td>
+      </tr>
+    </table>
+    <table class="attlist">
+      <tr><td>الجلسات المأخوذة:</td><td>4</td></tr>
+      <tr><td>إجمالي الجلسات:</td><td>6</td></tr>
+      <tr><td>النسبة المئوية:</td><td>75%</td></tr>
+    </table>
+  </section>
+</body>
+</html>

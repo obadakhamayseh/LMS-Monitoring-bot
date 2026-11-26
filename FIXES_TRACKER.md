@@ -41,7 +41,7 @@
 
 | ID | الوصف | الحالة | الملفات المعدّلة | الاختبار / الدليل |
 |---|---|---|---|---|
-| H9 | تفكيك `bot.py` و`lms_scraper.py` إلى وحدات منظمة + FastAPI + APScheduler + CI + lockfile | ⬜ | | |
+| H9 | تفكيك `bot.py` و`lms_scraper.py` و`webapp.html` إلى وحدات منظمة + FastAPI + APScheduler + CI + lockfile | ✅ | `scraper/{__init__,client,dates,parsers,attendance,quizzes,core}.py`, `lms_scraper.py` (thin facade), `services/{__init__,sync_service}.py`, `monitor.py` (`AsyncIOScheduler` + `run_with_user_scraper`), `reminder.py` (`AsyncIOScheduler`), `bot.py` + `handlers/*`, `webapp_server.py` (FastAPI + Uvicorn), `webapp.html` (84 lines), `static/css/app.css`, `static/js/{state,dates,api,render,actions}.js`, `sw.js` (v4), `pyproject.toml`, `.github/workflows/ci.yml`, `requirements.txt`, `requirements-dev.txt`, `requirements.lock`, `README.md` | `tests/test_scraper_p0.py` (42), `tests/test_scraper_p1.py` (5), `tests/test_monitor_p0.py` (3), `tests/test_monitor_p1.py` (11), `tests/test_reminder_dates.py` (70), `tests/test_reminder_p1.py` (3), `tests/test_p2_scheduler_sync.py` (8), `tests/test_bot_p2.py` (11), `tests/test_webserver_p0.py` (30), `tests/test_webserver_p1.py` (38), `tests/test_fastapi_p2.py` (22), `tests/test_frontend_security.py` (10), `tests/test_frontend_p1.py` (14), `tests/test_frontend_p2.py` (5) + `ruff check` + `node --check` |
 
 ## المشاكل المتوسطة والمنخفضة
 
@@ -61,8 +61,8 @@
 | ID | الوصف | الحالة | الملفات المعدّلة | الاختبار / الدليل |
 |---|---|---|---|---|
 | F1 | `MoodleApiClient` (API-First هجين خلف feature flag معطّل افتراضياً + Fallback) | ⬜ | | |
-| F2 | FastAPI + Rate Limiting + Docs (ضمن P2) | ⬜ | | |
-| F3 | اختبارات المحللات الأربعة + CI (ضمن P2) | ⬜ | | |
+| F2 | FastAPI + Rate Limiting + Docs (ضمن P2) | ✅ | `webapp_server.py` (FastAPI + Uvicorn على حلقة asyncio المشتركة، Pydantic v2، CORS/CSP بدون `'unsafe-inline'` في `script-src`، Rate Limiting لكل IP، `/static/*` محمية ضد path traversal، OpenAPI `/docs` و`/openapi.json`، تفويض `seed_course_snapshot`) | `tests/test_webserver_p0.py` (30 passed), `tests/test_webserver_p1.py` (38 passed), `tests/test_fastapi_p2.py` (22 passed) — 90 passed + `ruff check` clean |
+| F3 | اختبارات المحللات الأربعة + CI (ضمن P2) | ✅ | `tests/fixtures/{dates_samples.json,submission_moodle5.html,quiz_grade_moodle5.html,attendance_moodle5.html,announcements_moodle5.html}`, `tests/test_parsers_fixtures.py`, `pyproject.toml`, `.github/workflows/ci.yml`, `requirements-dev.txt`, `requirements.lock` | `tests/test_parsers_fixtures.py` (11 passed: submission, quiz_grade, attendance, announcements, dates) + `ruff check` + `.github/workflows/ci.yml` (`ruff` + `pytest` + `node --check`) |
 | F4 | Live iCal Feed `/api/calendar.ics?token=` | ⬜ | | |
 | F5 | Daily Digest | ⬜ | | |
 | F6 | Absence Risk | ⬜ | | |

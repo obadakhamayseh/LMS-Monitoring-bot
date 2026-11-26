@@ -22,14 +22,30 @@ NODE_BIN = shutil.which("node")
 requires_node = pytest.mark.skipif(NODE_BIN is None, reason="node binary not found")
 
 
+def _extract_webapp_script_paths(html_text: str) -> list[Path]:
+    srcs = re.findall(
+        r'<script[^>]*\bsrc=["\'](/static/js/[^"\']+)["\'][^>]*>',
+        html_text,
+        flags=re.IGNORECASE,
+    )
+    paths: list[Path] = []
+    for src in srcs:
+        p = REPO_ROOT / src.lstrip("/")
+        assert p.is_file(), f"Missing script referenced in webapp.html: {src}"
+        paths.append(p)
+    return paths
+
+
 def _extract_inline_script(html_text: str) -> str:
-    scripts = re.findall(
+    parts = [p.read_text(encoding="utf-8") for p in _extract_webapp_script_paths(html_text)]
+    inline_scripts = re.findall(
         r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>",
         html_text,
         flags=re.IGNORECASE | re.DOTALL,
     )
-    assert scripts, "No inline <script> found in webapp.html"
-    return "\n\n".join(scripts)
+    parts.extend(inline_scripts)
+    assert parts, "No frontend JS found via webapp.html"
+    return "\n\n".join(parts)
 
 
 def _run_node(js_code: str, cwd: Path = REPO_ROOT) -> subprocess.CompletedProcess:
@@ -49,9 +65,13 @@ const vm = require('vm');
 
 function loadWebappP1(opts = {}) {
   const html = fs.readFileSync('webapp.html', 'utf8');
-  const scriptMatches = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)];
-  if (!scriptMatches.length) throw new Error('No inline script in webapp.html');
-  const scriptCode = scriptMatches.map(m => m[1]).join('\n\n');
+  const scriptPaths = [...html.matchAll(/<script[^>]*\bsrc=["'](\/static\/js\/[^"']+)["'][^>]*>/gi)]
+    .map(m => m[1].replace(/^\//, ''));
+  const inlineMatches = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)]
+    .map(m => m[1]);
+  const parts = scriptPaths.map(p => fs.readFileSync(p, 'utf8')).concat(inlineMatches);
+  if (!parts.length) throw new Error('No local scripts found in webapp.html');
+  const scriptCode = parts.join('\n\n');
 
   const listeners = { click: [], change: [], input: [], keydown: [], error: [], DOMContentLoaded: [] };
   const elements = new Map();
@@ -753,7 +773,8 @@ console.log('H10_PARSE_DATE_OK');
 @requires_node
 def test_h10_due_info_accuracy_and_no_dead_branch():
     html = WEBAPP_HTML.read_text(encoding="utf-8")
-    m = re.search(r"function\s+dueInfo\s*\([^)]*\)\s*\{.*?\n\}", html, flags=re.DOTALL)
+    frontend_js = _extract_inline_script(html)
+    m = re.search(r"function\s+dueInfo\s*\([^)]*\)\s*\{.*?\n\}", frontend_js, flags=re.DOTALL)
     assert m, "dueInfo function not found"
     due_src = m.group(0)
     assert "Math.ceil" not in due_src, "dueInfo must not use Math.ceil"
@@ -1033,9 +1054,10 @@ console.log('H14_MODAL_ARIA_ESC_OK');
 @requires_node
 def test_h16_no_mutah_app_token_no_fetch_monkeypatch_and_apifetch_contract():
     html = WEBAPP_HTML.read_text(encoding="utf-8")
-    assert "mutahAppToken" not in html, "mutahAppToken must be completely removed from webapp.html"
-    assert "window.fetch =" not in html and "window.fetch=" not in html, "window.fetch must NOT be monkey-patched"
-    assert not re.search(r"(?<![A-Za-z0-9_])fetch\s*\(\s*['\"]/api/", html), "All /api/* calls must use apiFetch(), not bare fetch()"
+    frontend_combined = html + "\n" + _extract_inline_script(html)
+    assert "mutahAppToken" not in frontend_combined, "mutahAppToken must be completely removed from frontend"
+    assert "window.fetch =" not in frontend_combined and "window.fetch=" not in frontend_combined, "window.fetch must NOT be monkey-patched"
+    assert not re.search(r"(?<![A-Za-z0-9_])fetch\s*\(\s*['\"]/api/", frontend_combined), "All /api/* calls must use apiFetch(), not bare fetch()"
 
     js = P1_NODE_HARNESS + r"""
 const assert = require('assert');

@@ -6,20 +6,24 @@ import logging
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Callable, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from zoneinfo import ZoneInfo
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram import Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.error import Forbidden, RetryAfter, TelegramError
 
 from config import LMS_BASE_URL
 import database as db
-from lms_scraper import FetchResult, LMSScraper
+from lms_scraper import FetchResult, LMSAuthError, LMSScraper, LMSWafError
 from reminder import _parse_due_date
+from services.sync_service import seed_course_snapshot
 from telegram_utils import escape_html, html_link, send_html_message
 
 logger = logging.getLogger(__name__)
+JORDAN_TZ = ZoneInfo("Asia/Amman")
 
 
 def _canonical_content_url(url: str) -> str:
@@ -51,12 +55,18 @@ class MonitorEngine:
     INCOMPLETE_BACKOFF_BASE = 120   # 2 minutes initial exponential backoff on incomplete scans
     INCOMPLETE_BACKOFF_MAX = 1800   # 30 minutes cap on exponential backoff
     MIN_REQUEST_COOLDOWN_SECONDS = 1.0
+    POLL_INTERVAL_SECONDS = 60
+    TICK_TIMEOUT_SECONDS = 300.0
+    MISFIRE_GRACE_TIME = 30
+    TICK_BACKOFF_BASE = 30.0
+    TICK_BACKOFF_MAX = 300.0
+    JOB_ID = "monitor_poll_tick"
 
     def __init__(self, bot: Bot, reminder_engine=None):
         self.bot = bot
         self.reminder_engine = reminder_engine
         self._running = False
-        self._task: Optional[asyncio.Task] = None
+        self._scheduler: Optional[AsyncIOScheduler] = None
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._state_lock = threading.RLock()
         self._active_tasks: set[asyncio.Task] = set()
@@ -71,6 +81,8 @@ class MonitorEngine:
         self._last_scan_waf = {}  # tid -> bool from latest FetchResult scan
         self._last_scan_expired = {}  # tid -> bool from latest FetchResult scan
         self._course_cache = {}  # (tid, course_id) -> (timestamp, content)
+        self._tick_error_count: int = 0
+        self._tick_backoff_until: float = 0.0
         self.COURSE_CACHE_TTL = 300  # 5 minutes shared cache TTL
         self.WAF_BACKOFF_SECONDS = 900  # 15 minutes polite cooldown if WAF triggers
         self.TRANSIENT_BACKOFF_SECONDS = 300  # 5 minutes retry backoff on temporary login errors
@@ -115,11 +127,11 @@ class MonitorEngine:
                 scraper.logout()
                 return
             except Exception as exc:
-                logger.debug(f"Scraper logout error during cleanup: {exc}")
+                logger.debug("Scraper logout error during cleanup: %s", exc)
         try:
             scraper.close()
         except Exception as exc:
-            logger.debug(f"Scraper close error during cleanup: {exc}")
+            logger.debug("Scraper close error during cleanup: %s", exc)
 
     async def _discard_session_async(self, tid: int, logout: bool = False) -> None:
         with self._state_lock:
@@ -192,20 +204,49 @@ class MonitorEngine:
     async def start(self):
         if self._running:
             return
-        self.attach_loop(asyncio.get_running_loop())
+        loop = asyncio.get_running_loop()
+        self.attach_loop(loop)
         self._running = True
-        self._task = asyncio.create_task(self._loop_run())
-        logger.info("Monitor engine started")
+        self._tick_error_count = 0
+        self._tick_backoff_until = 0.0
+
+        scheduler = AsyncIOScheduler(
+            timezone=JORDAN_TZ,
+            event_loop=loop,
+            job_defaults={
+                "coalesce": True,
+                "max_instances": 1,
+                "misfire_grace_time": self.MISFIRE_GRACE_TIME,
+            },
+        )
+        scheduler.add_job(
+            self._scheduled_tick,
+            trigger="interval",
+            seconds=self.POLL_INTERVAL_SECONDS,
+            id=self.JOB_ID,
+            name="MonitorEngine periodic check",
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=self.MISFIRE_GRACE_TIME,
+            replace_existing=True,
+            next_run_time=datetime.now(JORDAN_TZ),
+        )
+        scheduler.start()
+        self._scheduler = scheduler
+        logger.info("Monitor engine started (APScheduler AsyncIOScheduler, tz=Asia/Amman)")
 
     async def stop(self):
         self._running = False
-        if self._task:
-            self._task.cancel()
+        scheduler = self._scheduler
+        self._scheduler = None
+        if scheduler is not None:
             try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-            self._task = None
+                if scheduler.running:
+                    scheduler.shutdown(wait=False)
+            except Exception as exc:
+                logger.debug("Monitor scheduler shutdown error: %s", exc)
+            # Yield once so AsyncIOScheduler's call_soon_threadsafe shutdown callback finishes
+            await asyncio.sleep(0)
 
         # H13: Await ALL in-flight tasks BEFORE closing any scraper sessions/resources
         in_flight = [t for t in list(self._active_tasks) if not t.done()]
@@ -219,47 +260,72 @@ class MonitorEngine:
         if remaining:
             loop = asyncio.get_running_loop()
             await asyncio.gather(
-                *(loop.run_in_executor(None, self._close_scraper_sync, scraper, False) for _, _, scraper in remaining),
+                *(
+                    loop.run_in_executor(None, self._close_scraper_sync, scraper, False)
+                    for _, _, scraper in remaining
+                ),
                 return_exceptions=True,
             )
         logger.info("Monitor engine stopped")
 
-    async def _loop_run(self):
-        await self._loop_body()
+    async def _scheduled_tick(self):
+        if not self._running:
+            return
+        now_mono = time.monotonic()
+        if now_mono < self._tick_backoff_until:
+            logger.debug("Monitor tick skipped due to backoff (%.1fs remaining)", self._tick_backoff_until - now_mono)
+            return
 
-    async def _loop(self):
-        """Backward-compatible alias for the main monitor loop."""
-        await self._loop_body()
-
-    async def _loop_body(self):
-        while self._running:
+        tick_task = self._track_task(self._run_tick())
+        try:
+            await asyncio.wait_for(asyncio.shield(tick_task), timeout=self.TICK_TIMEOUT_SECONDS)
+            self._tick_error_count = 0
+            self._tick_backoff_until = 0.0
+        except asyncio.TimeoutError:
+            tick_task.cancel()
             try:
-                users = await self._run_db(db.get_all_monitoring_users)
-                active_ids = {int(user["telegram_id"]) for user in users}
+                await tick_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._record_tick_failure("Monitor tick timed out after %.1fs" % self.TICK_TIMEOUT_SECONDS)
+        except asyncio.CancelledError:
+            tick_task.cancel()
+            raise
+        except Exception as exc:
+            self._record_tick_failure(f"Monitor tick error: {exc}")
+
+    def _record_tick_failure(self, message: str) -> None:
+        self._tick_error_count += 1
+        delay = min(
+            self.TICK_BACKOFF_BASE * (2 ** (self._tick_error_count - 1)),
+            self.TICK_BACKOFF_MAX,
+        )
+        self._tick_backoff_until = time.monotonic() + delay
+        logger.error("%s (consecutive=%d; backing off %.1fs)", message, self._tick_error_count, delay)
+
+    async def _run_tick(self):
+        """Execute a single monitoring tick across all active users."""
+        users = await self._run_db(db.get_all_monitoring_users)
+        active_ids = {int(user["telegram_id"]) for user in users}
+        with self._state_lock:
+            stale_ids = set(self._sessions) - active_ids
+        for tid in stale_ids:
+            lock = self._user_locks.setdefault(tid, asyncio.Lock())
+            async with lock:
+                await self._discard_session_async(tid, logout=False)
                 with self._state_lock:
-                    stale_ids = set(self._sessions) - active_ids
-                for tid in stale_ids:
-                    lock = self._user_locks.setdefault(tid, asyncio.Lock())
-                    async with lock:
-                        await self._discard_session_async(tid, logout=False)
-                        with self._state_lock:
-                            self._auth_required.discard(tid)
-                            self._auth_alerted.discard(tid)
-                tasks = [self._track_task(self._safe_check_user(user)) for user in users]
-                if tasks:
-                    await asyncio.gather(*tasks, return_exceptions=True)
-            except asyncio.CancelledError:
-                raise
-            except Exception as e:
-                logger.error(f"Loop error: {e}")
-            await asyncio.sleep(60)
+                    self._auth_required.discard(tid)
+                    self._auth_alerted.discard(tid)
+        tasks = [self._track_task(self._safe_check_user(user)) for user in users]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def _safe_check_user(self, user: dict):
         async with self._check_slots:
             try:
                 await self._check_user(user)
             except Exception as e:
-                logger.error(f"Error checking user {user['telegram_id']}: {e}")
+                logger.error("Error checking user %s: %s", user["telegram_id"], e)
 
     @staticmethod
     def _is_user_due(user: dict) -> bool:
@@ -298,6 +364,108 @@ class MonitorEngine:
             if remaining > 0:
                 await asyncio.sleep(remaining)
 
+    async def _ensure_logged_in(
+        self,
+        user: dict,
+        *,
+        force_fresh: bool = False,
+        notify_on_invalid: bool = True,
+    ) -> tuple[Optional[LMSScraper], Optional[str]]:
+        """Ensure the cached per-user LMSScraper is logged in (caller MUST hold per-user lock)."""
+        tid = int(user["telegram_id"])
+        loop = asyncio.get_running_loop()
+        if force_fresh:
+            await self._discard_session_async(tid, logout=False)
+        scraper = self._get_session(user)
+        if scraper.logged_in:
+            return scraper, None
+
+        await self._respect_request_cooldown(scraper)
+        ok_login = await loop.run_in_executor(None, scraper.login)
+        if ok_login:
+            with self._state_lock:
+                self._auth_required.discard(tid)
+                self._auth_alerted.discard(tid)
+                self._transient_backoff_until.pop(tid, None)
+            return scraper, None
+
+        if scraper.waf_blocked:
+            logger.warning("WAF challenge during login for %s; pausing checks for %ss", tid, self.WAF_BACKOFF_SECONDS)
+            with self._state_lock:
+                self._waf_backoff_until[tid] = time.monotonic() + self.WAF_BACKOFF_SECONDS
+            return None, scraper.error_message or (
+                "جدار حماية موقع الجامعة طلب تحققاً أمنياً مؤقتاً؛ حاول مجدداً بعد عدة دقائق"
+            )
+
+        if scraper.credentials_invalid:
+            logger.warning("Invalid credentials for %s: %s", tid, scraper.error_message)
+            with self._state_lock:
+                self._auth_required.add(tid)
+            if notify_on_invalid:
+                await self._notify_auth_stopped(
+                    tid,
+                    "بيانات تسجيل الدخول إلى نظام الجامعة لم تعد صالحة. أعد تسجيل الدخول من الزر أدناه؛ موادك المراقبة ستبقى محفوظة.",
+                )
+            return None, scraper.error_message or "بيانات تسجيل الدخول إلى LMS غير صالحة"
+
+        logger.warning(
+            "Transient login failure for %s: %s; retrying in %ss",
+            tid,
+            scraper.error_message,
+            self.TRANSIENT_BACKOFF_SECONDS,
+        )
+        with self._state_lock:
+            self._transient_backoff_until[tid] = time.monotonic() + self.TRANSIENT_BACKOFF_SECONDS
+        return None, scraper.error_message or "فشل تسجيل الدخول إلى LMS"
+
+    async def run_with_user_scraper(
+        self,
+        telegram_id: int,
+        func: Callable[..., Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        """Acquire per-user lock, ensure a logged-in cached scraper, and run `func(scraper, *args, **kwargs)` in executor.
+
+        Automatically retries once with a fresh login if `LMSAuthError` is raised by `func`.
+        Raises `RuntimeError` if user is missing or login fails transiently, `LMSWafError` on WAF,
+        or `LMSAuthError` on invalid/expired credentials.
+        """
+        tid = int(telegram_id)
+        user = await self._run_db(db.get_user, tid)
+        if not user:
+            raise RuntimeError("المستخدم غير مسجّل")
+
+        lock = self._user_locks.setdefault(tid, asyncio.Lock())
+        loop = asyncio.get_running_loop()
+
+        async with lock:
+            scraper, err = await self._ensure_logged_in(user, force_fresh=False, notify_on_invalid=False)
+            if scraper is None:
+                with self._state_lock:
+                    waf_active = time.monotonic() < self._waf_backoff_until.get(tid, 0.0)
+                    auth_needed = tid in self._auth_required
+                if waf_active:
+                    raise LMSWafError(err or "جدار حماية موقع الجامعة طلب تحققاً أمنياً مؤقتاً؛ حاول مجدداً بعد عدة دقائق")
+                if auth_needed:
+                    raise LMSAuthError(err or "بيانات تسجيل الدخول إلى LMS غير صالحة؛ أعد تسجيل الدخول من البوت")
+                raise RuntimeError(err or "فشل تسجيل الدخول إلى LMS")
+
+            await self._respect_request_cooldown(scraper)
+            try:
+                return await loop.run_in_executor(None, functools.partial(func, scraper, *args, **kwargs))
+            except LMSAuthError:
+                logger.info("Session expired during run_with_user_scraper for %s; retrying once with fresh login", tid)
+                scraper, err = await self._ensure_logged_in(user, force_fresh=True, notify_on_invalid=False)
+                if scraper is None:
+                    with self._state_lock:
+                        waf_active = time.monotonic() < self._waf_backoff_until.get(tid, 0.0)
+                    if waf_active:
+                        raise LMSWafError(err or "جدار حماية موقع الجامعة طلب تحققاً أمنياً مؤقتاً")
+                    raise LMSAuthError(err or "انتهت جلسة LMS وتعذّر تجديدها")
+                await self._respect_request_cooldown(scraper)
+                return await loop.run_in_executor(None, functools.partial(func, scraper, *args, **kwargs))
+
     async def _check_user(self, user: dict):
         tid = int(user["telegram_id"])
         lock = self._user_locks.setdefault(tid, asyncio.Lock())
@@ -324,61 +492,26 @@ class MonitorEngine:
             if now_mono < waf_until or now_mono < transient_until:
                 return
 
-            # H7: Check whether the user is due BEFORE calling _ensure_logged_in (and no unconditional 120s keepalive!)
+            # H7: Check whether the user is due BEFORE calling _ensure_logged_in (no unconditional 120s keepalive)
             if not self._is_user_due(user):
                 return
 
-            scraper = self._get_session(user)
-            loop = asyncio.get_running_loop()
-
-            async def _ensure_logged_in(force_fresh: bool = False):
-                nonlocal scraper
-                if force_fresh:
-                    await self._discard_session_async(tid, logout=False)
-                    scraper = self._get_session(user)
-                if scraper.logged_in:
-                    return True
-                await self._respect_request_cooldown(scraper)
-                ok_login = await loop.run_in_executor(None, scraper.login)
-                if ok_login:
-                    with self._state_lock:
-                        self._auth_alerted.discard(tid)
-                        self._transient_backoff_until.pop(tid, None)
-                    return True
-                if scraper.waf_blocked:
-                    logger.warning(f"WAF challenge during login for {tid}; pausing checks for {self.WAF_BACKOFF_SECONDS}s")
-                    with self._state_lock:
-                        self._waf_backoff_until[tid] = time.monotonic() + self.WAF_BACKOFF_SECONDS
-                    return False
-                if scraper.credentials_invalid:
-                    logger.warning(f"Invalid credentials for {tid}: {scraper.error_message}")
-                    with self._state_lock:
-                        self._auth_required.add(tid)
-                    await self._notify_auth_stopped(
-                        tid,
-                        "بيانات تسجيل الدخول إلى نظام الجامعة لم تعد صالحة. أعد تسجيل الدخول من الزر أدناه؛ موادك المراقبة ستبقى محفوظة.",
-                    )
-                    return False
-                # Transient server/network error (e.g. university Moodle restart/maintenance/timeout)
-                logger.warning(f"Transient login failure for {tid}: {scraper.error_message}; retrying in {self.TRANSIENT_BACKOFF_SECONDS}s")
-                with self._state_lock:
-                    self._transient_backoff_until[tid] = time.monotonic() + self.TRANSIENT_BACKOFF_SECONDS
-                return False
-
-            if not await _ensure_logged_in():
+            scraper, _ = await self._ensure_logged_in(user, force_fresh=False, notify_on_invalid=True)
+            if scraper is None:
                 return
 
             await self._respect_request_cooldown(scraper)
-            logger.info(f"Checking user {tid}")
+            logger.info("Checking user %s", tid)
             count, complete = await self._scan_user(user, courses, scraper)
             if self._last_scan_waf.get(tid) or scraper.waf_blocked:
-                logger.warning(f"WAF challenge during scan for {tid}; pausing checks for {self.WAF_BACKOFF_SECONDS}s")
+                logger.warning("WAF challenge during scan for %s; pausing checks for %ss", tid, self.WAF_BACKOFF_SECONDS)
                 with self._state_lock:
                     self._waf_backoff_until[tid] = time.monotonic() + self.WAF_BACKOFF_SECONDS
                 return
             if self._last_scan_expired.get(tid) or scraper.session_expired:
-                logger.info(f"Session expired during scan for {tid}; auto-relogging in and retrying once")
-                if not await _ensure_logged_in(force_fresh=True):
+                logger.info("Session expired during scan for %s; auto-relogging in and retrying once", tid)
+                scraper, _ = await self._ensure_logged_in(user, force_fresh=True, notify_on_invalid=True)
+                if scraper is None:
                     return
                 await self._respect_request_cooldown(scraper)
                 count, complete = await self._scan_user(user, courses, scraper)
@@ -400,7 +533,8 @@ class MonitorEngine:
                         db.append_sync_log,
                         tid,
                         "فحص دوري ناجح",
-                        f"تم فحص {len(courses)} مقررات" + (f" · {count} تحديث جديد" if count > 0 else " · لا تحديثات جديدة"),
+                        f"تم فحص {len(courses)} مقررات"
+                        + (f" · {count} تحديث جديد" if count > 0 else " · لا تحديثات جديدة"),
                     )
                 except Exception:
                     pass
@@ -415,7 +549,10 @@ class MonitorEngine:
                     )
                     self._transient_backoff_until[tid] = time.monotonic() + delay
                 logger.warning(
-                    f"Scan incomplete for {tid} (consecutive={failures}); backing off for {delay}s"
+                    "Scan incomplete for %s (consecutive=%d); backing off for %ss",
+                    tid,
+                    failures,
+                    delay,
                 )
 
     def _get_session(self, user: dict) -> LMSScraper:
@@ -511,7 +648,7 @@ class MonitorEngine:
                 await self._on_forbidden(tid)
                 return False
             except TelegramError as exc:
-                logger.warning(f"Document HTML send failed for {tid}; retrying plain: {exc}")
+                logger.warning("Document HTML send failed for %s; retrying plain: %s", tid, exc)
                 try:
                     await self.bot.send_document(
                         chat_id=tid,
@@ -538,7 +675,12 @@ class MonitorEngine:
 
         # Scan courses strictly sequentially per user (thread-safe on LMSScraper and polite to NetScaler WAF)
         for course in courses:
-            if self._last_scan_waf[tid] or self._last_scan_expired[tid] or scraper.session_expired or scraper.waf_blocked:
+            if (
+                self._last_scan_waf[tid]
+                or self._last_scan_expired[tid]
+                or scraper.session_expired
+                or scraper.waf_blocked
+            ):
                 complete = False
                 break
             try:
@@ -546,7 +688,7 @@ class MonitorEngine:
                     tid, user, scraper, course, bypass_cache=bypass_cache
                 )
             except Exception as e:
-                logger.error(f"Error checking course {course.get('course_id')} for {tid}: {e}")
+                logger.error("Error checking course %s for %s: %s", course.get("course_id"), tid, e)
                 course_events, course_complete, sess_expired, waf_blocked = [], False, False, False
 
             if waf_blocked:
@@ -580,11 +722,13 @@ class MonitorEngine:
                             course_ref = f"{LMS_BASE_URL}/course/view.php?id={res_ev['course_id']}"
                             file_info = await loop.run_in_executor(
                                 None,
-                                lambda u=res_ev["url"], ru=res_ev.get("raw_url"), ref=course_ref: scraper.download_resource(
-                                    u,
-                                    max_mb=self.MAX_AUTO_DOWNLOAD_MB,
-                                    raw_url=ru,
-                                    referer=ref,
+                                lambda u=res_ev["url"], ru=res_ev.get("raw_url"), ref=course_ref: (
+                                    scraper.download_resource(
+                                        u,
+                                        max_mb=self.MAX_AUTO_DOWNLOAD_MB,
+                                        raw_url=ru,
+                                        referer=ref,
+                                    )
                                 ),
                             )
                             if file_info:
@@ -595,10 +739,10 @@ class MonitorEngine:
                                 )
                                 doc_ok = await self._send_document_html(tid, filename, file_bytes, caption_html)
                                 if doc_ok:
-                                    logger.info(f"Direct file delivered: {filename} to {tid}")
+                                    logger.info("Direct file delivered: %s to %s", filename, tid)
                                     await asyncio.sleep(0.5)
                         except Exception as dl_err:
-                            logger.warning(f"Direct file send error for {tid}: {dl_err}")
+                            logger.warning("Direct file send error for %s: %s", tid, dl_err)
             else:
                 complete = False
         return sent_count, complete
@@ -610,17 +754,8 @@ class MonitorEngine:
         try:
             return bool(await self._run_db(fn, tid, cid))
         except Exception as exc:
-            logger.debug(f"is_course_seeded fallback for ({tid}, {cid}): {exc}")
+            logger.debug("is_course_seeded fallback for (%s, %s): %s", tid, cid, exc)
             return False
-
-    async def _mark_course_seeded(self, tid: int, cid: int) -> None:
-        fn = getattr(db, "mark_course_seeded", None)
-        if not callable(fn):
-            return
-        try:
-            await self._run_db(fn, tid, cid)
-        except Exception as exc:
-            logger.debug(f"mark_course_seeded skipped for ({tid}, {cid}): {exc}")
 
     async def _check_course(self, tid, user, scraper, course, bypass_cache: bool = False):
         events, ok, _, _ = await self._check_course_result(
@@ -642,7 +777,7 @@ class MonitorEngine:
                 cached = self._course_cache.get(cache_key)
             if cached and (now - cached[0] < self.COURSE_CACHE_TTL):
                 content = cached[1]
-                logger.debug(f"Using course cache for course {cid} (user {tid})")
+                logger.debug("Using course cache for course %s (user %s)", cid, tid)
 
         if content is None:
             fetch_res = await loop.run_in_executor(
@@ -650,20 +785,25 @@ class MonitorEngine:
             )
             if isinstance(fetch_res, FetchResult):
                 if fetch_res.waf_blocked:
-                    logger.warning(f"WAF blocked LMS fetch for user {tid}, course {cid}: {fetch_res.error}")
+                    logger.warning("WAF blocked LMS fetch for user %s, course %s: %s", tid, cid, fetch_res.error)
                     return [], False, False, True
                 if fetch_res.session_expired:
-                    logger.info(f"Session expired during LMS fetch for user {tid}, course {cid}")
+                    logger.info("Session expired during LMS fetch for user %s, course %s", tid, cid)
                     return [], False, True, False
                 if not fetch_res.ok:
-                    logger.warning(f"Incomplete LMS content response for user {tid}, course {cid}: {fetch_res.error}")
+                    logger.warning("Incomplete LMS content response for user %s, course %s: %s", tid, cid, fetch_res.error)
                     return [], False, False, False
                 content = fetch_res.content
             else:
                 # Defensive fallback if an external caller passed a mock returning a raw dict
                 if not getattr(scraper, "last_fetch_ok", True):
-                    logger.warning(f"Incomplete LMS content response for user {tid}, course {cid}")
-                    return [], False, bool(getattr(scraper, "session_expired", False)), bool(getattr(scraper, "waf_blocked", False))
+                    logger.warning("Incomplete LMS content response for user %s, course %s", tid, cid)
+                    return (
+                        [],
+                        False,
+                        bool(getattr(scraper, "session_expired", False)),
+                        bool(getattr(scraper, "waf_blocked", False)),
+                    )
                 content = fetch_res
             with self._state_lock:
                 self._course_cache[cache_key] = (now, content)
@@ -686,8 +826,9 @@ class MonitorEngine:
                 existing_seen = await self._run_db(db.get_seen_content, tid, task_item["id"], t_type)
                 was_previously_unsubmitted = existing_seen is not None and not bool(existing_seen.get("is_submitted", 0))
                 if was_previously_unsubmitted:
-                    # Only notify for recent/active tasks (do not spam retroactive alerts for tasks expired > 48h ago)
-                    due_ts = _parse_due_date(task_item.get("due_date") or (existing_seen.get("due_date") if existing_seen else ""))
+                    due_ts = _parse_due_date(
+                        task_item.get("due_date") or (existing_seen.get("due_date") if existing_seen else "")
+                    )
                     if due_ts and due_ts < now_ts - 172800:
                         await self._run_db(db.mark_assignment_submitted, tid, task_item["id"], 1)
                         continue
@@ -730,11 +871,25 @@ class MonitorEngine:
             if event:
                 events.append(event)
 
-        # 4. Gradebook & Quiz Marks Radar
+        if is_first_seed:
+            # H9: Delegate silent initial persistence of grades, announcements, attendance & is_seeded to sync_service
+            await self._run_db(
+                seed_course_snapshot,
+                db,
+                tid,
+                cid,
+                content,
+                course_name=cname,
+                mark_seeded=True,
+                reminder_engine=None,
+                include_seen=False,
+            )
+            return events, all_sends_ok, False, False
+
+        # 4. Gradebook & Quiz Marks Radar (seeded course)
         try:
             grades_list = content.get("grades", [])
             quiz_cmids = {str(q["id"]).replace("quiz_", "") for q in quizzes}
-            is_first_grade_seed = is_first_seed
 
             def _same_grade_val(v1: str, v2: str) -> bool:
                 s1 = " ".join(str(v1 or "").split()).strip()
@@ -763,8 +918,7 @@ class MonitorEngine:
                 old_val = (old_g.get("grade_val") or "").strip() if old_g else ""
 
                 should_notify = (
-                    not is_first_grade_seed
-                    and bool(grade_val)
+                    bool(grade_val)
                     and not _same_grade_val(grade_val, old_val)
                     and (
                         bool(user.get("notify_grade", 1))
@@ -816,13 +970,11 @@ class MonitorEngine:
                         db.upsert_grade, tid, cid, item_id, item_name, grade_val, grade_max, pct, fb, g_url
                     )
         except Exception as ge:
-            logger.warning(f"Error checking grades for course {cid} (user {tid}): {ge}")
+            logger.warning("Error checking grades for course %s (user %s): %s", cid, tid, ge)
 
-        # 5. Course Announcements & Forum Radar (gated by courses.is_seeded, NOT len(existing_anns) == 0)
+        # 5. Course Announcements & Forum Radar (seeded course)
         try:
             announcements_list = content.get("announcements", [])
-            is_first_ann_seed = is_first_seed
-
             for ann in announcements_list:
                 discuss_id = ann["discuss_id"]
                 existing_ann = await self._run_db(db.get_announcement, tid, discuss_id)
@@ -833,13 +985,13 @@ class MonitorEngine:
                 author = ann.get("author", "")
                 posted_date = ann.get("posted_date", "")
 
-                if not is_first_ann_seed and ann.get("url"):
+                if ann.get("url"):
                     details = await loop.run_in_executor(None, scraper.get_announcement_details, ann["url"])
                     body_text = details.get("body", "")
                     author = author or details.get("author", "")
                     posted_date = posted_date or details.get("date", "")
 
-                if not is_first_ann_seed and user.get("notify_announcement", 1):
+                if user.get("notify_announcement", 1):
                     a_lines = [
                         "📢 <b>إعلان جديد من مدرس المساق!</b>",
                         "━━━━━━━━━━━━━━━━━━━━━━",
@@ -886,13 +1038,11 @@ class MonitorEngine:
                         ann.get("url", ""),
                     )
         except Exception as ane:
-            logger.warning(f"Error checking announcements for course {cid} (user {tid}): {ane}")
+            logger.warning("Error checking announcements for course %s (user %s): %s", cid, tid, ane)
 
-        # 6. Attendance & Absence Radar (gated by courses.is_seeded, NOT old_att is None)
+        # 6. Attendance & Absence Radar (seeded course)
         try:
             attendance_list = content.get("attendance", [])
-            is_first_att_seed = is_first_seed
-
             for att in attendance_list:
                 att_id = att["att_id"]
                 old_att = await self._run_db(db.get_attendance, tid, cid, att_id)
@@ -908,7 +1058,7 @@ class MonitorEngine:
 
                 new_sessions = att.get("sessions", [])
                 changed_sessions = []
-                if not is_first_att_seed and user.get("notify_attendance", 1):
+                if user.get("notify_attendance", 1):
                     for s in new_sessions:
                         s_date = s.get("date", "")
                         s_status = s.get("status", "")
@@ -978,10 +1128,7 @@ class MonitorEngine:
                         url=att.get("url", ""),
                     )
         except Exception as atte:
-            logger.warning(f"Error checking attendance for course {cid} (user {tid}): {atte}")
-
-        if is_first_seed:
-            await self._mark_course_seeded(tid, cid)
+            logger.warning("Error checking attendance for course %s (user %s): %s", cid, tid, atte)
 
         return events, all_sends_ok, False, False
 
@@ -1212,7 +1359,7 @@ class MonitorEngine:
             try:
                 await self._run_db(fn, int(chat_id), False)
             except Exception as exc:
-                logger.warning(f"Failed to disable notifications after Forbidden for {chat_id}: {exc}")
+                logger.warning("Failed to disable notifications after Forbidden for %s: %s", chat_id, exc)
 
     async def _send(
         self,
@@ -1247,23 +1394,15 @@ class MonitorEngine:
         lock = self._user_locks.setdefault(tid, asyncio.Lock())
         async with lock:
             scraper = self._get_session(user)
-            loop = asyncio.get_running_loop()
             with self._state_lock:
                 needs_relogin = (not scraper.logged_in) or (tid in self._auth_required)
             if needs_relogin:
-                await self._discard_session_async(tid, logout=False)
-                scraper = self._get_session(user)
-                ok = await loop.run_in_executor(None, scraper.login)
-                if not ok:
-                    if scraper.waf_blocked:
-                        with self._state_lock:
-                            self._waf_backoff_until[tid] = time.monotonic() + self.WAF_BACKOFF_SECONDS
-                        return 0, scraper.error_message or "جدار حماية موقع الجامعة طلب تحققاً أمنياً مؤقتاً؛ حاول بعد عدة دقائق"
-                    if scraper.credentials_invalid:
-                        with self._state_lock:
-                            self._auth_required.add(tid)
-                        return 0, "بيانات تسجيل الدخول إلى LMS غير صالحة؛ أعد تسجيل الدخول من البوت"
-                    return 0, scraper.error_message or "فشل تسجيل الدخول إلى LMS"
+                scraper, err = await self._ensure_logged_in(user, force_fresh=True, notify_on_invalid=False)
+                if scraper is None:
+                    with self._state_lock:
+                        if tid in self._auth_required:
+                            return 0, "بيانات تسجيل الدخول إلى LMS غير صالحة؛ أعد تسجيل الدخول من البوت"
+                    return 0, err or "فشل تسجيل الدخول إلى LMS"
             with self._state_lock:
                 self._auth_required.discard(tid)
                 self._auth_alerted.discard(tid)
@@ -1276,11 +1415,9 @@ class MonitorEngine:
                     self._waf_backoff_until[tid] = time.monotonic() + self.WAF_BACKOFF_SECONDS
                 return count, "جدار حماية موقع الجامعة طلب تحققاً أمنياً مؤقتاً؛ تم إيقاف الفحص مؤقتاً"
             if self._last_scan_expired.get(tid) or scraper.session_expired:
-                await self._discard_session_async(tid, logout=False)
-                scraper = self._get_session(user)
-                ok = await loop.run_in_executor(None, scraper.login)
-                if not ok:
-                    return count, scraper.error_message or "انتهت جلسة LMS وتعذّر تجديدها مؤقتاً"
+                scraper, err = await self._ensure_logged_in(user, force_fresh=True, notify_on_invalid=False)
+                if scraper is None:
+                    return count, err or "انتهت جلسة LMS وتعذّر تجديدها مؤقتاً"
                 count, complete = await self._scan_user(user, courses, scraper, bypass_cache=True)
                 if self._last_scan_expired.get(tid) or scraper.session_expired:
                     return count, "انتهت جلسة LMS؛ حاول مجدداً بعد قليل"
@@ -1294,7 +1431,8 @@ class MonitorEngine:
                         db.append_sync_log,
                         tid,
                         "فحص فوري (تيليجرام)",
-                        f"تم فحص {len(courses)} مقررات" + (f" · {count} تحديث جديد" if count > 0 else " · لا تحديثات جديدة"),
+                        f"تم فحص {len(courses)} مقررات"
+                        + (f" · {count} تحديث جديد" if count > 0 else " · لا تحديثات جديدة"),
                     )
                 except Exception:
                     pass

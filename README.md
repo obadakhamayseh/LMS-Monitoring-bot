@@ -61,18 +61,29 @@ python bot.py
 
 ```
 LMS_Monitor/
-├── bot.py            # البوت الرئيسي وتوجيه الأوامر
-├── webapp_server.py  # خادم واجهة Telegram Mini App والـ REST API
-├── webapp.html       # تطبيق Telegram Mini App التفاعلي الحديث
-├── lms_scraper.py    # سحب البيانات والملفات من LMS
-├── monitor.py        # محرك المراقبة الدورية والفحص المشترك
-├── database.py       # قاعدة البيانات والتشفير
-├── security.py       # تشفير وفك تشفير كلمات المرور (Fernet: AES-128-CBC + HMAC-SHA256)
-├── reminder.py       # تذكيرات مواعيد التسليم
-├── config.py         # الإعدادات
-├── .env              # متغيرات البيئة (Token / URLs)
-├── requirements.txt  # المتطلبات
-└── lms_monitor.db    # قاعدة البيانات (تُنشأ تلقائياً)
+├── bot.py                   # نقطة الدخول وتهيئة التطبيق ودورة التشغيل
+├── handlers/                # معالجات أوامر وأزرار تيليجرام المقسّمة حسب المسؤولية
+├── scraper/                 # عميل HTTP ومحلّلات صفحات Moodle (واجبات/كويزات/علامات/حضور/إعلانات)
+├── lms_scraper.py           # واجهة التوافق (Facade) للسكرابر
+├── services/                # خدمات التزامن الموحّدة (sync_service)
+├── monitor.py               # محرك المراقبة الدورية (APScheduler) والفحص المشترك
+├── reminder.py              # محرك تذكيرات مواعيد التسليم (APScheduler + Asia/Amman)
+├── webapp_server.py         # خادم FastAPI + Uvicorn لتطبيق Mini App والـ REST API
+├── webapp.html              # الهيكل الخفيف لواجهة Telegram Mini App / PWA
+├── static/
+│   ├── css/app.css          # أنماط الواجهة الأمامية
+│   └── js/                  # وحدات JS: state.js, dates.js, api.js, render.js, actions.js
+├── sw.js                    # Service Worker (v4) للتخزين المؤقت للواجهة والعمل دون اتصال
+├── database.py              # قاعدة البيانات (PostgreSQL ConnectionPool / SQLite WAL)
+├── security.py              # تشفير وفك تشفير كلمات المرور (Fernet: AES-128-CBC + HMAC-SHA256)
+├── telegram_utils.py        # تهريب HTML وتقسيم الرسائل وإرسال آمن يحترم RetryAfter
+├── config.py                # الإعدادات ومتغيرات البيئة الإلزامية
+├── pyproject.toml           # إعدادات Ruff لفحص جودة الكود
+├── .github/workflows/ci.yml # مسار CI (Ruff + pytest + node --check)
+├── requirements.txt         # المتطلبات الأساسية
+├── requirements-dev.txt     # متطلبات التطوير والاختبار
+├── requirements.lock        # نسخ الحزم المثبّتة بدقة (Lockfile)
+└── tests/                   # اختبارات الوحدة والأمان والواجهة
 ```
 
 ---
@@ -127,3 +138,18 @@ CHECK_INTERVAL_MINUTES = 10
 - **التشغيل اليومي (Runtime Pool):** يفضّل النظام `DATABASE_URL` (منفذ PgBouncer Transaction Pooler مثل `:6543` مع `?pgbouncer=true`) عبر `psycopg_pool.ConnectionPool` مع تعطيل الـ Prepared Statements تلقائياً (`prepare_threshold=None`) عند اكتشاف PgBouncer لتجنّب استنزاف اتصالات Supabase المباشرة.
 - **الترحيل وتهيئة الجداول (`init_db`):** عند توفر `DIRECT_URL` (المنفذ المباشر `:5432`) يستخدمه النظام لتشغيل عمليات DDL/الترحيل عند الإقلاع ثم يغلقه، وإلا يعود تلقائياً إلى `DATABASE_URL`.
 - **SQLite محلياً:** عند عدم ضبط رابط PostgreSQL، يفعّل النظام تلقائياً `PRAGMA foreign_keys = ON` و`PRAGMA journal_mode = WAL` و`PRAGMA busy_timeout = 10000`.
+
+---
+
+## 🏗️ البنية المعيارية، خادم FastAPI، وخط التكامل المستمر (CI)
+
+- **خادم الويب والـ API (`FastAPI` + `Uvicorn`):** يعمل `webapp_server.py` على FastAPI/Uvicorn ضمن حلقة `asyncio` نفسها مع ترويسات أمان صارمة (`CSP` بدون `'unsafe-inline'` في `script-src`، و`HSTS`، و`X-Content-Type-Options`) وتقديم الملفات الثابتة عبر `/static`.
+- **فصل الواجهة الأمامية (PWA / Mini App):** تم تفكيك `webapp.html` إلى هيكل HTML خفيف يحمّل `/static/css/app.css` وخمس وحدات JavaScript مؤجّلة (`state.js`, `dates.js`, `api.js`, `render.js`, `actions.js`) مع `sw.js` (`v4`) للتخزين المؤقت للواجهة.
+- **تثبيت الاعتماديات (`requirements.lock`):**
+  - للتشغيل: `pip install -r requirements.txt`
+  - للتطوير والاختبار: `pip install -r requirements-dev.txt`
+  - لبيئة مطابقة تماماً بالنسخ المثبّتة: `pip install -r requirements.lock`
+- **التحقق التلقائي (GitHub Actions CI — `.github/workflows/ci.yml`):** يعمل تلقائياً عند كل `push` و`pull_request` وينفّذ:
+  1. `ruff check .` وفق إعدادات `pyproject.toml`
+  2. `node --check` على جميع ملفات `static/js/*.js` و`sw.js`
+  3. `pytest -v` مع متغيرات بيئة اختبار آمنة ومفتاح `ENCRYPTION_KEY` مولّد ديناميكياً.

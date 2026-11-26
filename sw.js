@@ -1,13 +1,25 @@
 /* Service worker for the installable student app.
    - App shell: network-first, falls back to the last cached copy (opens offline).
+   - Static CSS/JS & icons: precached on install and served cache-first.
    - /api/user-data: network-first, falls back to the last cached snapshot.
    - 401/403 responses evict cached user-data and are never cached; no non-OK response is cached.
    - Other API calls are never cached. */
-const VERSION = 'v3';
+const VERSION = 'v4';
 const SHELL_CACHE = 'shell-' + VERSION;
 const DATA_CACHE = 'data-' + VERSION;
 const FONT_CACHE = 'fonts-' + VERSION;
-const SHELL_URLS = ['/webapp', '/manifest.webmanifest', '/logo.png', '/icons/icon-192.png'];
+const SHELL_URLS = [
+  '/webapp',
+  '/manifest.webmanifest',
+  '/logo.png',
+  '/icons/icon-192.png',
+  '/static/css/app.css',
+  '/static/js/state.js',
+  '/static/js/dates.js',
+  '/static/js/api.js',
+  '/static/js/render.js',
+  '/static/js/actions.js'
+];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -93,7 +105,12 @@ self.addEventListener('fetch', (event) => {
       event.respondWith(networkFirst(req, SHELL_CACHE, '/webapp'));
       return;
     }
-    if (url.pathname === '/logo.png' || url.pathname.startsWith('/icons/') || url.pathname === '/manifest.webmanifest') {
+    if (
+      url.pathname === '/logo.png' ||
+      url.pathname.startsWith('/icons/') ||
+      url.pathname === '/manifest.webmanifest' ||
+      url.pathname.startsWith('/static/')
+    ) {
       event.respondWith(cacheFirstStatic(req, url.pathname));
     }
     return;

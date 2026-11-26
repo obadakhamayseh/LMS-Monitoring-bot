@@ -17,7 +17,7 @@ import pytest
 from bs4 import BeautifulSoup
 
 import lms_scraper
-from lms_scraper import LMSScraper, LMSAuthError, LMSWafError
+from lms_scraper import LMSScraper
 
 
 # ---------------------------------------------------------------------------
@@ -287,8 +287,6 @@ def test_c2_fetch_course_content_session_expired_result_and_legacy_wrapper():
 def test_c2_login_and_ajax_route_through_http_client():
     sc = LMSScraper("student", "secret")
     recorded: List[tuple] = []
-
-    orig_request = sc.http.request
 
     def spy_request(method, url, **kwargs):
         recorded.append((method.upper(), url))

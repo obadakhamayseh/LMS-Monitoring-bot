@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Moodle 5.x Quiz Grade &amp; Status Fixtures (Mutah LMS)</title>
+</head>
+<body>
+  <!-- Live HTML from Apriori & ECLAT Quiz 291283: scaled Grade takes precedence over raw Marks -->
+  <section id="fixture-quiz-marks-and-grade">
+    <table class="generaltable quizreviewsummary">
+      <tr><th>Status</th><td>Finished</td></tr>
+      <tr><th>Marks</th><td>5.00/5.00</td></tr>
+      <tr><th>Grade</th><td>10.00 out of 10.00 ( 100 %)</td></tr>
+    </table>
+  </section>
+
+  <!-- Live Moodle 5.x quiz 258139 with released grade & feedback -->
+  <section id="fixture-quiz-graded">
+    <div data-region="activity-dates">Opened: Monday, 16 November 2026, 1:00 PM Closed: Monday, 16 November 2026, 2:00 PM</div>
+    <table class="generaltable quizreviewsummary">
+      <tr><th>Status</th><td>Finished</td></tr>
+      <tr><th>Started</th><td>Monday, 16 November 2026, 1:27 PM</td></tr>
+      <tr><th>Completed</th><td>Monday, 16 November 2026, 1:36 PM</td></tr>
+      <tr><th>Duration</th><td>9 mins 6 secs</td></tr>
+      <tr><th>Grade</th><td>15.00 out of 15.00 ( 100 %)</td></tr>
+    </table>
+    <div id="feedback"><h3>Your final grade for this quiz is 15.00/15.00.</h3></div>
+  </section>
+
+  <!-- Live Moodle 5.x quiz 290627 finished but Review not permitted -->
+  <section id="fixture-quiz-ungraded">
+    <table class="generaltable quizreviewsummary">
+      <tr><th>Status</th><td>Finished</td></tr>
+      <tr><th>Completed</th><td>Sunday, 22 November 2026, 9:36 AM</td></tr>
+    </table>
+    <p>Review not permitted</p>
+  </section>
+
+  <!-- In-progress quiz with green Done: View badge must NOT be marked submitted -->
+  <section id="fixture-quiz-in-progress-view-only">
+    <div data-region="completion-info">
+      <span class="badge rounded-pill bg-success">Done: View</span>
+    </div>
+    <table class="generaltable quizreviewsummary">
+      <tr><th>Status</th><td>In progress</td></tr>
+    </table>
+  </section>
+</body>
+</html>

@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Moodle 5.x Forum &amp; Announcements Fixtures (Mutah LMS)</title>
+</head>
+<body>
+  <!-- Moodle 5.x /mod/forum/view.php discussion table -->
+  <section id="fixture-forum-list">
+    <table class="table discussion-list generaltable">
+      <thead>
+        <tr>
+          <th>Discussion</th>
+          <th>Started by</th>
+          <th>Last post</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="discussion subscribed">
+          <th scope="row" class="topic starter">
+            <a href="https://mulms.mutah.edu.jo/mod/forum/discuss.php?d=40123&amp;__ncforminfo=VOLATILE_TOKEN">
+              Midterm Exam Schedule &amp; Rooms
+            </a>
+          </th>
+          <td class="author">Dr. Ahmad Al-Tarawneh</td>
+          <td class="lastpost">
+            <time datetime="2026-11-24T10:15:00+03:00">Tuesday, 24 November 2026, 10:15 AM</time>
+          </td>
+        </tr>
+        <tr class="discussion">
+          <th scope="row" class="topic starter">
+            <a href="/mod/forum/discuss.php?d=40124">
+              <span class="instancename">تأجيل محاضرة يوم الخميس<span class="accesshide"> Forum</span></span>
+            </a>
+          </th>
+          <td class="author">د. سمر الخطيب</td>
+          <td class="lastpost">
+            <time datetime="2026-11-25T14:00:00+03:00">Wednesday, 25 November 2026, 2:00 PM</time>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- Moodle 5.x /mod/forum/discuss.php post details (with navbar user link decoy outside post) -->
+  <section id="fixture-discuss-detail">
+    <nav class="navbar">
+      <a href="/user/view.php?id=112607&amp;course=71177">Student Decoy Name</a>
+    </nav>
+    <article class="forumpost" data-region="post" data-post-id="90001">
+      <header>
+        <div class="mb-3">
+          by <a href="/user/view.php?id=5012&amp;course=71177">Dr. Ahmad Al-Tarawneh</a>
+          - <time datetime="2026-11-24T10:15:00+03:00">Tuesday, 24 November 2026, 10:15 AM</time>
+        </div>
+      </header>
+      <div data-region-content="forum-post-core" class="post-content-container">
+        <p>The midterm exam will be held on Sunday, 29 November 2026 at 11:00 AM in Hall 204.</p>
+        <p>Please bring your university ID card.</p>
+      </div>
+    </article>
+  </section>
+</body>
+</html>

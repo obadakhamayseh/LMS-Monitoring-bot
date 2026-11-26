@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Optional
 from zoneinfo import ZoneInfo
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram import Bot
 
 import database as db
@@ -143,11 +144,27 @@ def _parse_due_date(due_str: str) -> Optional[int]:
 
 
 class ReminderEngine:
+    POLL_INTERVAL_SECONDS = 60
+    TICK_TIMEOUT_SECONDS = 120.0
+    MISFIRE_GRACE_TIME = 30
+    TICK_BACKOFF_BASE = 30.0
+    TICK_BACKOFF_MAX = 300.0
+    JOB_ID = "reminder_poll_tick"
 
     def __init__(self, bot: Bot):
         self.bot = bot
         self._running = False
-        self._task = None
+        self._scheduler: Optional[AsyncIOScheduler] = None
+        self._active_tasks: set[asyncio.Task] = set()
+        self._tick_error_count: int = 0
+        self._tick_backoff_until: float = 0.0
+
+    def _track_task(self, coro) -> asyncio.Task:
+        """Create and track an in-flight asyncio task so stop() awaits it cleanly."""
+        task = asyncio.create_task(coro)
+        self._active_tasks.add(task)
+        task.add_done_callback(self._active_tasks.discard)
+        return task
 
     async def _run_db(self, fn, *args, **kwargs):
         loop = asyncio.get_running_loop()
@@ -159,32 +176,93 @@ class ReminderEngine:
             try:
                 await self._run_db(fn, int(chat_id), False)
             except Exception as exc:
-                logger.warning(f"Failed to disable notifications after Forbidden for {chat_id}: {exc}")
+                logger.warning("Failed to disable notifications after Forbidden for %s: %s", chat_id, exc)
 
     async def start(self):
         if self._running:
             return
+        loop = asyncio.get_running_loop()
         self._running = True
-        self._task = asyncio.create_task(self._loop())
-        logger.info("Reminder engine started")
+        self._tick_error_count = 0
+        self._tick_backoff_until = 0.0
+
+        scheduler = AsyncIOScheduler(
+            timezone=JORDAN_TZ,
+            event_loop=loop,
+            job_defaults={
+                "coalesce": True,
+                "max_instances": 1,
+                "misfire_grace_time": self.MISFIRE_GRACE_TIME,
+            },
+        )
+        scheduler.add_job(
+            self._scheduled_tick,
+            trigger="interval",
+            seconds=self.POLL_INTERVAL_SECONDS,
+            id=self.JOB_ID,
+            name="ReminderEngine periodic check",
+            coalesce=True,
+            max_instances=1,
+            misfire_grace_time=self.MISFIRE_GRACE_TIME,
+            replace_existing=True,
+            next_run_time=datetime.now(JORDAN_TZ),
+        )
+        scheduler.start()
+        self._scheduler = scheduler
+        logger.info("Reminder engine started (APScheduler AsyncIOScheduler, tz=Asia/Amman)")
 
     async def stop(self):
         self._running = False
-        if self._task:
-            self._task.cancel()
+        scheduler = self._scheduler
+        self._scheduler = None
+        if scheduler is not None:
             try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
+                if scheduler.running:
+                    scheduler.shutdown(wait=False)
+            except Exception as exc:
+                logger.debug("Reminder scheduler shutdown error: %s", exc)
+            # Yield once so AsyncIOScheduler's call_soon_threadsafe shutdown callback finishes
+            await asyncio.sleep(0)
+
+        in_flight = [t for t in list(self._active_tasks) if not t.done()]
+        if in_flight:
+            await asyncio.gather(*in_flight, return_exceptions=True)
         logger.info("Reminder engine stopped")
 
-    async def _loop(self):
-        while self._running:
+    async def _scheduled_tick(self):
+        if not self._running:
+            return
+        now_mono = time.monotonic()
+        if now_mono < self._tick_backoff_until:
+            logger.debug("Reminder tick skipped due to backoff (%.1fs remaining)", self._tick_backoff_until - now_mono)
+            return
+
+        tick_task = self._track_task(self._check_reminders())
+        try:
+            await asyncio.wait_for(asyncio.shield(tick_task), timeout=self.TICK_TIMEOUT_SECONDS)
+            self._tick_error_count = 0
+            self._tick_backoff_until = 0.0
+        except asyncio.TimeoutError:
+            tick_task.cancel()
             try:
-                await self._check_reminders()
-            except Exception as e:
-                logger.error(f"Reminder loop error: {e}")
-            await asyncio.sleep(60)
+                await tick_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._record_tick_failure("Reminder tick timed out after %.1fs" % self.TICK_TIMEOUT_SECONDS)
+        except asyncio.CancelledError:
+            tick_task.cancel()
+            raise
+        except Exception as exc:
+            self._record_tick_failure(f"Reminder tick error: {exc}")
+
+    def _record_tick_failure(self, message: str) -> None:
+        self._tick_error_count += 1
+        delay = min(
+            self.TICK_BACKOFF_BASE * (2 ** (self._tick_error_count - 1)),
+            self.TICK_BACKOFF_MAX,
+        )
+        self._tick_backoff_until = time.monotonic() + delay
+        logger.error("%s (consecutive=%d; backing off %.1fs)", message, self._tick_error_count, delay)
 
     async def _check_reminders(self):
         now_ts = int(time.time())
@@ -241,7 +319,7 @@ class ReminderEngine:
             on_forbidden=self._on_forbidden,
         )
         if ok:
-            logger.info(f"Reminder sent ({slot}) to {tid} for '{raw_name}'")
+            logger.info("Reminder sent (%s) to %s for '%s'", slot, tid, raw_name)
         return ok
 
     def register_assignments(self, telegram_id: int, course_id: int, assignments: list):
@@ -267,4 +345,4 @@ class ReminderEngine:
                 due_str=due_str,
                 is_submitted=is_sub,
             )
-            logger.debug(f"Reminder registered: {a['name']} @ {due_str} (submitted: {is_sub})")
+            logger.debug("Reminder registered: %s @ %s (submitted: %s)", a["name"], due_str, is_sub)

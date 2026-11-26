@@ -1,5 +1,4 @@
 import asyncio
-import inspect
 import os
 import re
 from html.parser import HTMLParser
@@ -122,7 +121,10 @@ def test_h12_split_html_message_preserves_content_and_balances_tags():
 
     # Long message inside nested <b><i> and with <a> + entities that exceeds max_len
     lines = [
-        f'Line {i}: &lt;Assignment &amp; Quiz #{i}&gt; — <a href="https://mulms.mutah.edu.jo/mod/assign/view.php?id={i}&amp;x=1">Open #{i}</a>'
+        (
+            f"Line {i}: &lt;Assignment &amp; Quiz #{i}&gt; — "
+            f'<a href="https://mulms.mutah.edu.jo/mod/assign/view.php?id={i}&amp;x=1">Open #{i}</a>'
+        )
         for i in range(1, 80)
     ]
     full_html = "<b><i>" + "\n".join(lines) + "</i></b>"
@@ -349,23 +351,52 @@ def test_h4_main_calls_init_db_before_web_thread_start(monkeypatch):
     monkeypatch.setattr(bot, "TELEGRAM_BOT_TOKEN", "123456:TEST")
     monkeypatch.setattr(bot.db, "init_db", lambda: order.append("init_db"))
 
-    class FakeThread:
-        def __init__(self, target=None, daemon=None, **kwargs):
-            order.append("thread_create")
+    class FakeMonitorEngine:
+        def __init__(self, tg_bot, rem_engine):
+            pass
 
-        def start(self):
-            order.append("web_thread_start")
+        def attach_loop(self, loop):
+            pass
 
-    monkeypatch.setattr(bot.threading, "Thread", FakeThread)
+        async def start(self):
+            order.append("monitor_start")
 
+    class FakeReminderEngine:
+        def __init__(self, tg_bot):
+            pass
+
+        async def start(self):
+            order.append("reminder_start")
+
+    async def fake_start_webapp(**kwargs):
+        order.append("web_server_start")
+        return None
+
+    monkeypatch.setattr(bot, "MonitorEngine", FakeMonitorEngine)
+    monkeypatch.setattr(bot, "ReminderEngine", FakeReminderEngine)
+    monkeypatch.setattr(bot, "init_webapp_engines", lambda e, r: order.append("init_webapp_engines"))
+    monkeypatch.setattr(bot, "start_webapp_server_async", fake_start_webapp)
+    monkeypatch.setattr(bot, "get_webapp_url", lambda: "")
+
+    captured_post_init = {}
     fake_app = MagicMock()
+    fake_app.bot = SimpleNamespace(set_my_commands=AsyncMock(), set_chat_menu_button=AsyncMock())
+    fake_app.bot_data = {}
     fake_app.add_handler = MagicMock()
     fake_app.add_error_handler = MagicMock()
-    fake_app.run_polling = MagicMock(side_effect=lambda **kw: order.append("run_polling"))
+
+    def _run_polling(**kw):
+        order.append("run_polling")
+        if captured_post_init.get("fn"):
+            asyncio.run(captured_post_init["fn"](fake_app))
+
+    fake_app.run_polling = MagicMock(side_effect=_run_polling)
 
     class FakeBuilder:
         def token(self, t): return self
-        def post_init(self, fn): return self
+        def post_init(self, fn):
+            captured_post_init["fn"] = fn
+            return self
         def post_shutdown(self, fn): return self
         def build(self): return fake_app
 
@@ -373,9 +404,9 @@ def test_h4_main_calls_init_db_before_web_thread_start(monkeypatch):
 
     bot.main()
 
-    assert "init_db" in order and "web_thread_start" in order
-    assert order.index("init_db") < order.index("web_thread_start"), (
-        f"db.init_db() MUST run before web_thread.start(); got order {order}"
+    assert "init_db" in order and "web_server_start" in order
+    assert order.index("init_db") < order.index("web_server_start"), (
+        f"db.init_db() MUST run before web server starts; got order {order}"
     )
 
 
@@ -405,6 +436,13 @@ def test_h4_post_init_attaches_running_loop_to_engine(monkeypatch):
     monkeypatch.setattr(bot, "ReminderEngine", FakeReminderEngine)
     init_webapp_calls = []
     monkeypatch.setattr(bot, "init_webapp_engines", lambda e, r: init_webapp_calls.append((e, r)))
+    webapp_starts = []
+
+    async def fake_start_webapp(**kwargs):
+        webapp_starts.append(asyncio.get_running_loop())
+        return None
+
+    monkeypatch.setattr(bot, "start_webapp_server_async", fake_start_webapp)
     monkeypatch.setattr(bot, "get_webapp_url", lambda: "")
 
     fake_app = SimpleNamespace(
@@ -416,6 +454,7 @@ def test_h4_post_init_attaches_running_loop_to_engine(monkeypatch):
         expected_loop = asyncio.get_running_loop()
         await bot.post_init(fake_app)
         assert attached_loops == [expected_loop], "post_init must attach the running asyncio loop to MonitorEngine"
+        assert webapp_starts == [expected_loop], "post_init must start FastAPI on the same running asyncio loop"
 
     asyncio.run(_run())
     assert started == ["monitor", "reminder"]
@@ -487,10 +526,16 @@ def test_h13_post_shutdown_awaits_engine_stop_and_tasks_before_db_close(monkeypa
 
     asyncio.run(_run())
     assert "engine_stop" in order and "reminder_stop" in order and "db_close" in order
-    assert order.index("engine_stop") < order.index("db_close"), f"engine.stop() must finish before db.close(): {order}"
-    assert order.index("reminder_stop") < order.index("db_close"), f"reminder.stop() must finish before db.close(): {order}"
+    assert order.index("engine_stop") < order.index("db_close"), (
+        f"engine.stop() must finish before db.close(): {order}"
+    )
+    assert order.index("reminder_stop") < order.index("db_close"), (
+        f"reminder.stop() must finish before db.close(): {order}"
+    )
     if hasattr(bot, "_track_background_task"):
-        assert order.index("bg_task_done") < order.index("db_close"), f"bg tasks must finish before db.close(): {order}"
+        assert order.index("bg_task_done") < order.index("db_close"), (
+            f"bg tasks must finish before db.close(): {order}"
+        )
 
 
 # ── H16: check_interval bounds 5..1440 ───────────────────────────────────────

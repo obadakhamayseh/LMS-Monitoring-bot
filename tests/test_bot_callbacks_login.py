@@ -69,7 +69,7 @@ FAKE_USER = {
     [
         ("main_menu", FAKE_USER, [], False),
         ("my_courses", FAKE_USER, [], False),
-        ("sync_courses", None, [], True),
+        ("refresh_announcements", None, [], True),
         ("start_monitor", None, [], True),
         ("start_monitor", FAKE_USER, [], True),
         ("stop_monitor", None, [], True),

@@ -17,20 +17,45 @@ os.environ["ENCRYPTION_KEY"] = Fernet.generate_key().decode()
 REPO_ROOT = Path(__file__).resolve().parent.parent
 WEBAPP_HTML = REPO_ROOT / "webapp.html"
 SW_JS = REPO_ROOT / "sw.js"
+STATIC_DIR = REPO_ROOT / "static"
 
 NODE_BIN = shutil.which("node")
 requires_node = pytest.mark.skipif(NODE_BIN is None, reason="node binary not found")
 
 
+def _extract_webapp_script_paths(html_text: str) -> list[Path]:
+    """Return local /static/js/*.js files referenced by webapp.html in DOM order."""
+    srcs = re.findall(
+        r'<script[^>]*\bsrc=["\'](/static/js/[^"\']+)["\'][^>]*>',
+        html_text,
+        flags=re.IGNORECASE,
+    )
+    paths: list[Path] = []
+    for src in srcs:
+        rel = src.lstrip("/")
+        p = REPO_ROOT / rel
+        assert p.is_file(), f"Missing script referenced in webapp.html: {src}"
+        paths.append(p)
+    return paths
+
+
 def _extract_inline_script(html_text: str) -> str:
-    """Extract the main inline <script> block (without src=...) from webapp.html."""
-    scripts = re.findall(
+    """Load webapp frontend JS in DOM order: local <script src='/static/js/...'> plus any inline scripts."""
+    parts = [p.read_text(encoding="utf-8") for p in _extract_webapp_script_paths(html_text)]
+    inline_scripts = re.findall(
         r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>",
         html_text,
         flags=re.IGNORECASE | re.DOTALL,
     )
-    assert scripts, "No inline <script> found in webapp.html"
-    return "\n\n".join(scripts)
+    parts.extend(inline_scripts)
+    assert parts, "No frontend JS found via webapp.html"
+    return "\n\n".join(parts)
+
+
+def _all_frontend_sources() -> list[Path]:
+    paths = [WEBAPP_HTML]
+    paths.extend(_extract_webapp_script_paths(WEBAPP_HTML.read_text(encoding="utf-8")))
+    return paths
 
 
 def _run_node(js_code: str, cwd: Path = REPO_ROOT) -> subprocess.CompletedProcess:
@@ -44,27 +69,33 @@ def _run_node(js_code: str, cwd: Path = REPO_ROOT) -> subprocess.CompletedProces
     )
 
 
-# ── (a) Static XSS & unsafe-scheme scan on webapp.html ──────────────────────
+# ── (a) Static XSS & unsafe-scheme scan on webapp.html + static/js/*.js ─────
 
 
 def test_no_inline_event_handlers_with_interpolation():
-    html = WEBAPP_HTML.read_text(encoding="utf-8")
-    # Match any on<event>="..." or on<event>='...' containing ${
-    double_quoted = re.findall(r'\bon[a-z]+\s*=\s*"[^"]*\$\{[^"]*"', html, flags=re.IGNORECASE)
-    single_quoted = re.findall(r"\bon[a-z]+\s*=\s*'[^']*\$\{[^']*'", html, flags=re.IGNORECASE)
-    offenders = double_quoted + single_quoted
-    assert not offenders, f"Found inline on*= handlers interpolating data: {offenders[:5]}"
+    for path in _all_frontend_sources():
+        text = path.read_text(encoding="utf-8")
+        # Match any on<event>="..." or on<event>='...' containing ${
+        double_quoted = re.findall(r'\bon[a-z]+\s*=\s*"[^"]*\$\{[^"]*"', text, flags=re.IGNORECASE)
+        single_quoted = re.findall(r"\bon[a-z]+\s*=\s*'[^']*\$\{[^']*'", text, flags=re.IGNORECASE)
+        offenders = double_quoted + single_quoted
+        assert not offenders, f"Found inline on*= handlers interpolating data in {path.name}: {offenders[:5]}"
 
 
 def test_no_javascript_urls_in_webapp_html():
-    html = WEBAPP_HTML.read_text(encoding="utf-8")
-    matches = re.findall(r"javascript\s*:", html, flags=re.IGNORECASE)
-    assert not matches, f"Found javascript: URI in webapp.html: {matches}"
+    for path in _all_frontend_sources():
+        text = path.read_text(encoding="utf-8")
+        matches = re.findall(r"javascript\s*:", text, flags=re.IGNORECASE)
+        assert not matches, f"Found javascript: URI in {path.name}: {matches}"
 
 
 def test_no_hardcoded_real_telegram_id_in_frontend():
     legacy_owner_id = "".join(["933", "343", "496"])
-    for path in (WEBAPP_HTML, SW_JS):
+    scan_paths = [*_all_frontend_sources(), SW_JS]
+    app_css = STATIC_DIR / "css" / "app.css"
+    if app_css.is_file():
+        scan_paths.append(app_css)
+    for path in scan_paths:
         text = path.read_text(encoding="utf-8")
         assert legacy_owner_id not in text, f"Hardcoded real Telegram ID found in {path.name}"
 
@@ -75,8 +106,18 @@ def test_no_hardcoded_real_telegram_id_in_frontend():
 @requires_node
 def test_extracted_script_and_sw_pass_node_check(tmp_path):
     html = WEBAPP_HTML.read_text(encoding="utf-8")
+    for js_path in _extract_webapp_script_paths(html):
+        res_mod = subprocess.run(
+            [NODE_BIN, "--check", str(js_path)],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=15,
+        )
+        assert res_mod.returncode == 0, f"node --check failed on {js_path.name}:\n{res_mod.stderr}"
+
     script = _extract_inline_script(html)
-    script_file = tmp_path / "webapp_inline.js"
+    script_file = tmp_path / "webapp_combined.js"
     script_file.write_text(script, encoding="utf-8")
 
     res_web = subprocess.run(
@@ -86,7 +127,7 @@ def test_extracted_script_and_sw_pass_node_check(tmp_path):
         encoding="utf-8",
         timeout=15,
     )
-    assert res_web.returncode == 0, f"node --check failed on webapp.html script:\n{res_web.stderr}"
+    assert res_web.returncode == 0, f"node --check failed on combined webapp script:\n{res_web.stderr}"
 
     res_sw = subprocess.run(
         [NODE_BIN, "--check", str(SW_JS)],
@@ -106,9 +147,13 @@ const vm = require('vm');
 
 function loadWebapp(opts = {}) {
   const html = fs.readFileSync('webapp.html', 'utf8');
-  const scriptMatches = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)];
-  if (!scriptMatches.length) throw new Error('No inline script in webapp.html');
-  const scriptCode = scriptMatches.map(m => m[1]).join('\n\n');
+  const scriptPaths = [...html.matchAll(/<script[^>]*\bsrc=["'](\/static\/js\/[^"']+)["'][^>]*>/gi)]
+    .map(m => m[1].replace(/^\//, ''));
+  const inlineMatches = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)]
+    .map(m => m[1]);
+  const parts = scriptPaths.map(p => fs.readFileSync(p, 'utf8')).concat(inlineMatches);
+  if (!parts.length) throw new Error('No local scripts found in webapp.html');
+  const scriptCode = parts.join('\n\n');
 
   const listeners = { click: [], change: [], input: [], keydown: [], error: [] };
   const elements = new Map();
@@ -486,13 +531,13 @@ console.log('DELEGATION_OK');
 
 
 def test_static_no_initdata_in_query_or_body():
-    html = WEBAPP_HTML.read_text(encoding="utf-8")
+    combined = "\n".join(p.read_text(encoding="utf-8") for p in _all_frontend_sources())
     # Must NOT have `initData:` property in JS objects (URLSearchParams / JSON.stringify payloads)
-    obj_props = re.findall(r"\binitData\s*:\s*tg", html)
+    obj_props = re.findall(r"\binitData\s*:\s*tg", combined)
     assert not obj_props, f"Found initData still serialized into query/body objects: {obj_props}"
 
     # Must set X-Telegram-Init-Data header
-    assert "X-Telegram-Init-Data" in html, "webapp.html must send X-Telegram-Init-Data header"
+    assert "X-Telegram-Init-Data" in combined, "frontend JS must send X-Telegram-Init-Data header"
 
     # sw.js must not depend on initData in URL
     sw = SW_JS.read_text(encoding="utf-8")

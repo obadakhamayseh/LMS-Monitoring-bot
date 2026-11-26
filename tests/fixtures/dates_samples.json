@@ -1,0 +1,31 @@
+{
+  "amman_parse_cases": [
+    {"input": "Saturday, 28 November 2026, 11:59 PM", "expected": [2026, 11, 28, 23, 59]},
+    {"input": "Wednesday, 25 November 2026, 12:00 AM", "expected": [2026, 11, 25, 0, 0]},
+    {"input": "Monday, 23 November 2026, 2:40 PM", "expected": [2026, 11, 23, 14, 40]},
+    {"input": "15 January 2026, 11:59 p.m.", "expected": [2026, 1, 15, 23, 59]},
+    {"input": "14 February 2026, 12:00 a.m.", "expected": [2026, 2, 14, 0, 0]},
+    {"input": "15 كانون الثاني 2026، 11:59 مساءً", "expected": [2026, 1, 15, 23, 59]},
+    {"input": "20 تشرين الأول 2026، 11:59 م", "expected": [2026, 10, 20, 23, 59]},
+    {"input": "25 تشرين الثاني 2026، 07:30 م", "expected": [2026, 11, 25, 19, 30]},
+    {"input": "31 كانون الأول 2026، 11:59 م", "expected": [2026, 12, 31, 23, 59]},
+    {"input": "13 إبريل 2026، 06:00 م", "expected": [2026, 4, 13, 18, 0]},
+    {"input": "الخميس، ١٥ كانون الثاني ٢٠٢٦، ١١:٥٩ مساءً", "expected": [2026, 1, 15, 23, 59]},
+    {"input": "15 January 2021, 10:00 a.m.", "expected": [2021, 1, 15, 10, 0]},
+    {"input": "2026-03-15 14:30", "expected": [2026, 3, 15, 14, 30]},
+    {"input": "15/03/2026", "expected": [2026, 3, 15, 23, 59]}
+  ],
+  "yearless_boundary_cases": [
+    {"fake_now": [2026, 5, 10, 12, 0], "input": "Saturday, 28 November, 11:59 PM", "expected": [2026, 11, 28, 23, 59]},
+    {"fake_now": [2026, 11, 20, 12, 0], "input": "15 كانون الثاني، 11:59 م", "expected": [2027, 1, 15, 23, 59]},
+    {"fake_now": [2026, 1, 15, 12, 0], "input": "20 كانون الأول، 10:00 ص", "expected": [2025, 12, 20, 10, 0]}
+  ],
+  "normalize_year_cases": [
+    {"fake_now": [2026, 11, 20, 12, 0], "input": "Saturday, 28 November, 11:59 PM", "must_contain": "28 November 2026"},
+    {"fake_now": [2026, 11, 20, 12, 0], "input": "Friday, 15 January, 11:59 PM", "must_contain": "15 January 2027"},
+    {"fake_now": [2026, 1, 15, 12, 0], "input": "Sunday, 20 December, 11:59 PM", "must_contain": "20 December 2025"},
+    {"fake_now": [2026, 11, 20, 12, 0], "input": "1795467600", "must_contain": "2026"},
+    {"fake_now": [2026, 11, 20, 12, 0], "input": "Saturday, 28 November 2026, 11:59 PM", "must_contain": "28 November 2026"}
+  ],
+  "invalid_cases": ["", "   ", "-", "—", "not a valid date", "32 January 2026, 10:00 AM"]
+}
