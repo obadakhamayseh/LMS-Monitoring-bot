@@ -3,8 +3,28 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-OWNER_TELEGRAM_ID = int(os.getenv("OWNER_TELEGRAM_ID", "933343496"))
+def _load_owner_telegram_id() -> int:
+    """Load and validate the required OWNER_TELEGRAM_ID environment variable."""
+    raw = os.getenv("OWNER_TELEGRAM_ID")
+    if raw is None or not raw.strip():
+        raise RuntimeError(
+            "OWNER_TELEGRAM_ID environment variable is required and must be set to your numeric Telegram user ID."
+        )
+    try:
+        owner_id = int(raw.strip())
+    except ValueError as exc:
+        raise RuntimeError(
+            f"OWNER_TELEGRAM_ID must be a valid integer, got {raw!r}."
+        ) from exc
+    if owner_id <= 0:
+        raise RuntimeError(
+            f"OWNER_TELEGRAM_ID must be a positive integer, got {owner_id}."
+        )
+    return owner_id
+
+
+TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
+OWNER_TELEGRAM_ID: int = _load_owner_telegram_id()
 
 LMS_BASE_URL = "https://mulms.mutah.edu.jo"
 LMS_LOGIN_URL = f"{LMS_BASE_URL}/login/index.php"

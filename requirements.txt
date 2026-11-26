@@ -8,3 +8,4 @@ aiohttp>=3.9.0
 psycopg[binary]>=3.2.0
 pysocks>=1.7.1
 cryptography>=42.0.0
+tzdata>=2024.1

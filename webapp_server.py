@@ -8,15 +8,20 @@ import hmac
 import hashlib
 import secrets
 import threading
-import concurrent.futures
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
-from typing import Optional
+from typing import Any, Optional
 
 import database as db
 from lms_scraper import LMSScraper
 from config import TELEGRAM_BOT_TOKEN, OWNER_TELEGRAM_ID
 
 logger = logging.getLogger(__name__)
+
+# Pre-auth body cap (C5) and Telegram initData freshness window (H1)
+MAX_BODY_BYTES = 64 * 1024
+INIT_DATA_MAX_AGE = 300
+INIT_DATA_MAX_FUTURE_SKEW = 60
+INIT_DATA_HEADER = "X-Telegram-Init-Data"
 
 # References to engines passed from bot.py
 _ENGINE = None
@@ -28,14 +33,26 @@ def init_webapp_engines(engine=None, reminder_engine=None):
     _REMINDER_ENGINE = reminder_engine
 
 def _validate_telegram_init_data(init_data: str, bot_token: str) -> Optional[int]:
-    """Validate Telegram WebApp initData HMAC and return telegram_id if valid."""
+    """Validate Telegram WebApp initData HMAC + auth_date freshness and return telegram_id."""
     if not init_data or not bot_token:
         return None
     try:
         parsed = dict(urllib.parse.parse_qsl(init_data, keep_blank_values=True))
-        if "hash" not in parsed:
+        received_hash = parsed.pop("hash", "")
+        if not received_hash:
             return None
-        received_hash = parsed.pop("hash")
+
+        auth_date_raw = parsed.get("auth_date", "")
+        if not auth_date_raw or not auth_date_raw.isdigit():
+            return None
+        auth_date = int(auth_date_raw)
+        if auth_date <= 0:
+            return None
+
+        age = time.time() - auth_date
+        if age > INIT_DATA_MAX_AGE or age < -INIT_DATA_MAX_FUTURE_SKEW:
+            return None
+
         data_check_string = "\n".join(f"{k}={v}" for k, v in sorted(parsed.items()))
         secret_key = hmac.new(b"WebAppData", bot_token.encode("utf-8"), hashlib.sha256).digest()
         calculated_hash = hmac.new(secret_key, data_check_string.encode("utf-8"), hashlib.sha256).hexdigest()
@@ -43,9 +60,10 @@ def _validate_telegram_init_data(init_data: str, bot_token: str) -> Optional[int
         if hmac.compare_digest(calculated_hash, received_hash):
             user_json = parsed.get("user", "{}")
             user_data = json.loads(user_json)
-            return user_data.get("id")
+            if isinstance(user_data, dict):
+                return user_data.get("id")
     except Exception as e:
-        logger.debug(f"initData validation failed: {e}")
+        logger.debug("initData validation failed: %s", e)
     return None
 
 def _json_serial(obj):
@@ -101,19 +119,73 @@ _STATIC_FILES = {
 
 class WebAppRequestHandler(BaseHTTPRequestHandler):
 
-    def _authenticate(self, init_data: str = "") -> Optional[int]:
+    def _authenticate(self) -> Optional[int]:
         """Return the owner's telegram_id if the request carries a valid device
-        token or a Telegram-signed initData; otherwise None."""
+        token or a Telegram-signed initData header; otherwise None."""
         auth = self.headers.get("Authorization", "") or ""
         if auth.startswith("Bearer "):
             tid = db.verify_app_token(auth[7:].strip())
             if tid and int(tid) == int(OWNER_TELEGRAM_ID):
                 return int(tid)
+        # Accept Telegram initData exclusively via header (never query string or JSON body)
+        init_data = (self.headers.get(INIT_DATA_HEADER, "") or "").strip()
         if init_data:
             tid = _validate_telegram_init_data(init_data, TELEGRAM_BOT_TOKEN)
             if tid and int(tid) == int(OWNER_TELEGRAM_ID):
                 return int(tid)
         return None
+
+    def _read_json_body(self) -> Optional[dict[str, Any]]:
+        """Validate Content-Length and parse a JSON object body before authentication."""
+        raw_len = self.headers.get("Content-Length")
+        if raw_len is None or raw_len.strip() == "":
+            content_len = 0
+        else:
+            try:
+                content_len = int(raw_len.strip())
+            except ValueError:
+                logger.warning("Rejected POST with invalid Content-Length: %r", raw_len)
+                self._send_json({"success": False, "error": "Invalid Content-Length"}, 400)
+                return None
+
+        if content_len < 0:
+            logger.warning("Rejected POST with negative Content-Length: %d", content_len)
+            self._send_json({"success": False, "error": "Invalid Content-Length"}, 400)
+            return None
+
+        if content_len > MAX_BODY_BYTES:
+            logger.warning("Rejected POST exceeding MAX_BODY_BYTES (%d > %d)", content_len, MAX_BODY_BYTES)
+            self.close_connection = True
+            self._send_json({"success": False, "error": "Payload Too Large"}, 413)
+            return None
+
+        if content_len == 0:
+            return {}
+
+        raw_bytes = self.rfile.read(content_len)
+        try:
+            post_body = raw_bytes.decode("utf-8")
+        except UnicodeDecodeError as e:
+            logger.debug("Rejected POST with invalid UTF-8 body: %s", e)
+            self._send_json({"success": False, "error": "Invalid UTF-8 request body"}, 400)
+            return None
+
+        if not post_body.strip():
+            return {}
+
+        try:
+            payload = json.loads(post_body)
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.debug("Rejected POST with invalid JSON body: %s", e)
+            self._send_json({"success": False, "error": "Invalid JSON body"}, 400)
+            return None
+
+        if not isinstance(payload, dict):
+            logger.debug("Rejected POST with non-object JSON payload: %s", type(payload).__name__)
+            self._send_json({"success": False, "error": "JSON object expected"}, 400)
+            return None
+
+        return payload
 
     def _send_static(self, rel_path: str, ctype: str, no_cache: bool = False):
         full = os.path.join(_STATIC_DIR, rel_path)
@@ -136,7 +208,7 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Telegram-Init-Data")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -153,7 +225,7 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Telegram-Init-Data")
         self.end_headers()
 
     def do_HEAD(self):
@@ -164,7 +236,6 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed_url = urllib.parse.urlparse(self.path)
         path = parsed_url.path.rstrip("/")
-        query = dict(urllib.parse.parse_qsl(parsed_url.query))
 
         # Health check
         if path in ("", "/health"):
@@ -193,7 +264,7 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
 
         # API: user data (Personal Bot — locked to OWNER_TELEGRAM_ID)
         if path == "/api/user-data":
-            tid = self._authenticate(query.get("initData", ""))
+            tid = self._authenticate()
             if not tid:
                 self._send_json({"success": False, "auth_required": True,
                                  "error": "يلزم ربط هذا الجهاز بالتطبيق"}, 401)
@@ -426,12 +497,9 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
         parsed_url = urllib.parse.urlparse(self.path)
         path = parsed_url.path.rstrip("/")
 
-        content_len = int(self.headers.get("Content-Length", 0))
-        post_body = self.rfile.read(content_len).decode("utf-8") if content_len > 0 else "{}"
-        try:
-            payload = json.loads(post_body)
-        except Exception:
-            payload = {}
+        payload = self._read_json_body()
+        if payload is None:
+            return
 
         # Device pairing (public endpoint, protected by one-time code + throttling)
         if path == "/api/pair":
@@ -444,7 +512,7 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
             self._send_json({"success": True, "token": token})
             return
 
-        tid = self._authenticate(payload.get("initData", ""))
+        tid = self._authenticate()
         if not tid:
             self._send_json({"success": False, "auth_required": True,
                              "error": "يلزم ربط هذا الجهاز بالتطبيق"}, 401)
@@ -512,8 +580,9 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
         # 0. Direct Login from Mini App (No auto-import of courses — user adds only desired courses)
         if path == "/api/login":
             raw_user = str(payload.get("username") or "").strip().translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789"))
-            raw_pass = str(payload.get("password") or "").strip().translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789"))
-            if not raw_user or not raw_pass:
+            # Never strip or translate password bytes (C10)
+            raw_pass = payload.get("password")
+            if not raw_user or not isinstance(raw_pass, str) or raw_pass == "":
                 self._send_json({"success": False, "error": "يرجى إدخال الرقم الجامعي وكلمة المرور"}, 400)
                 return
 
@@ -634,29 +703,57 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                     self._send_json({"success": False, "error": scraper.error_message or "فشل تسجيل الدخول إلى LMS"}, 400)
                     return
                 courses_list = scraper.get_courses()
+                if getattr(scraper, "waf_blocked", False):
+                    self._send_json({
+                        "success": False,
+                        "waf_blocked": True,
+                        "error": "جدار حماية موقع الجامعة طلب تحققاً أمنياً مؤقتاً؛ حاول مجدداً بعد عدة دقائق",
+                    }, 429)
+                    return
+                if getattr(scraper, "session_expired", False):
+                    self._send_json({
+                        "success": False,
+                        "session_expired": True,
+                        "error": "انتهت جلسة نظام التعليم الإلكتروني (LMS)؛ يرجى إعادة المحاولة أو تسجيل الدخول مجدداً",
+                    }, 400)
+                    return
+
                 added = 0
                 for c in courses_list:
                     db.add_course(tid, c["id"], c["name"], c["url"])
                     added += 1
 
-                def _fetch_sync_course(c):
+                # Scan courses sequentially to avoid sharing one LMSScraper across threads (C2)
+                for c in courses_list:
                     cid = c["id"]
                     try:
-                        return cid, scraper.get_course_content(cid)
+                        result = scraper.fetch_course_content(cid)
                     except Exception as e:
-                        logger.warning(f"Error syncing course {cid}: {e}")
-                        return cid, {}
+                        logger.warning("Error syncing course %s: %s", cid, e)
+                        continue
 
-                if courses_list:
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=min(2, len(courses_list))) as pool:
-                        sync_results = list(pool.map(_fetch_sync_course, courses_list))
-                    for cid, content in sync_results:
-                        if content:
-                            _persist_course_content(cid, content)
+                    if result.waf_blocked or getattr(scraper, "waf_blocked", False):
+                        self._send_json({
+                            "success": False,
+                            "waf_blocked": True,
+                            "error": "جدار حماية موقع الجامعة طلب تحققاً أمنياً مؤقتاً؛ حاول مجدداً بعد عدة دقائق",
+                        }, 429)
+                        return
 
-                if scraper.waf_blocked:
-                    self._send_json({"success": False, "error": "جدار حماية موقع الجامعة طلب تحققاً أمنياً مؤقتاً؛ حاول مجدداً بعد عدة دقائق"}, 429)
-                    return
+                    if result.session_expired or getattr(scraper, "session_expired", False):
+                        self._send_json({
+                            "success": False,
+                            "session_expired": True,
+                            "error": result.error or "انتهت جلسة نظام التعليم الإلكتروني (LMS)؛ يرجى إعادة المحاولة أو تسجيل الدخول مجدداً",
+                        }, 400)
+                        return
+
+                    if not result.ok:
+                        logger.warning("Sync course %s returned ok=False: %s", cid, result.error)
+                        continue
+
+                    if result.content:
+                        _persist_course_content(cid, result.content)
 
                 db.update_last_check(tid)
                 db.append_sync_log(tid, "استيراد المقررات", f"تم جلب ومزامنة {added} مقررات من LMS")
@@ -720,25 +817,36 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                     return
 
                 new_items = 0
-
-                def _fetch_single_course(c):
+                # Scan courses sequentially to avoid sharing one LMSScraper across threads (C2)
+                for c in courses:
                     cid = c["course_id"]
                     try:
-                        c_content = scraper.get_course_content(cid)
-                        return cid, c_content
+                        result = scraper.fetch_course_content(cid)
                     except Exception as e:
-                        logger.warning(f"Error fetching course {cid} in force-check: {e}")
-                        return cid, {}
+                        logger.warning("Error fetching course %s in force-check: %s", cid, e)
+                        continue
 
-                max_w = min(2, len(courses))
-                with concurrent.futures.ThreadPoolExecutor(max_workers=max_w) as pool:
-                    course_results = list(pool.map(_fetch_single_course, courses))
+                    if result.waf_blocked or getattr(scraper, "waf_blocked", False):
+                        self._send_json({
+                            "success": False,
+                            "waf_blocked": True,
+                            "error": "جدار حماية موقع الجامعة طلب تحققاً أمنياً مؤقتاً؛ حاول مجدداً بعد عدة دقائق",
+                        }, 429)
+                        return
 
-                if scraper.waf_blocked:
-                    self._send_json({"success": False, "error": "جدار حماية موقع الجامعة طلب تحققاً أمنياً مؤقتاً؛ حاول مجدداً بعد عدة دقائق"}, 429)
-                    return
+                    if result.session_expired or getattr(scraper, "session_expired", False):
+                        self._send_json({
+                            "success": False,
+                            "session_expired": True,
+                            "error": result.error or "انتهت جلسة نظام التعليم الإلكتروني (LMS)؛ يرجى إعادة المحاولة أو تسجيل الدخول مجدداً",
+                        }, 400)
+                        return
 
-                for cid, content in course_results:
+                    if not result.ok:
+                        logger.warning("Force-check course %s returned ok=False: %s", cid, result.error)
+                        continue
+
+                    content = result.content
                     if not content:
                         continue
                     for item in content.get("assignments", []):

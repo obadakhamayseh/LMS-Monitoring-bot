@@ -8,6 +8,10 @@ services:
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
+      - key: OWNER_TELEGRAM_ID
+        sync: false
+      - key: ENCRYPTION_KEY
+        sync: false
       - key: DIRECT_URL
         sync: false
       - key: DATABASE_URL

@@ -2,7 +2,9 @@ import re
 import time
 import asyncio
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
+from typing import Optional
+from zoneinfo import ZoneInfo
 from telegram import Bot
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
@@ -10,6 +12,48 @@ import database as db
 
 logger = logging.getLogger(__name__)
 MD = ParseMode.MARKDOWN
+JORDAN_TZ = ZoneInfo("Asia/Amman")
+
+# Month names (English full/short, Arabic Gregorian, Arabic Levantine incl. compound names)
+MONTH_MAP: dict[str, int] = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "sept": 9, "oct": 10, "nov": 11, "dec": 12,
+    "january": 1, "february": 2, "march": 3, "april": 4,
+    "june": 6, "july": 7, "august": 8, "september": 9,
+    "october": 10, "november": 11, "december": 12,
+    "يناير": 1, "فبراير": 2, "مارس": 3, "أبريل": 4, "إبريل": 4, "ابريل": 4,
+    "مايو": 5, "يونيو": 6, "يوليو": 7, "أغسطس": 8, "اغسطس": 8,
+    "سبتمبر": 9, "أكتوبر": 10, "اكتوبر": 10, "نوفمبر": 11, "ديسمبر": 12,
+    "كانون الثاني": 1, "كانون ثاني": 1,
+    "شباط": 2,
+    "آذار": 3, "أذار": 3, "اذار": 3,
+    "نيسان": 4,
+    "أيار": 5, "ايار": 5,
+    "حزيران": 6,
+    "تموز": 7,
+    "آب": 8, "أب": 8, "اب": 8,
+    "أيلول": 9, "إيلول": 9, "ايلول": 9,
+    "تشرين الأول": 10, "تشرين الاول": 10, "تشرين أول": 10, "تشرين اول": 10,
+    "تشرين الثاني": 11, "تشرين ثاني": 11,
+    "كانون الأول": 12, "كانون الاول": 12, "كانون أول": 12, "كانون اول": 12,
+}
+
+# Build month alternation longest-first so compound names (e.g. كانون الثاني) match before shorter tokens.
+_MONTH_PATTERN = "|".join(re.escape(k) for k in sorted(MONTH_MAP, key=len, reverse=True))
+_AMPM_PATTERN = r"صباحاً|صباحا|مساءً|مساءا|مساء|a\.?m\.?|p\.?m\.?|ص|م"
+_DUE_RE = re.compile(
+    rf"(?<!\d)(\d{{1,2}})\s+({_MONTH_PATTERN})\.?(?!\w)"
+    rf"(?:\s+(\d{{4}}))?"
+    rf"(?:[,،\s]+(\d{{1,2}}):(\d{{2}})(?:\s*({_AMPM_PATTERN})(?!\w))?)?",
+    re.IGNORECASE,
+)
+
+_DIGIT_TRANS = str.maketrans("٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹", "01234567890123456789")
+
+
+def _now_jordan() -> datetime:
+    """Return the current time in Asia/Amman (isolated for deterministic testing)."""
+    return datetime.now(JORDAN_TZ)
 
 REMIND_MSG = {
     "24h": "🔴",
@@ -30,16 +74,15 @@ def _esc(t):
         t = t.replace(ch, f"\\{ch}")
     return t
 
-def _parse_due_date(due_str: str):
+def _parse_due_date(due_str: str) -> Optional[int]:
     if not due_str:
         return None
 
-    s = due_str.strip().translate(str.maketrans("٠١٢٣٤٥٦٧٨٩", "0123456789"))
+    s = re.sub(r"\s+", " ", due_str.strip().translate(_DIGIT_TRANS))
 
-    def _timestamp(dt):
-        # Moodle displays course dates in Jordan local time; do not depend on
-        # the host machine's timezone (Render commonly runs in UTC).
-        return int(dt.replace(tzinfo=timezone(timedelta(hours=3))).timestamp())
+    def _timestamp(dt: datetime) -> int:
+        # Moodle displays course dates in Jordan local time; bind explicitly to Asia/Amman.
+        return int(dt.replace(tzinfo=JORDAN_TZ).timestamp())
 
     formats = [
         "%A, %d %B %Y, %I:%M %p",
@@ -65,37 +108,19 @@ def _parse_due_date(due_str: str):
         except ValueError:
             continue
 
-    month_map = {
-        "jan":1,"feb":2,"mar":3,"apr":4,"may":5,"jun":6,
-        "jul":7,"aug":8,"sep":9,"oct":10,"nov":11,"dec":12,
-        "january":1,"february":2,"march":3,"april":4,
-        "june":6,"july":7,"august":8,"september":9,
-        "october":10,"november":11,"december":12,
-        "يناير":1,"فبراير":2,"مارس":3,"أبريل":4,"ابريل":4,
-        "مايو":5,"يونيو":6,"يوليو":7,"أغسطس":8,"اغسطس":8,
-        "سبتمبر":9,"أكتوبر":10,"اكتوبر":10,"نوفمبر":11,"ديسمبر":12,
-        "كانون الثاني":1,"شباط":2,"آذار":3,"اذار":3,"نيسان":4,
-        "أيار":5,"ايار":5,"حزيران":6,"تموز":7,"آب":8,"اب":8,
-        "أيلول":9,"ايلول":9,"تشرين الأول":10,"تشرين الاول":10,
-        "تشرين الثاني":11,"كانون الأول":12,"كانون الاول":12,
-    }
-
-    match = re.search(
-        r"(\d{1,2})\s+([^\d,،:]+?)(?:\s+(\d{4}))?(?:[,،\s]+(\d{1,2}):(\d{2})\s*(AM|PM|am|pm|ص|م|صباحاً|صباحا|مساءً|مساء)?)?(?:\s|$)",
-        s, re.IGNORECASE
-    )
+    match = _DUE_RE.search(s)
     if match:
         try:
             day = int(match.group(1))
             month_s = re.sub(r"\s+", " ", match.group(2).strip()).lower()
-            m = month_map.get(month_s)
+            m = MONTH_MAP.get(month_s)
             if not m:
                 return None
             if match.group(3):
                 year = int(match.group(3))
             else:
-                # Moodle 5.x overview tables may omit the year (e.g. 'Saturday, 28 November, 11:59 PM')
-                now_jo = datetime.now(timezone(timedelta(hours=3)))
+                # Moodle 5.x overview tables may omit the year (e.g. 'Saturday, 28 November, 11:59 p.m.')
+                now_jo = _now_jordan()
                 year = now_jo.year
                 if now_jo.month >= 10 and m <= 2:
                     year += 1
@@ -103,21 +128,21 @@ def _parse_due_date(due_str: str):
                     year -= 1
             hour = int(match.group(4)) if match.group(4) else 23
             minute = int(match.group(5)) if match.group(5) else 59
-            am_pm = (match.group(6) or "").strip().lower()
+            am_pm = (match.group(6) or "").replace(".", "").strip().lower()
 
             h = hour
-            is_pm = am_pm in ("pm", "م", "مساءً", "مساء")
+            is_pm = am_pm in ("pm", "م", "مساءً", "مساء", "مساءا")
             is_am = am_pm in ("am", "ص", "صباحاً", "صباحا")
-            if is_pm and h != 12:
+            if is_pm and 1 <= h < 12:
                 h += 12
             elif is_am and h == 12:
                 h = 0
             dt = datetime(year, m, day, h, minute)
             return _timestamp(dt)
-        except Exception:
-            pass
+        except ValueError as exc:
+            logger.debug("Invalid calendar date in %r: %s", due_str, exc)
 
-    logger.debug(f"Could not parse due date: {due_str!r}")
+    logger.debug("Could not parse due date: %r", due_str)
     return None
 
 class ReminderEngine:

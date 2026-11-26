@@ -1,15 +1,117 @@
 import requests
 import logging
+import random
 import re
 import json
+import threading
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
-from urllib.parse import urljoin, urlsplit, urlunsplit, parse_qsl, urlencode
+from urllib.parse import urljoin, urlsplit, urlunsplit, parse_qsl, urlencode, unquote
 from bs4 import BeautifulSoup
 from typing import Optional, List, Dict, Any, Tuple
 from config import LMS_BASE_URL, LMS_LOGIN_URL
 
 logger = logging.getLogger(__name__)
+
+MAX_HTML_INSPECT_BYTES = 5 * 1024 * 1024
+MAX_INTERSTITIAL_HTML_BYTES = 2 * 1024 * 1024
+
+_ARABIC_DIACRITICS_RE = re.compile(r"[\u064b-\u065f\u0670]+")
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]+")
+_UNSAFE_FILENAME_CHARS_RE = re.compile(r'[<>:"|?*]+')
+
+_NEGATIVE_SUBMISSION_RE = re.compile(
+    r"not\s+submitted|no\s+submissions?\s+have\s+been\s+made(?:\s+yet)?|"
+    r"no\s+submissions?|no\s+attempts?(?:\s+have\s+been\s+made)?|"
+    r"not\s+(?:yet\s+)?graded|not\s+completed|not\s+finished|never\s+submitted|"
+    r"\bdraft\b|in\s+progress|"
+    r"لم\s+تسلم|لم\s+يتم\s+التسليم|لم\s+يتم\s+تقديم|غير\s+مسلم[ةه]?|"
+    r"لا\s+توجد\s+محاول(?:ة|ات)|لا\s+يوجد\s+تسليم|لم\s+تقم\s+بأي\s+محاولة|"
+    r"مسود[ةه]|لم\s+يتم\s+التقييم|غير\s+مقيم[ةه]?|لم\s+يقيم|"
+    r"قيد\s+التنفيذ|قيد\s+التقدم|غير\s+مكتمل[ةه]?",
+    re.I,
+)
+_POSITIVE_SUBMISSION_RE = re.compile(
+    r"submitted\s+for\s+grading|assignment\s+was\s+submitted|"
+    r"\bsubmitted\b|\bgraded\b|\bfinished\b|\bcompleted\b|"
+    r"تم\s+تسليم(?:ها|ه)?\s+للتقييم|تم\s+تسليم\s+الواجب|تم\s+التسليم|"
+    r"سلم\s+قبل|مسلم(?:ة|ه)?|تم\s+التقييم|مقيم(?:ة|ه)?|"
+    r"منتهي(?:ة|ه)?|مكتمل(?:ة|ه)?|تم\s+الحل",
+    re.I,
+)
+
+
+def parse_submission_state(text: str) -> Optional[bool]:
+    """Parse English/Arabic Moodle submission or grading text (negative patterns first)."""
+    if not text:
+        return None
+    cleaned = _ARABIC_DIACRITICS_RE.sub("", str(text))
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    if not cleaned or cleaned in ("-", "—", "–"):
+        return None
+    if _NEGATIVE_SUBMISSION_RE.search(cleaned):
+        return False
+    if _POSITIVE_SUBMISSION_RE.search(cleaned):
+        return True
+    return None
+
+
+def sanitize_filename(filename: str, default: str = "document") -> str:
+    """Strip path traversal, path separators, control chars, and invalid filename chars."""
+    if not filename:
+        return default
+    s = _CONTROL_CHARS_RE.sub("", str(filename))
+    s = s.replace("\\", "/")
+    parts = [p for p in s.split("/") if p]
+    s = parts[-1] if parts else ""
+    while ".." in s:
+        s = s.replace("..", "")
+    s = _UNSAFE_FILENAME_CHARS_RE.sub("", s)
+    s = s.strip(" .")
+    if not s:
+        return default
+    if len(s) > 120:
+        if "." in s:
+            stem, ext = s.rsplit(".", 1)
+            ext = ext[:16]
+            s = f"{stem[:120 - len(ext) - 1]}.{ext}" if ext else stem[:120]
+        else:
+            s = s[:120]
+    return s
+
+
+def _assert_allowed_url(url: str) -> str:
+    """Enforce HTTPS-only requests to the configured LMS host (blocks SSRF & http://)."""
+    if not url or not isinstance(url, str):
+        raise ValueError(f"Blocked invalid LMS URL: {url!r}")
+    parts = urlsplit(url.strip())
+    allowed_netloc = urlsplit(LMS_BASE_URL).netloc.lower()
+    if parts.scheme.lower() != "https" or parts.netloc.lower() != allowed_netloc:
+        raise ValueError(f"Blocked disallowed URL (scheme/host): {url}")
+    return url
+
+
+def _close_response(resp: Any) -> None:
+    """Safely close an HTTP response object."""
+    if resp is None:
+        return
+    close_fn = getattr(resp, "close", None)
+    if callable(close_fn):
+        try:
+            close_fn()
+        except Exception as e:
+            logger.debug(f"Response close error: {e}")
+
+
+@dataclass
+class FetchResult:
+    """Structured result for LMSScraper.fetch_course_content (avoids mutating self)."""
+    content: Dict[str, List[Dict[str, Any]]]
+    ok: bool
+    session_expired: bool = False
+    waf_blocked: bool = False
+    error: Optional[str] = None
 
 
 class LMSAuthError(RuntimeError):
@@ -18,6 +120,7 @@ class LMSAuthError(RuntimeError):
 
 class LMSWafError(RuntimeError):
     """Raised when the university WAF/NetScaler requests human CAPTCHA validation."""
+
 
 HEADERS = {
     "User-Agent": (
@@ -29,25 +132,140 @@ HEADERS = {
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
 }
 
+
+class LMSHttpClient:
+    """Thread-safe HTTP client for LMS requests with pacing, WAF cooldown, and host allowlist."""
+
+    def __init__(
+        self,
+        min_interval: float = 0.5,
+        jitter: Tuple[float, float] = (0.05, 0.25),
+        waf_cooldown: float = 900.0,
+        headers: Optional[Dict[str, str]] = None,
+        session: Optional[requests.Session] = None,
+    ):
+        self._lock = threading.RLock()
+        self.session = session or requests.Session()
+        self.session.trust_env = False
+        self.session.headers.update(headers if headers is not None else HEADERS)
+        self.min_interval = max(0.0, float(min_interval))
+        self.jitter = jitter
+        self.waf_cooldown = max(0.0, float(waf_cooldown))
+        self.last_request_at: float = 0.0
+        self._waf_cooldown_until: float = 0.0
+
+    @property
+    def waf_cooldown_active(self) -> bool:
+        with self._lock:
+            return time.monotonic() < self._waf_cooldown_until
+
+    def trigger_waf_cooldown(self, seconds: Optional[float] = None) -> None:
+        with self._lock:
+            dur = self.waf_cooldown if seconds is None else max(0.0, float(seconds))
+            self._waf_cooldown_until = time.monotonic() + dur
+
+    def clear_waf_cooldown(self) -> None:
+        with self._lock:
+            self._waf_cooldown_until = 0.0
+
+    def request(
+        self,
+        method: str,
+        url: str,
+        *,
+        allow_waf_cooldown: bool = False,
+        **kwargs,
+    ):
+        with self._lock:
+            if not allow_waf_cooldown and time.monotonic() < self._waf_cooldown_until:
+                raise LMSWafError(
+                    "جدار حماية موقع الجامعة طلب تحققاً أمنياً مؤقتاً؛ تم إيقاف الفحص مؤقتاً لتجنب الحظر"
+                )
+            _assert_allowed_url(url)
+
+            if self.min_interval > 0 and self.last_request_at > 0:
+                elapsed = time.monotonic() - self.last_request_at
+                wait = self.min_interval - elapsed
+                if wait > 0:
+                    j_low, j_high = self.jitter
+                    extra = random.uniform(j_low, j_high) if j_high > 0 else 0.0
+                    time.sleep(wait + extra)
+
+            method_upper = method.upper()
+            if method_upper == "GET":
+                resp = self.session.get(url, **kwargs)
+            elif method_upper == "POST":
+                resp = self.session.post(url, **kwargs)
+            else:
+                resp = self.session.request(method_upper, url, **kwargs)
+
+            self.last_request_at = time.monotonic()
+
+            try:
+                for hist in getattr(resp, "history", None) or []:
+                    hist_url = getattr(hist, "url", None)
+                    if isinstance(hist_url, str) and hist_url:
+                        _assert_allowed_url(hist_url)
+                final_url = getattr(resp, "url", None)
+                if isinstance(final_url, str) and final_url:
+                    _assert_allowed_url(final_url)
+            except ValueError:
+                _close_response(resp)
+                raise
+
+            return resp
+
+    def get(self, url: str, **kwargs):
+        return self.request("GET", url, **kwargs)
+
+    def post(self, url: str, **kwargs):
+        return self.request("POST", url, **kwargs)
+
+    def clear_cookies(self) -> None:
+        with self._lock:
+            try:
+                self.session.cookies.clear()
+            except Exception as e:
+                logger.debug(f"Cookie clear error: {e}")
+
+    def close(self) -> None:
+        with self._lock:
+            try:
+                self.session.close()
+            except Exception as e:
+                logger.debug(f"Session close error: {e}")
+
+
 class LMSScraper:
 
-    def __init__(self, username: str, password: str):
+    def __init__(self, username: str, password: str, http_client: Optional[LMSHttpClient] = None):
         self.username = username
         self.password = password
-        self.session = requests.Session()
-        self.session.trust_env = False
-        self.session.headers.update(HEADERS)
+        self.http = http_client or LMSHttpClient()
+        self.session = self.http.session
+        self._state_lock = threading.RLock()
+        self._tls = threading.local()
         self.logged_in = False
         self.user_id: Optional[str] = None
         self.full_name: Optional[str] = None
         self.sesskey: Optional[str] = None
         self.moodle_theme: Optional[str] = None
         self.error_message: Optional[str] = None
-        self.last_request_at = 0.0
         self.last_fetch_ok = True
         self.session_expired = False
         self.waf_blocked = False
         self.credentials_invalid = False
+
+    @property
+    def last_request_at(self) -> float:
+        return self.http.last_request_at
+
+    @last_request_at.setter
+    def last_request_at(self, value: float) -> None:
+        self.http.last_request_at = value
+
+    def _suppress_legacy_state(self) -> bool:
+        return bool(getattr(self._tls, "suppress_state_mutation", False))
 
     @staticmethod
     def _clean_url(url: str) -> str:
@@ -69,17 +287,24 @@ class LMSScraper:
             return re.sub(r"([?&])__ncforminfo=[^&#]*&?", r"\1", u).rstrip("?&")
 
     @staticmethod
-    def _is_waf_challenge(resp) -> bool:
-        """Detect Citrix NetScaler / Barracuda WAF CAPTCHA validation pages."""
-        if resp is None:
+    def _is_waf_challenge_text(text: str) -> bool:
+        """Detect Citrix NetScaler / Barracuda WAF CAPTCHA validation HTML."""
+        if not text:
             return False
-        text_low = (resp.text or "")[:2500].lower()
+        text_low = text[:2500].lower()
         return (
             "/captcha.gif" in text_low
             or "/captcha_resp" in text_low
             or "user validation required" in text_low
             or ("validation request" in text_low and "captcha" in text_low)
         )
+
+    @staticmethod
+    def _is_waf_challenge(resp) -> bool:
+        """Detect Citrix NetScaler / Barracuda WAF CAPTCHA validation pages."""
+        if resp is None:
+            return False
+        return LMSScraper._is_waf_challenge_text(resp.text or "")
 
     @staticmethod
     def _extract_moodle_cfg(html_text: str) -> Dict[str, Any]:
@@ -95,107 +320,185 @@ class LMSScraper:
         except Exception:
             return {}
 
-    def _is_login_response(self, resp) -> bool:
-        if "/login/index.php" in (resp.url or "").lower():
-            return True
-
-        soup = BeautifulSoup(resp.text, "lxml")
+    @staticmethod
+    def _is_login_html(html_text: str) -> bool:
+        if not html_text:
+            return False
+        soup = BeautifulSoup(html_text, "lxml")
         body = soup.find("body")
         if body and "notloggedin" in body.get("class", []):
             return True
-
         login_form = soup.find("form", id="login") or soup.find(
             "form", action=re.compile(r"/login/index\.php", re.I)
         )
         return bool(login_form and login_form.find("input", {"name": "username"}))
 
-    def authenticated_get(self, url: str, timeout: int = 30, **kwargs):
-        """Fetch a protected page and report an expired session or WAF challenge."""
-        if self.waf_blocked:
-            self.last_fetch_ok = False
+    def _is_login_response(self, resp) -> bool:
+        if "/login/index.php" in (getattr(resp, "url", "") or "").lower():
+            return True
+        return self._is_login_html(resp.text)
+
+    @staticmethod
+    def _response_content_type(resp) -> str:
+        headers = getattr(resp, "headers", None)
+        if headers is None or not hasattr(headers, "get"):
+            return ""
+        raw = headers.get("Content-Type") or headers.get("content-type") or ""
+        return raw.lower() if isinstance(raw, str) else ""
+
+    @staticmethod
+    def _parse_content_length(resp) -> Optional[int]:
+        headers = getattr(resp, "headers", None)
+        if headers is None or not hasattr(headers, "get"):
+            return None
+        raw = headers.get("Content-Length") or headers.get("content-length")
+        if raw is None or isinstance(raw, bool):
+            return None
+        try:
+            return int(str(raw).strip())
+        except (TypeError, ValueError):
+            return None
+
+    def authenticated_get(self, url: str, timeout: int = 30, stream: bool = False, **kwargs):
+        """Fetch a protected LMS resource, enforcing host allowlist, streaming safety, WAF & auth checks."""
+        suppress = self._suppress_legacy_state()
+        if (not suppress and self.waf_blocked) or self.http.waf_cooldown_active:
+            if not suppress:
+                with self._state_lock:
+                    self.last_fetch_ok = False
             raise LMSWafError("جدار حماية موقع الجامعة طلب تحققاً أمنياً مؤقتاً؛ تم إيقاف الفحص مؤقتاً لتجنب الحظر")
 
-        resp = self.session.get(url, timeout=timeout, **kwargs)
-        self.last_request_at = time.monotonic()
+        _assert_allowed_url(url)
+        resp = self.http.get(url, timeout=timeout, stream=stream, **kwargs)
+
+        final_url = getattr(resp, "url", None)
+        if isinstance(final_url, str) and final_url:
+            try:
+                _assert_allowed_url(final_url)
+            except ValueError:
+                _close_response(resp)
+                raise
+
+        if "/login/index.php" in (final_url or "").lower():
+            _close_response(resp)
+            logger.info("LMS session expired (login redirect); waiting for re-authentication")
+            if not suppress:
+                with self._state_lock:
+                    self.logged_in = False
+                    self.session_expired = True
+                    self.last_fetch_ok = False
+            raise LMSAuthError("انتهت جلسة LMS؛ يرجى تسجيل الدخول مجدداً من البوت")
+
+        # Never read resp.text when stream=True or for non-HTML responses (prevents OOM/DoS)
+        if stream:
+            return resp
+
+        ctype = self._response_content_type(resp)
+        if ctype and ("text/html" not in ctype and "application/xhtml" not in ctype):
+            return resp
+
+        cl_bytes = self._parse_content_length(resp)
+        if cl_bytes is not None and cl_bytes > MAX_HTML_INSPECT_BYTES:
+            _close_response(resp)
+            raise ValueError(f"HTML response exceeds inspection limit ({cl_bytes} bytes)")
 
         if self._is_waf_challenge(resp):
+            _close_response(resp)
             logger.warning("University WAF CAPTCHA challenge encountered; backing off immediately")
-            self.waf_blocked = True
-            self.last_fetch_ok = False
+            self.http.trigger_waf_cooldown()
+            if not suppress:
+                with self._state_lock:
+                    self.waf_blocked = True
+                    self.last_fetch_ok = False
             raise LMSWafError("جدار حماية موقع الجامعة طلب تحققاً أمنياً (CAPTCHA)؛ تم التوقف مؤقتاً")
 
         if not self._is_login_response(resp):
             return resp
 
+        _close_response(resp)
         logger.info("LMS session expired; waiting for the user to sign in again")
-        self.logged_in = False
-        self.session_expired = True
-        self.last_fetch_ok = False
+        if not suppress:
+            with self._state_lock:
+                self.logged_in = False
+                self.session_expired = True
+                self.last_fetch_ok = False
         raise LMSAuthError("انتهت جلسة LMS؛ يرجى تسجيل الدخول مجدداً من البوت")
 
     def keep_session_alive(self) -> bool:
         """Make a lightweight authenticated request to keep an active monitor session warm."""
+        resp = None
         try:
             resp = self.authenticated_get(f"{LMS_BASE_URL}/my/", timeout=15)
             resp.raise_for_status()
             return self.logged_in
         except Exception as e:
-            self.last_fetch_ok = False
+            with self._state_lock:
+                self.last_fetch_ok = False
             logger.warning(f"LMS keepalive failed: {e}")
             return False
+        finally:
+            _close_response(resp)
 
     def logout(self):
         """Terminate the LMS server session and clear local cookies."""
+        resp = None
         try:
             if self.logged_in and self.sesskey:
-                self.session.get(
+                resp = self.http.get(
                     f"{LMS_BASE_URL}/login/logout.php?sesskey={self.sesskey}",
                     timeout=10,
                     allow_redirects=True,
+                    allow_waf_cooldown=True,
                 )
         except Exception as e:
             logger.debug(f"LMS logout request error: {e}")
         finally:
-            self.logged_in = False
-            self.sesskey = None
-            try:
-                self.session.cookies.clear()
-            except Exception:
-                pass
-            self.session.close()
+            _close_response(resp)
+            with self._state_lock:
+                self.logged_in = False
+                self.sesskey = None
+            self.http.clear_cookies()
+            self.http.close()
 
     def close(self):
-        self.session.close()
+        self.http.close()
 
     def login(self) -> bool:
-        self.logged_in = False
-        self.session_expired = False
-        self.waf_blocked = False
-        self.credentials_invalid = False
-        self.last_fetch_ok = True
-        self.error_message = None
+        with self._state_lock:
+            self.logged_in = False
+            self.session_expired = False
+            self.waf_blocked = False
+            self.credentials_invalid = False
+            self.last_fetch_ok = True
+            self.error_message = None
+        self.http.clear_waf_cooldown()
         try:
             logger.info(f"محاولة تسجيل الدخول: {self.username}")
 
-            resp = self.session.get(LMS_LOGIN_URL, timeout=30)
-            self.last_request_at = time.monotonic()
-            if resp.status_code != 200:
-                self.error_message = f"موقع الجامعة غير متاح (رمز {resp.status_code})"
-                logger.error(self.error_message)
-                return False
+            resp = self.http.get(LMS_LOGIN_URL, timeout=30, allow_waf_cooldown=True)
+            try:
+                if resp.status_code != 200:
+                    self.error_message = f"موقع الجامعة غير متاح (رمز {resp.status_code})"
+                    logger.error(self.error_message)
+                    return False
 
-            if self._is_waf_challenge(resp):
-                self.waf_blocked = True
-                self.error_message = "جدار حماية موقع الجامعة طلب تحققاً أمنياً (CAPTCHA) مؤقتاً؛ حاول مجدداً بعد عدة دقائق"
-                logger.warning(f"WAF CAPTCHA challenge on login GET for {self.username}")
-                return False
+                if self._is_waf_challenge(resp):
+                    self.http.trigger_waf_cooldown()
+                    self.waf_blocked = True
+                    self.error_message = "جدار حماية موقع الجامعة طلب تحققاً أمنياً (CAPTCHA) مؤقتاً؛ حاول مجدداً بعد عدة دقائق"
+                    logger.warning(f"WAF CAPTCHA challenge on login GET for {self.username}")
+                    return False
 
-            soup = BeautifulSoup(resp.text, "lxml")
+                login_get_text = resp.text
+            finally:
+                _close_response(resp)
+
+            soup = BeautifulSoup(login_get_text, "lxml")
 
             # If session cookies already keep us logged in
-            if self._check_logged_in(soup, resp.text):
+            if self._check_logged_in(soup, login_get_text):
                 self.logged_in = True
-                self._extract_user_info(soup, resp.text)
+                self._extract_user_info(soup, login_get_text)
                 logger.info(f"✅ جلسة نشطة بالفعل - {self.full_name}")
                 return True
 
@@ -226,45 +529,57 @@ class LMSScraper:
             payload["username"] = self.username
             payload["password"] = self.password
 
-            resp = self.session.post(
+            # Validate form action URL through LMSHttpClient host allowlist
+            post_resp = self.http.post(
                 post_url,
                 data=payload,
                 headers={"Referer": LMS_LOGIN_URL, "Origin": LMS_BASE_URL},
                 timeout=30,
-                allow_redirects=True
+                allow_redirects=True,
+                allow_waf_cooldown=True,
             )
-            self.last_request_at = time.monotonic()
+            try:
+                post_status = post_resp.status_code
+                post_url_final = getattr(post_resp, "url", post_url)
+                if post_status != 200:
+                    self.error_message = f"فشل الاستجابة بعد إرسال البيانات (رمز {post_status})"
+                    logger.error(self.error_message)
+                    return False
 
-            if resp.status_code != 200:
-                self.error_message = f"فشل الاستجابة بعد إرسال البيانات (رمز {resp.status_code})"
-                logger.error(self.error_message)
-                return False
+                if self._is_waf_challenge(post_resp):
+                    self.http.trigger_waf_cooldown()
+                    self.waf_blocked = True
+                    self.error_message = "جدار حماية موقع الجامعة طلب تحققاً أمنياً (CAPTCHA) بعد محاولة الدخول؛ حاول بعد عدة دقائق"
+                    logger.warning(f"WAF CAPTCHA challenge on login POST for {self.username}")
+                    return False
 
-            if self._is_waf_challenge(resp):
-                self.waf_blocked = True
-                self.error_message = "جدار حماية موقع الجامعة طلب تحققاً أمنياً (CAPTCHA) بعد محاولة الدخول؛ حاول بعد عدة دقائق"
-                logger.warning(f"WAF CAPTCHA challenge on login POST for {self.username}")
-                return False
+                post_text = post_resp.text
+            finally:
+                _close_response(post_resp)
 
-            soup = BeautifulSoup(resp.text, "lxml")
+            soup = BeautifulSoup(post_text, "lxml")
 
-            if self._check_logged_in(soup, resp.text):
+            if self._check_logged_in(soup, post_text):
                 self.logged_in = True
-                self._extract_user_info(soup, resp.text)
+                self._extract_user_info(soup, post_text)
                 logger.info(f"✅ تسجيل الدخول ناجح - {self.full_name} (uid={self.user_id}, theme={self.moodle_theme})")
                 return True
 
+            my_resp = None
             try:
-                my_resp = self.session.get(f"{LMS_BASE_URL}/my/", timeout=15)
-                if my_resp.status_code == 200 and not self._is_waf_challenge(my_resp) and "login" not in my_resp.url:
-                    my_soup = BeautifulSoup(my_resp.text, "lxml")
-                    if self._check_logged_in(my_soup, my_resp.text):
+                my_resp = self.http.get(f"{LMS_BASE_URL}/my/", timeout=15, allow_waf_cooldown=True)
+                if my_resp.status_code == 200 and not self._is_waf_challenge(my_resp) and "login" not in (my_resp.url or ""):
+                    my_text = my_resp.text
+                    my_soup = BeautifulSoup(my_text, "lxml")
+                    if self._check_logged_in(my_soup, my_text):
                         self.logged_in = True
-                        self._extract_user_info(my_soup, my_resp.text)
+                        self._extract_user_info(my_soup, my_text)
                         logger.info(f"✅ تسجيل الدخول ناجح عبر /my/ - {self.full_name}")
                         return True
-            except Exception:
-                pass
+            except Exception as my_err:
+                logger.debug(f"Login fallback /my/ check failed: {my_err}")
+            finally:
+                _close_response(my_resp)
 
             err = soup.find(class_=["loginerrors", "alert-danger", "error"]) or soup.find(id="loginerrormessage")
             if err:
@@ -279,7 +594,7 @@ class LMSScraper:
                 title = soup.title.get_text(strip=True) if soup.title else ""
                 msg = f"بيانات غير صحيحة أو تم حظر الجلسة (الصفحة: {title})"
             self.error_message = msg
-            logger.error(f"❌ فشل تسجيل الدخول: {msg} | URL: {resp.url}")
+            logger.error(f"❌ فشل تسجيل الدخول: {msg} | URL: {post_url_final}")
             return False
 
         except requests.exceptions.Timeout:
@@ -409,9 +724,10 @@ class LMSScraper:
 
         # 3. Fetch /user/profile.php for authoritative full name
         if not raw_name or len(raw_name.strip()) <= 3:
+            resp = None
             try:
-                resp = self.session.get(f"{LMS_BASE_URL}/user/profile.php", timeout=15)
-                if resp.status_code == 200:
+                resp = self.http.get(f"{LMS_BASE_URL}/user/profile.php", timeout=15)
+                if resp.status_code == 200 and not self._is_waf_challenge(resp):
                     prof_soup = BeautifulSoup(resp.text, "lxml")
                     self._extract_sesskey(prof_soup)
                     if not self.user_id:
@@ -425,6 +741,8 @@ class LMSScraper:
                             raw_name = val
             except Exception as e:
                 logger.debug(f"فشل جلب الملف الشخصي للاسم: {e}")
+            finally:
+                _close_response(resp)
 
         if raw_name:
             cleaned = re.sub(r'\s*\d{5,}\s*$', '', raw_name).strip()
@@ -443,6 +761,7 @@ class LMSScraper:
         seen_ids: set = set()
 
         # 1. Try /my/courses.php and extract sesskey
+        resp = None
         try:
             resp = self.authenticated_get(f"{LMS_BASE_URL}/my/courses.php", timeout=30)
             soup = BeautifulSoup(resp.text, "lxml")
@@ -450,10 +769,13 @@ class LMSScraper:
             self._extract_courses_from_soup(soup, courses, seen_ids)
         except Exception as e:
             logger.error(f"خطأ في صفحة My Courses: {e}")
+        finally:
+            _close_response(resp)
 
         # 2. Moodle 4.x AJAX WebService (loads courses rendered dynamically by block_myoverview)
         if self.sesskey:
             for classification in ("all", "inprogress", "All"):
+                ajax_resp = None
                 try:
                     ajax_url = (
                         f"{LMS_BASE_URL}/lib/ajax/service.php"
@@ -471,8 +793,14 @@ class LMSScraper:
                             "customfieldvalue": "",
                         },
                     }]
-                    ajax_resp = self.session.post(ajax_url, json=payload, timeout=20)
-                    self.last_request_at = time.monotonic()
+                    ajax_resp = self.http.post(ajax_url, json=payload, timeout=20)
+                    ctype = self._response_content_type(ajax_resp)
+                    if ("text/html" in ctype or "application/xhtml" in ctype) and self._is_waf_challenge(ajax_resp):
+                        self.http.trigger_waf_cooldown()
+                        with self._state_lock:
+                            self.waf_blocked = True
+                        logger.warning("WAF CAPTCHA challenge on AJAX course fetch")
+                        break
                     if ajax_resp.status_code == 200:
                         data = ajax_resp.json()
                         if isinstance(data, list) and data and not data[0].get("error"):
@@ -493,9 +821,12 @@ class LMSScraper:
                                 break
                 except Exception as e:
                     logger.debug(f"AJAX course fetch ({classification}) failed: {e}")
+                finally:
+                    _close_response(ajax_resp)
 
         # 3. Fallback to /my/ Dashboard
         if not courses:
+            resp = None
             try:
                 resp = self.authenticated_get(f"{LMS_BASE_URL}/my/", timeout=30)
                 soup = BeautifulSoup(resp.text, "lxml")
@@ -503,9 +834,12 @@ class LMSScraper:
                 self._extract_courses_from_soup(soup, courses, seen_ids)
             except Exception as e:
                 logger.error(f"خطأ في Dashboard: {e}")
+            finally:
+                _close_response(resp)
 
         # 4. Fallback to User Profile page (supports both /course/view.php?id= and /user/view.php?course=)
         if not courses:
+            resp = None
             try:
                 prof_url = (
                     f"{LMS_BASE_URL}/user/profile.php?id={self.user_id}&showallcourses=1"
@@ -516,6 +850,8 @@ class LMSScraper:
                 self._extract_courses_from_soup(soup, courses, seen_ids)
             except Exception as e:
                 logger.error(f"خطأ في صفحة User Profile Courses: {e}")
+            finally:
+                _close_response(resp)
 
         logger.info(f"✅ تم جلب {len(courses)} مادة")
         return courses
@@ -583,9 +919,11 @@ class LMSScraper:
         name = self._clean_link_text(link_el)
         return name if len(name) > 2 else ""
 
-    def get_course_content(self, course_id: int, course_soup: Optional[BeautifulSoup] = None) -> Dict[str, List[Dict]]:
-        self.last_fetch_ok = True
-        result = {
+    def fetch_course_content(
+        self, course_id: int, course_soup: Optional[BeautifulSoup] = None
+    ) -> FetchResult:
+        """Fetch course content and return structured state without mutating self."""
+        result: Dict[str, List[Dict[str, Any]]] = {
             "assignments": [],
             "quizzes": [],
             "resources": [],
@@ -594,204 +932,242 @@ class LMSScraper:
             "attendance": [],
         }
 
-        result["assignments"] = self._get_activities_from_index(
-            course_id, "assign"
-        )
-        assign_ok = self.last_fetch_ok
-        if self.session_expired or self.waf_blocked:
-            self.last_fetch_ok = False
-            return result
+        prev_suppress = getattr(self._tls, "suppress_state_mutation", False)
+        self._tls.suppress_state_mutation = True
+        try:
+            assign_status: Dict[str, Any] = {"ok": True, "error": None}
+            result["assignments"] = self._get_activities_from_index(
+                course_id, "assign", raise_auth_errors=True, status_out=assign_status
+            )
+            assign_ok = bool(assign_status["ok"])
 
-        self.last_fetch_ok = True
-        result["quizzes"] = self._get_activities_from_index(
-            course_id, "quiz"
-        )
-        quiz_ok = self.last_fetch_ok
-        if self.session_expired or self.waf_blocked:
-            self.last_fetch_ok = False
-            return result
+            quiz_status: Dict[str, Any] = {"ok": True, "error": None}
+            result["quizzes"] = self._get_activities_from_index(
+                course_id, "quiz", raise_auth_errors=True, status_out=quiz_status
+            )
+            quiz_ok = bool(quiz_status["ok"])
 
-        self.last_fetch_ok = True
-        resources, page_soup = self._get_resources_from_course_page(
-            course_id, soup=course_soup, return_soup=True
-        )
-        res_ok = self.last_fetch_ok
-        result["resources"] = resources
-        if self.session_expired or self.waf_blocked:
-            self.last_fetch_ok = False
-            return result
+            res_status: Dict[str, Any] = {"ok": True, "error": None}
+            resources, page_soup = self._get_resources_from_course_page(
+                course_id,
+                soup=course_soup,
+                return_soup=True,
+                raise_auth_errors=True,
+                status_out=res_status,
+            )
+            res_ok = bool(res_status["ok"])
+            result["resources"] = resources
 
-        # Supplement assignments & quizzes + full-year activity dates from the main course page
-        completed_cmids = set()
-        page_due_dates: Dict[str, str] = {}
-        if page_soup is not None:
-            completed_cmids = self._extract_course_page_completions(page_soup)
-            page_due_dates = self._extract_course_page_activity_dates(page_soup)
+            # Supplement assignments & quizzes + full-year activity dates from the main course page
+            completed_cmids = set()
+            page_due_dates: Dict[str, str] = {}
+            if page_soup is not None:
+                completed_cmids = self._extract_course_page_completions(page_soup)
+                page_due_dates = self._extract_course_page_activity_dates(page_soup)
 
-            seen_assigns = {a["id"] for a in result["assignments"]}
-            for a in page_soup.find_all("a", href=re.compile(r"/mod/assign/view\.php\?id=\d+")):
-                href = self._clean_url(a.get("href", ""))
-                id_m = re.search(r"id=(\d+)", href)
-                if not id_m:
-                    continue
-                cmid = id_m.group(1)
-                act_id = f"assign_{cmid}"
-                if act_id in seen_assigns:
-                    continue
-                seen_assigns.add(act_id)
-                name = self._clean_link_text(a)
-                result["assignments"].append({
-                    "id": act_id,
-                    "name": name or f"assign #{cmid}",
-                    "url": href,
-                    "type": "assign",
-                    "course_id": course_id,
-                    "due_date": page_due_dates.get(cmid, ""),
-                    "is_submitted": cmid in completed_cmids,
-                    "submission_text": "منجز في المقرر" if cmid in completed_cmids else "",
-                })
+                seen_assigns = {a["id"] for a in result["assignments"]}
+                for a in page_soup.find_all("a", href=re.compile(r"/mod/assign/view\.php\?id=\d+")):
+                    href = self._clean_url(a.get("href", ""))
+                    id_m = re.search(r"id=(\d+)", href)
+                    if not id_m:
+                        continue
+                    cmid = id_m.group(1)
+                    act_id = f"assign_{cmid}"
+                    if act_id in seen_assigns:
+                        continue
+                    seen_assigns.add(act_id)
+                    name = self._clean_link_text(a)
+                    result["assignments"].append({
+                        "id": act_id,
+                        "name": name or f"assign #{cmid}",
+                        "url": href,
+                        "type": "assign",
+                        "course_id": course_id,
+                        "due_date": page_due_dates.get(cmid, ""),
+                        "is_submitted": cmid in completed_cmids,
+                        "submission_text": "منجز في المقرر" if cmid in completed_cmids else "",
+                    })
 
-            seen_quizzes = {q["id"] for q in result["quizzes"]}
-            for a in page_soup.find_all("a", href=re.compile(r"/mod/quiz/view\.php\?id=\d+")):
-                href = self._clean_url(a.get("href", ""))
-                id_m = re.search(r"id=(\d+)", href)
-                if not id_m:
-                    continue
-                cmid = id_m.group(1)
-                act_id = f"quiz_{cmid}"
-                if act_id in seen_quizzes:
-                    continue
-                seen_quizzes.add(act_id)
-                name = self._clean_link_text(a)
-                result["quizzes"].append({
-                    "id": act_id,
-                    "name": name or f"quiz #{cmid}",
-                    "url": href,
-                    "type": "quiz",
-                    "course_id": course_id,
-                    "due_date": page_due_dates.get(cmid, ""),
-                    "is_submitted": cmid in completed_cmids,
-                    "submission_text": "منجز في المقرر" if cmid in completed_cmids else "",
-                })
+                seen_quizzes = {q["id"] for q in result["quizzes"]}
+                for a in page_soup.find_all("a", href=re.compile(r"/mod/quiz/view\.php\?id=\d+")):
+                    href = self._clean_url(a.get("href", ""))
+                    id_m = re.search(r"id=(\d+)", href)
+                    if not id_m:
+                        continue
+                    cmid = id_m.group(1)
+                    act_id = f"quiz_{cmid}"
+                    if act_id in seen_quizzes:
+                        continue
+                    seen_quizzes.add(act_id)
+                    name = self._clean_link_text(a)
+                    result["quizzes"].append({
+                        "id": act_id,
+                        "name": name or f"quiz #{cmid}",
+                        "url": href,
+                        "type": "quiz",
+                        "course_id": course_id,
+                        "due_date": page_due_dates.get(cmid, ""),
+                        "is_submitted": cmid in completed_cmids,
+                        "submission_text": "منجز في المقرر" if cmid in completed_cmids else "",
+                    })
 
-        # Fetch course grades, announcements, and attendance
-        result["grades"] = self.get_course_grades(course_id)
-        if self.session_expired or self.waf_blocked:
-            self.last_fetch_ok = False
-            return result
-        result["announcements"] = self.get_course_announcements(course_id, course_soup=page_soup)
-        if self.session_expired or self.waf_blocked:
-            self.last_fetch_ok = False
-            return result
-        result["attendance"] = self.get_course_attendance(course_id, course_soup=page_soup)
-        if self.session_expired or self.waf_blocked:
-            self.last_fetch_ok = False
-            return result
+            # Fetch course grades, announcements, and attendance
+            result["grades"] = self.get_course_grades(course_id, raise_auth_errors=True)
+            result["announcements"] = self.get_course_announcements(
+                course_id, course_soup=page_soup, raise_auth_errors=True
+            )
+            result["attendance"] = self.get_course_attendance(
+                course_id, course_soup=page_soup, raise_auth_errors=True
+            )
 
-        # Cross-reference completion from course page badges & gradebook, and prefer full-year dates from course page
-        graded_cmids = {
-            g["item_id"].replace("mod_", "")
-            for g in result["grades"]
-            if g.get("item_id", "").startswith("mod_") and g.get("grade_val")
-        }
+            # Cross-reference completion from course page badges & gradebook, and prefer full-year dates from course page
+            graded_cmids = {
+                g["item_id"].replace("mod_", "")
+                for g in result["grades"]
+                if g.get("item_id", "").startswith("mod_") and g.get("grade_val")
+            }
 
-        for a in result["assignments"]:
-            cmid = str(a["id"]).replace("assign_", "")
-            if page_due_dates.get(cmid):
-                # Moodle 5 course page activity-dates always include the full 4-digit year
-                a["due_date"] = page_due_dates[cmid]
-            elif a.get("due_date"):
-                a["due_date"] = self._normalize_due_date_year(a["due_date"])
-            if cmid in completed_cmids or cmid in graded_cmids:
-                a["is_submitted"] = True
-
-        for q in result["quizzes"]:
-            cmid = str(q["id"]).replace("quiz_", "")
-            if page_due_dates.get(cmid):
-                q["due_date"] = page_due_dates[cmid]
-            elif q.get("due_date"):
-                q["due_date"] = self._normalize_due_date_year(q["due_date"])
-            if cmid in completed_cmids or cmid in graded_cmids:
-                q["is_submitted"] = True
-
-        # Deep-check individual assignment & quiz pages when submission, due_date, or quiz grade is not yet known
-        for a in result["assignments"]:
-            if self.session_expired or self.waf_blocked:
-                self.last_fetch_ok = False
-                return result
-            if (not a.get("is_submitted") or not a.get("due_date")) and a.get("url"):
-                st = self.get_assignment_status(a["url"])
-                if st.get("is_submitted"):
+            for a in result["assignments"]:
+                cmid = str(a["id"]).replace("assign_", "")
+                if page_due_dates.get(cmid):
+                    a["due_date"] = page_due_dates[cmid]
+                elif a.get("due_date"):
+                    a["due_date"] = self._normalize_due_date_year(a["due_date"])
+                if cmid in completed_cmids or cmid in graded_cmids:
                     a["is_submitted"] = True
-                    a["submission_text"] = st.get("status_text") or "تم التسليم"
-                if not a.get("due_date") and st.get("due_date"):
-                    a["due_date"] = self._normalize_due_date_year(st["due_date"])
 
-        for q in result["quizzes"]:
-            if self.session_expired or self.waf_blocked:
-                self.last_fetch_ok = False
-                return result
-            cmid = str(q["id"]).replace("quiz_", "")
-            needs_grade_check = bool(q.get("is_submitted")) and cmid not in graded_cmids and not q.get("grade_val")
-            if (not q.get("is_submitted") or not q.get("due_date") or needs_grade_check) and q.get("url"):
-                qst = self.get_quiz_status(q["url"])
-                if qst.get("is_submitted"):
+            for q in result["quizzes"]:
+                cmid = str(q["id"]).replace("quiz_", "")
+                if page_due_dates.get(cmid):
+                    q["due_date"] = page_due_dates[cmid]
+                elif q.get("due_date"):
+                    q["due_date"] = self._normalize_due_date_year(q["due_date"])
+                if cmid in completed_cmids or cmid in graded_cmids:
                     q["is_submitted"] = True
-                    q["submission_text"] = qst.get("status_text") or "تم الحل"
-                if not q.get("due_date") and qst.get("due_date"):
-                    q["due_date"] = self._normalize_due_date_year(qst["due_date"])
-                if qst.get("grade_val"):
-                    q["grade_val"] = qst["grade_val"]
-                    if qst.get("grade_max"):
-                        q["grade_max"] = qst["grade_max"]
-                    if qst.get("percentage"):
-                        q["percentage"] = qst["percentage"]
-                    if qst.get("feedback"):
-                        q["feedback"] = qst["feedback"]
 
-        # Merge quiz grades discovered from quiz/index.php or quiz/view.php into result["grades"]
-        # (covers quizzes hidden from Gradebook or graded directly on the quiz page)
-        quiz_cmids = {str(q["id"]).replace("quiz_", "") for q in result["quizzes"]}
-        grades_by_id = {g["item_id"]: g for g in result["grades"]}
-        for g in result["grades"]:
-            g_cmid = g.get("item_id", "").replace("mod_", "")
-            if g_cmid in quiz_cmids or "/mod/quiz/" in (g.get("url") or ""):
-                g["is_quiz"] = True
+            # Deep-check individual assignment & quiz pages when submission, due_date, or quiz grade is not yet known
+            for a in result["assignments"]:
+                if (not a.get("is_submitted") or not a.get("due_date")) and a.get("url"):
+                    st = self.get_assignment_status(a["url"], raise_auth_errors=True)
+                    if st.get("is_submitted"):
+                        a["is_submitted"] = True
+                        a["submission_text"] = st.get("status_text") or "تم التسليم"
+                    if not a.get("due_date") and st.get("due_date"):
+                        a["due_date"] = self._normalize_due_date_year(st["due_date"])
 
-        for q in result["quizzes"]:
-            cmid = str(q["id"]).replace("quiz_", "")
-            q_grade = (q.get("grade_val") or "").strip()
-            if not q_grade:
-                continue
-            mod_key = f"mod_{cmid}"
-            existing_g = grades_by_id.get(mod_key)
-            if existing_g:
-                existing_g["is_quiz"] = True
-                if not (existing_g.get("grade_val") or "").strip():
-                    existing_g["grade_val"] = q_grade
-                if not (existing_g.get("grade_max") or "").strip() and q.get("grade_max"):
-                    existing_g["grade_max"] = q["grade_max"]
-                if not (existing_g.get("percentage") or "").strip() and q.get("percentage"):
-                    existing_g["percentage"] = q["percentage"]
-                if not (existing_g.get("feedback") or "").strip() and q.get("feedback"):
-                    existing_g["feedback"] = q["feedback"]
-            else:
-                new_g = {
-                    "item_id": mod_key,
-                    "item_name": q.get("name") or f"Quiz #{cmid}",
-                    "grade_val": q_grade,
-                    "grade_max": q.get("grade_max") or "",
-                    "percentage": q.get("percentage") or "",
-                    "feedback": q.get("feedback") or "",
-                    "url": q.get("url") or f"{LMS_BASE_URL}/mod/quiz/view.php?id={cmid}",
-                    "course_id": course_id,
-                    "is_quiz": True,
-                }
-                result["grades"].append(new_g)
-                grades_by_id[mod_key] = new_g
+            for q in result["quizzes"]:
+                cmid = str(q["id"]).replace("quiz_", "")
+                needs_grade_check = bool(q.get("is_submitted")) and cmid not in graded_cmids and not q.get("grade_val")
+                if (not q.get("is_submitted") or not q.get("due_date") or needs_grade_check) and q.get("url"):
+                    qst = self.get_quiz_status(q["url"], raise_auth_errors=True)
+                    if qst.get("is_submitted"):
+                        q["is_submitted"] = True
+                        q["submission_text"] = qst.get("status_text") or "تم الحل"
+                    if not q.get("due_date") and qst.get("due_date"):
+                        q["due_date"] = self._normalize_due_date_year(qst["due_date"])
+                    if qst.get("grade_val"):
+                        q["grade_val"] = qst["grade_val"]
+                        if qst.get("grade_max"):
+                            q["grade_max"] = qst["grade_max"]
+                        if qst.get("percentage"):
+                            q["percentage"] = qst["percentage"]
+                        if qst.get("feedback"):
+                            q["feedback"] = qst["feedback"]
 
-        self.last_fetch_ok = ((assign_ok and quiz_ok and res_ok) or (res_ok and page_soup is not None)) and not self.waf_blocked and not self.session_expired
-        return result
+            # Merge quiz grades discovered from quiz/index.php or quiz/view.php into result["grades"]
+            quiz_cmids = {str(q["id"]).replace("quiz_", "") for q in result["quizzes"]}
+            grades_by_id = {g["item_id"]: g for g in result["grades"]}
+            for g in result["grades"]:
+                g_cmid = g.get("item_id", "").replace("mod_", "")
+                if g_cmid in quiz_cmids or "/mod/quiz/" in (g.get("url") or ""):
+                    g["is_quiz"] = True
+
+            for q in result["quizzes"]:
+                cmid = str(q["id"]).replace("quiz_", "")
+                q_grade = (q.get("grade_val") or "").strip()
+                if not q_grade:
+                    continue
+                mod_key = f"mod_{cmid}"
+                existing_g = grades_by_id.get(mod_key)
+                if existing_g:
+                    existing_g["is_quiz"] = True
+                    if not (existing_g.get("grade_val") or "").strip():
+                        existing_g["grade_val"] = q_grade
+                    if not (existing_g.get("grade_max") or "").strip() and q.get("grade_max"):
+                        existing_g["grade_max"] = q["grade_max"]
+                    if not (existing_g.get("percentage") or "").strip() and q.get("percentage"):
+                        existing_g["percentage"] = q["percentage"]
+                    if not (existing_g.get("feedback") or "").strip() and q.get("feedback"):
+                        existing_g["feedback"] = q["feedback"]
+                else:
+                    new_g = {
+                        "item_id": mod_key,
+                        "item_name": q.get("name") or f"Quiz #{cmid}",
+                        "grade_val": q_grade,
+                        "grade_max": q.get("grade_max") or "",
+                        "percentage": q.get("percentage") or "",
+                        "feedback": q.get("feedback") or "",
+                        "url": q.get("url") or f"{LMS_BASE_URL}/mod/quiz/view.php?id={cmid}",
+                        "course_id": course_id,
+                        "is_quiz": True,
+                    }
+                    result["grades"].append(new_g)
+                    grades_by_id[mod_key] = new_g
+
+            ok = (assign_ok and quiz_ok and res_ok) or (res_ok and page_soup is not None)
+            err = None
+            if not ok:
+                err = res_status.get("error") or assign_status.get("error") or quiz_status.get("error") or "Incomplete LMS fetch"
+            return FetchResult(
+                content=result,
+                ok=ok,
+                session_expired=False,
+                waf_blocked=False,
+                error=err,
+            )
+
+        except LMSWafError as e:
+            return FetchResult(
+                content=result,
+                ok=False,
+                session_expired=False,
+                waf_blocked=True,
+                error=str(e),
+            )
+        except LMSAuthError as e:
+            return FetchResult(
+                content=result,
+                ok=False,
+                session_expired=True,
+                waf_blocked=False,
+                error=str(e),
+            )
+        except Exception as e:
+            logger.error(f"Unexpected error fetching course {course_id}: {e}")
+            return FetchResult(
+                content=result,
+                ok=False,
+                session_expired=False,
+                waf_blocked=False,
+                error=str(e),
+            )
+        finally:
+            self._tls.suppress_state_mutation = prev_suppress
+
+    def get_course_content(self, course_id: int, course_soup: Optional[BeautifulSoup] = None) -> Dict[str, List[Dict]]:
+        """Deprecated backward-compatible wrapper around fetch_course_content().
+
+        Mirrors result state into legacy attributes (last_fetch_ok/session_expired/waf_blocked)
+        under a lock for callers not yet migrated to FetchResult.
+        """
+        res = self.fetch_course_content(course_id, course_soup=course_soup)
+        with self._state_lock:
+            self.last_fetch_ok = res.ok
+            self.session_expired = res.session_expired
+            self.waf_blocked = res.waf_blocked
+            if res.session_expired:
+                self.logged_in = False
+        return res.content
 
     @staticmethod
     def _normalize_due_date_year(due_str: str) -> str:
@@ -866,6 +1242,73 @@ class LMSScraper:
             logger.debug(f"Course activity-dates parse error: {e}")
         return dates
 
+    _VIEW_ONLY_COMPLETION_RE = re.compile(
+        r"^(?:done|تم)?\s*:?\s*(?:view(?:\s+the\s+activity)?|عرض(?:\s+النشاط)?|معاينة|مشاهدة)$",
+        re.I,
+    )
+    _PENDING_COMPLETION_CLASS_RE = re.compile(
+        r"alert-secondary|badge-secondary|bg-secondary|text-bg-secondary|"
+        r"btn-subtle-body|alert-warning|alert-danger|badge-danger|text-danger|incomplete",
+        re.I,
+    )
+    _SUCCESS_COMPLETION_CLASS_RE = re.compile(
+        r"btn-success|bg-success|badge-success|alert-success|text-bg-success",
+        re.I,
+    )
+
+    @classmethod
+    def _is_completion_region_complete(cls, comp_region) -> bool:
+        """Return True only when a Moodle completion region is fully completed.
+
+        Rejects any region containing 'To do', mark-done toggles, secondary/pending states,
+        or only a green 'Done: View' partial completion badge.
+        """
+        if comp_region is None:
+            return False
+
+        # 1. Explicit undone manual toggle in Moodle 4.x/5.x
+        if comp_region.find(attrs={"data-toggletype": re.compile(r"mark-done", re.I)}):
+            return False
+
+        # 2. Any pending / secondary / incomplete badge or button remaining in the region
+        if comp_region.find(class_=cls._PENDING_COMPLETION_CLASS_RE):
+            return False
+
+        raw_txt = _ARABIC_DIACRITICS_RE.sub("", comp_region.get_text(" ", strip=True)).lower()
+        if any(
+            neg in raw_txt
+            for neg in (
+                "to do", "mark as done", "not done", "not completed", "incomplete", "failed",
+                "للقيام به", "المطلوب", "وضع علامة", "غير مكتمل", "لم يكتمل", "غير منجز", "مطلوب",
+            )
+        ):
+            return False
+
+        # 3. Manual completion toggled to Done (data-toggletype="manual:undo")
+        if comp_region.find(attrs={"data-toggletype": re.compile(r"undo", re.I)}):
+            return True
+
+        # 4. Success badges/buttons: require at least one non-View-only badge
+        success_els = comp_region.find_all(class_=cls._SUCCESS_COMPLETION_CLASS_RE)
+        if success_els:
+            for el in success_els:
+                el_txt = _ARABIC_DIACRITICS_RE.sub("", el.get_text(" ", strip=True))
+                el_txt = re.sub(r"\s+", " ", el_txt).strip()
+                if not el_txt:
+                    continue
+                if cls._VIEW_ONLY_COMPLETION_RE.match(el_txt):
+                    continue
+                return True
+            # Every green badge was View-only -> NOT submitted/complete
+            return False
+
+        # 5. Text-only fallback (excluding View-only text)
+        if cls._VIEW_ONLY_COMPLETION_RE.match(raw_txt):
+            return False
+        if any(k in raw_txt for k in ("done:", "done", "تم:", "مكتمل", "منجز")):
+            return True
+        return False
+
     @staticmethod
     def _extract_course_page_completions(soup: BeautifulSoup) -> set:
         """Detect completed activity module IDs (cmids) from Moodle 3.x/4.x/5.x course page."""
@@ -892,21 +1335,9 @@ class LMSScraper:
                 # 1. Moodle 4.x/5.x completion badge/button (Bootstrap 4 & 5)
                 comp_region = act.find(attrs={"data-region": "completion-info"}) or act.find(class_=re.compile(r"activity-completion"))
                 if comp_region:
-                    # Explicit undone manual toggle in Moodle 5.x (data-toggletype="manual:mark-done" / btn-subtle-body)
-                    if comp_region.find(attrs={"data-toggletype": re.compile(r"mark-done", re.I)}):
-                        continue
-                    if comp_region.find(class_=re.compile(r"btn-success|bg-success|badge-success|alert-success|text-bg-success")):
+                    if LMSScraper._is_completion_region_complete(comp_region):
                         completed.add(str(cmid))
-                        continue
-                    undo_btn = comp_region.find(attrs={"data-toggletype": re.compile(r"undo", re.I)})
-                    if undo_btn:
-                        completed.add(str(cmid))
-                        continue
-                    reg_txt = comp_region.get_text(" ", strip=True).lower()
-                    if any(k in reg_txt for k in ["done:", "done", "تم:", "مكتمل", "منجز"]):
-                        if not any(neg in reg_txt for neg in ["to do", "mark as done", "mark ", "وضع علامة", "غير مكتمل"]):
-                            completed.add(str(cmid))
-                            continue
+                    continue
 
                 # 2. Moodle 3.x completion icon (completion-auto-y / completion-manual-y / completion-auto-pass)
                 for img in act.find_all("img"):
@@ -942,10 +1373,17 @@ class LMSScraper:
             return True
         return False
 
-    def _get_activities_from_index(self, course_id: int,
-                                   mod_type: str) -> List[Dict]:
+    def _get_activities_from_index(
+        self,
+        course_id: int,
+        mod_type: str,
+        *,
+        raise_auth_errors: bool = False,
+        status_out: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict]:
         url = f"{LMS_BASE_URL}/mod/{mod_type}/index.php?id={course_id}"
         activities = []
+        resp = None
 
         try:
             resp = self.authenticated_get(url, timeout=30)
@@ -1010,6 +1448,7 @@ class LMSScraper:
                     due_date = ""
                     is_submitted = False
                     submission_text = ""
+                    sub_decided = False
 
                     # 1. Moodle 5.x structured data-mdl-overview-item cells
                     due_cell = row.find(["td", "th"], attrs={"data-mdl-overview-item": re.compile(r"duedate|close", re.I)})
@@ -1032,10 +1471,10 @@ class LMSScraper:
                         s_txt = sub_cell.get_text(" ", strip=True)
                         if s_txt and s_txt not in ("-", "—"):
                             submission_text = s_txt
-                            if re.search(r"submitted for grading|تم تسليمها للتقييم|تم التسليم|submitted|مسلّمة|مسلّم|graded|تم التقييم|finished|منتهية", s_txt, re.I):
-                                is_submitted = True
-                            elif re.search(r"no submissions? have been made|no attempt|لا توجد محاولة|لم تسلم|لم يتم تقديم|not submitted|draft|مسودة", s_txt, re.I):
-                                is_submitted = False
+                            parsed_sub = parse_submission_state(s_txt)
+                            if parsed_sub is not None:
+                                is_submitted = parsed_sub
+                                sub_decided = True
 
                     grade_val = ""
                     grade_max = ""
@@ -1051,6 +1490,7 @@ class LMSScraper:
                             grade_max = parsed_g.get("grade_max", "")
                             percentage = parsed_g.get("percentage", "")
                             is_submitted = True
+                            sub_decided = True
                             if not submission_text:
                                 submission_text = f"تم التقييم ({g_txt})"
 
@@ -1064,17 +1504,18 @@ class LMSScraper:
                             continue
                         if grade_col_idx is not None and idx == grade_col_idx:
                             continue
+                        if sub_cell is not None and cell is sub_cell:
+                            continue
 
                         cell_txt = cell.get_text(" ", strip=True)
                         if not cell_txt or cell_txt in ("-", "—"):
                             continue
 
-                        if re.search(r"submitted for grading|تم تسليمها للتقييم|تم التسليم|submitted|مسلّمة", cell_txt, re.I):
-                            is_submitted = True
+                        parsed_cell = parse_submission_state(cell_txt)
+                        if parsed_cell is not None and not sub_decided:
+                            is_submitted = parsed_cell
                             submission_text = cell_txt
-                        elif re.search(r"no submissions? have been made|no attempt|لا توجد محاولة|لم تسلم|لم يتم تقديم|not submitted|draft|مسودة", cell_txt, re.I):
-                            is_submitted = False
-                            submission_text = cell_txt
+                            sub_decided = True
                         elif not due_date and self._looks_like_date(cell_txt):
                             due_date = self._normalize_due_date_year(cell_txt)
 
@@ -1119,19 +1560,40 @@ class LMSScraper:
 
             logger.debug(f"المادة {course_id} | {mod_type}: {len(activities)} نشاط")
 
-        except (LMSAuthError, LMSWafError):
-            self.last_fetch_ok = False
+        except (LMSAuthError, LMSWafError) as e:
+            if status_out is not None:
+                status_out["ok"] = False
+                status_out["error"] = str(e)
+            if not self._suppress_legacy_state():
+                with self._state_lock:
+                    self.last_fetch_ok = False
+            if raise_auth_errors:
+                raise
         except Exception as e:
-            self.last_fetch_ok = False
+            if status_out is not None:
+                status_out["ok"] = False
+                status_out["error"] = str(e)
+            if not self._suppress_legacy_state():
+                with self._state_lock:
+                    self.last_fetch_ok = False
             logger.error(f"خطأ في جلب {mod_type} للمادة {course_id}: {e}")
+        finally:
+            _close_response(resp)
 
         return activities
 
-    def _get_resources_from_course_page(self, course_id: int,
-                                        soup: Optional[BeautifulSoup] = None,
-                                        return_soup: bool = False):
+    def _get_resources_from_course_page(
+        self,
+        course_id: int,
+        soup: Optional[BeautifulSoup] = None,
+        return_soup: bool = False,
+        *,
+        raise_auth_errors: bool = False,
+        status_out: Optional[Dict[str, Any]] = None,
+    ):
         resources = []
         url = f"{LMS_BASE_URL}/course/view.php?id={course_id}"
+        resp = None
 
         try:
             if soup is None:
@@ -1154,7 +1616,7 @@ class LMSScraper:
             for a in soup.find_all("a", href=re.compile(combined)):
                 raw_href = a.get("href", "")
                 if not raw_href.startswith("http"):
-                    raw_href = LMS_BASE_URL + raw_href
+                    raw_href = urljoin(LMS_BASE_URL + "/", raw_href)
                 clean_href = self._clean_url(raw_href)
 
                 id_match = re.search(r"id=(\d+)", clean_href)
@@ -1183,11 +1645,25 @@ class LMSScraper:
 
             logger.debug(f"المادة {course_id} | resources: {len(resources)} مورد")
 
-        except (LMSAuthError, LMSWafError):
-            self.last_fetch_ok = False
+        except (LMSAuthError, LMSWafError) as e:
+            if status_out is not None:
+                status_out["ok"] = False
+                status_out["error"] = str(e)
+            if not self._suppress_legacy_state():
+                with self._state_lock:
+                    self.last_fetch_ok = False
+            if raise_auth_errors:
+                raise
         except Exception as e:
-            self.last_fetch_ok = False
+            if status_out is not None:
+                status_out["ok"] = False
+                status_out["error"] = str(e)
+            if not self._suppress_legacy_state():
+                with self._state_lock:
+                    self.last_fetch_ok = False
             logger.error(f"خطأ في جلب موارد المادة {course_id}: {e}")
+        finally:
+            _close_response(resp)
 
         if return_soup:
             return resources, soup
@@ -1196,15 +1672,18 @@ class LMSScraper:
     def get_course_info(self, course_id: int):
         course_name = ""
         content = {"assignments": [], "quizzes": [], "resources": []}
+        resp = None
 
         try:
             url = f"{LMS_BASE_URL}/course/view.php?id={course_id}"
             resp = self.authenticated_get(url, timeout=30)
 
-            if resp.status_code == 404 or "login" in resp.url:
+            if resp.status_code == 404 or "login" in (getattr(resp, "url", "") or ""):
                 return None, content
 
             soup = BeautifulSoup(resp.text, "lxml")
+            _close_response(resp)
+            resp = None
 
             title_el = (
                 soup.find("h1") or
@@ -1229,16 +1708,21 @@ class LMSScraper:
             content = self.get_course_content(course_id, course_soup=soup)
 
         except (LMSAuthError, LMSWafError):
-            self.last_fetch_ok = False
+            with self._state_lock:
+                self.last_fetch_ok = False
             return None, content
         except Exception as e:
-            self.last_fetch_ok = False
+            with self._state_lock:
+                self.last_fetch_ok = False
             logger.error(f"get_course_info error for {course_id}: {e}")
             return None, content
+        finally:
+            _close_response(resp)
 
         return course_name, content
 
     def get_assignment_due_date(self, assignment_url: str) -> str:
+        resp = None
         try:
             resp = self.authenticated_get(assignment_url, timeout=20)
             soup = BeautifulSoup(resp.text, "lxml")
@@ -1250,11 +1734,13 @@ class LMSScraper:
                     if any(k in label for k in ["due", "يُسلَّم", "نهائي", "deadline"]):
                         return cells[1].get_text(strip=True)
 
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Error fetching assignment due date at {assignment_url}: {e}")
+        finally:
+            _close_response(resp)
         return "غير محدد"
 
-    def get_assignment_status(self, url: str) -> Dict[str, Any]:
+    def get_assignment_status(self, url: str, *, raise_auth_errors: bool = False) -> Dict[str, Any]:
         """Fetch detailed submission status for an individual assignment."""
         result = {
             "is_submitted": False,
@@ -1263,6 +1749,7 @@ class LMSScraper:
             "grading_status": "",
             "time_remaining": "",
         }
+        resp = None
         try:
             resp = self.authenticated_get(url, timeout=20)
             if resp.status_code != 200:
@@ -1276,21 +1763,20 @@ class LMSScraper:
                     continue
                 header = th.get_text(strip=True).lower()
                 val = cells[-1].get_text(strip=True)
-                val_lower = val.lower()
 
                 if any(k in header for k in ["submission status", "حالة التسليم", "حالة المحاولة"]):
                     result["status_text"] = val
-                    if any(k in val_lower for k in ["submitted for grading", "تم تسليمها للتقييم", "تم التسليم", "submitted", "مسلّمة"]):
-                        result["is_submitted"] = True
-                    elif any(k in val_lower for k in ["no submissions have been made", "no submission", "no attempt", "لا توجد محاولة", "لم تسلم", "لم يتم تقديم"]):
-                        result["is_submitted"] = False
+                    st = parse_submission_state(val)
+                    if st is not None:
+                        result["is_submitted"] = st
 
                 elif any(k in header for k in ["due date", "تاريخ الاستحقاق", "موعد التسليم", "يُسلَّم"]):
                     result["due_date"] = val
 
                 elif any(k in header for k in ["grading status", "حالة التقييم"]):
                     result["grading_status"] = val
-                    if any(k in val_lower for k in ["graded", "تم التقييم", "مقيّم"]) and "not graded" not in val_lower and "لم يتم" not in val_lower:
+                    # Only promote to submitted when graded; 'Not graded' must NOT overwrite a submitted assignment
+                    if parse_submission_state(val) is True:
                         result["is_submitted"] = True
 
                 elif any(k in header for k in ["file submissions", "تسليمات الملفات", "online text", "نص عبر الإنترنت"]):
@@ -1299,10 +1785,10 @@ class LMSScraper:
 
                 elif any(k in header for k in ["time remaining", "الوقت المتبقي"]):
                     result["time_remaining"] = val
-                    if any(k in val_lower for k in ["assignment was submitted", "تم تسليم الواجب", "سُلِّم قبل"]):
+                    if parse_submission_state(val) is True:
                         result["is_submitted"] = True
 
-            # Moodle 4.x activity dates header (Opened / Due)
+            # Moodle 4.x/5.x activity dates header (Opened / Due)
             if not result["due_date"]:
                 act_dates = soup.find(attrs={"data-region": "activity-dates"}) or soup.find(class_=re.compile(r"activity-dates"))
                 if act_dates:
@@ -1315,14 +1801,27 @@ class LMSScraper:
                     if m_due:
                         result["due_date"] = m_due.group(1).strip()
 
-            badge = soup.find(class_=re.compile(r"submissionstatussubmitted|earlysubmission|gradingstatusgraded|badge-success|status-submitted"))
-            if badge:
-                btxt = badge.get_text(" ", strip=True).lower()
-                if any(k in btxt for k in ["submitted", "تسليم", "مسلّم", "graded", "تم التقييم", "done", "مكتمل"]):
+            # Check Moodle completion region safely (ignores View-only / partial completion badges)
+            if not result["is_submitted"]:
+                comp_region = soup.find(attrs={"data-region": "completion-info"}) or soup.find(class_=re.compile(r"activity-completion"))
+                if comp_region and self._is_completion_region_complete(comp_region):
                     result["is_submitted"] = True
 
+            # Explicit submission/grading status CSS classes (exclude generic completion badge-success)
+            if not result["is_submitted"]:
+                badge = soup.find(class_=re.compile(r"submissionstatussubmitted|earlysubmission|gradingstatusgraded|status-submitted"))
+                if badge:
+                    btxt = badge.get_text(" ", strip=True)
+                    if parse_submission_state(btxt) is True:
+                        result["is_submitted"] = True
+
+        except (LMSAuthError, LMSWafError):
+            if raise_auth_errors:
+                raise
         except Exception as e:
             logger.warning(f"Error checking assignment status at {url}: {e}")
+        finally:
+            _close_response(resp)
         return result
 
     @staticmethod
@@ -1369,7 +1868,7 @@ class LMSScraper:
 
         return out
 
-    def get_quiz_status(self, url: str) -> Dict[str, Any]:
+    def get_quiz_status(self, url: str, *, raise_auth_errors: bool = False) -> Dict[str, Any]:
         """Fetch completion/attempt status, released grade, and close date for an individual quiz."""
         result = {
             "is_submitted": False,
@@ -1380,6 +1879,7 @@ class LMSScraper:
             "percentage": "",
             "feedback": "",
         }
+        resp = None
         try:
             resp = self.authenticated_get(url, timeout=20)
             if resp.status_code != 200:
@@ -1398,14 +1898,14 @@ class LMSScraper:
                     hdr = cells[0].lower()
                     val_raw = cells[-1]
                     val = val_raw.lower()
-                    if any(k in hdr for k in ["status", "state", "الحالة", "حالة"]) and any(
-                        k in val for k in ["finished", "منتهي", "منتهية", "تم التسليم", "submitted", "completed", "مكتمل"]
-                    ):
-                        result["is_submitted"] = True
-                        result["status_text"] = "تم الحل (Finished)"
+                    if any(k in hdr for k in ["status", "state", "الحالة", "حالة"]):
+                        if parse_submission_state(val_raw) is True:
+                            result["is_submitted"] = True
+                            result["status_text"] = "تم الحل (Finished)"
                     elif any(k in hdr for k in ["completed", "اكتمل", "تاريخ الإكتمال"]) and len(val) > 4 and val not in ("-", "—"):
-                        result["is_submitted"] = True
-                        result["status_text"] = result["status_text"] or "تم الحل (Finished)"
+                        if parse_submission_state(val_raw) is not False:
+                            result["is_submitted"] = True
+                            result["status_text"] = result["status_text"] or "تم الحل (Finished)"
                     elif any(k in hdr for k in ["grade", "الدرجة", "العلامة", "النتيجة"]):
                         pg = self._parse_quiz_grade_text(val_raw)
                         if pg.get("grade_val"):
@@ -1423,8 +1923,9 @@ class LMSScraper:
                             result["percentage"] = pg.get("percentage", "")
                             result["is_submitted"] = True
                             result["status_text"] = result["status_text"] or "تم التقييم"
-                row_txt = " ".join(cells).lower()
-                if any(k in row_txt for k in ["status finished", "الحالة منتهية", "الحالة منتهي"]):
+                row_txt = " ".join(cells)
+                row_txt_low = row_txt.lower()
+                if any(k in row_txt_low for k in ["status", "الحالة"]) and parse_submission_state(row_txt) is True:
                     result["is_submitted"] = True
                     result["status_text"] = result["status_text"] or "تم الحل (Finished)"
 
@@ -1459,10 +1960,10 @@ class LMSScraper:
                     if not result["feedback"] and len(gtxt) > 2:
                         result["feedback"] = gtxt[:300]
 
-            # 3. Check Moodle 4.x/5.x completion badge on the quiz page itself
+            # 3. Check Moodle 4.x/5.x completion badge on the quiz page safely (ignores View-only / partial)
             if not result["is_submitted"]:
-                comp = soup.find(attrs={"data-region": "completion-info"})
-                if comp and comp.find(class_=re.compile(r"btn-success|bg-success|badge-success|alert-success|text-bg-success")):
+                comp = soup.find(attrs={"data-region": "completion-info"}) or soup.find(class_=re.compile(r"activity-completion"))
+                if comp and self._is_completion_region_complete(comp):
                     result["is_submitted"] = True
                     result["status_text"] = "مكتمل"
 
@@ -1489,19 +1990,44 @@ class LMSScraper:
                                 result["due_date"] = cleaned
                                 break
 
+        except (LMSAuthError, LMSWafError):
+            if raise_auth_errors:
+                raise
         except Exception as e:
             logger.debug(f"Error checking quiz status at {url}: {e}")
+        finally:
+            _close_response(resp)
         return result
 
-    def download_resource(self, url: str, max_mb: int = 40, raw_url: Optional[str] = None,
-                          referer: Optional[str] = None) -> Optional[tuple]:
-        """Download a resource file from Moodle safely.
+    @staticmethod
+    def _read_bounded_html(resp, max_bytes: int = MAX_INTERSTITIAL_HTML_BYTES) -> Optional[str]:
+        """Read an HTML response body up to max_bytes via streaming (avoids OOM)."""
+        cl = LMSScraper._parse_content_length(resp)
+        if cl is not None and cl > max_bytes:
+            return None
+        chunks: List[bytes] = []
+        total = 0
+        for chunk in resp.iter_content(chunk_size=65536):
+            if chunk:
+                total += len(chunk)
+                if total > max_bytes:
+                    return None
+                chunks.append(chunk)
+        return b"".join(chunks).decode("utf-8", errors="replace")
 
-        Tries raw_url (with same-session NetScaler __ncforminfo if present) first, then falls back to url.
-        Passes Referer header to match browser behavior with NetScaler AppFW.
+    def download_resource(
+        self,
+        url: str,
+        max_mb: int = 40,
+        raw_url: Optional[str] = None,
+        referer: Optional[str] = None,
+    ) -> Optional[tuple]:
+        """Download a resource file from Moodle safely with streaming size cap, host allowlist, and filename sanitization.
+
         Returns:
-            Tuple[str, bytes] -> (filename, file_content_bytes) if successful, None otherwise.
+            Tuple[str, bytes] -> (sanitized_filename, file_content_bytes) if successful, None otherwise.
         """
+        resp = None
         try:
             candidates = []
             if raw_url and raw_url != url:
@@ -1509,24 +2035,39 @@ class LMSScraper:
             candidates.append(url)
             req_headers = {"Referer": referer} if referer else {"Referer": f"{LMS_BASE_URL}/my/"}
 
-            resp = None
             for cand in candidates:
-                r = self.authenticated_get(cand, timeout=30, stream=True, allow_redirects=True, headers=req_headers)
+                r = self.authenticated_get(
+                    cand, timeout=30, stream=True, allow_redirects=True, headers=req_headers
+                )
                 if r.status_code == 200:
                     resp = r
                     break
                 logger.debug(f"Resource candidate returned {r.status_code} for {cand}")
+                _close_response(r)
 
             if resp is None:
                 logger.warning(f"Resource download failed for {url}")
                 return None
 
-            content_type = resp.headers.get("Content-Type", "").lower()
-            content_disp = resp.headers.get("Content-Disposition", "")
+            content_type = self._response_content_type(resp)
+            content_disp = resp.headers.get("Content-Disposition", "") if hasattr(resp, "headers") else ""
 
-            # If Moodle returned an HTML page instead of direct file, find the embedded file link
+            # If Moodle returned an HTML interstitial page instead of a direct file, read bounded HTML & follow embedded file link
             if "text/html" in content_type and not content_disp:
-                soup = BeautifulSoup(resp.text, "lxml")
+                html_text = self._read_bounded_html(resp, max_bytes=MAX_INTERSTITIAL_HTML_BYTES)
+                _close_response(resp)
+                resp = None
+                if not html_text:
+                    return None
+                if self._is_waf_challenge_text(html_text):
+                    self.http.trigger_waf_cooldown()
+                    logger.warning("WAF CAPTCHA challenge on resource interstitial page")
+                    return None
+                if self._is_login_html(html_text):
+                    logger.info("Login page returned on resource interstitial page")
+                    return None
+
+                soup = BeautifulSoup(html_text, "lxml")
                 file_link = (
                     soup.find("a", href=re.compile(r"/pluginfile\.php/|/mod_resource/content/")) or
                     soup.find("object", data=re.compile(r"/pluginfile\.php/|/mod_resource/content/")) or
@@ -1540,42 +2081,49 @@ class LMSScraper:
                     return None
 
                 if not target_href.startswith("http"):
-                    target_href = LMS_BASE_URL + target_href
+                    target_href = urljoin(LMS_BASE_URL + "/", target_href)
 
                 resp = self.authenticated_get(target_href, timeout=30, stream=True, allow_redirects=True)
-                content_type = resp.headers.get("Content-Type", "").lower()
-                content_disp = resp.headers.get("Content-Disposition", "")
+                if resp.status_code != 200:
+                    logger.warning(f"Embedded resource returned HTTP {resp.status_code} for {target_href}")
+                    return None
+                content_type = self._response_content_type(resp)
+                content_disp = resp.headers.get("Content-Disposition", "") if hasattr(resp, "headers") else ""
+                if "text/html" in content_type and not content_disp:
+                    logger.warning(f"Embedded resource returned HTML instead of binary for {target_href}")
+                    return None
 
             filename = ""
-            if content_disp and "filename=" in content_disp:
+            if content_disp and "filename" in content_disp.lower():
                 fn_match = re.search(r'filename\*?=(?:UTF-8\'\')?["\']?([^"\';\r\n]+)', content_disp, re.I)
                 if fn_match:
-                    from urllib.parse import unquote
                     filename = unquote(fn_match.group(1).strip('"\''))
 
             if not filename:
-                clean_path = resp.url.split("?")[0].rstrip("/")
-                candidate = clean_path.split("/")[-1]
+                clean_path = (getattr(resp, "url", "") or "").split("?")[0].rstrip("/")
+                candidate = unquote(clean_path.split("/")[-1])
                 if "." in candidate and len(candidate) < 120:
                     filename = candidate
                 else:
                     filename = "document"
 
-            cl = resp.headers.get("Content-Length")
-            max_bytes = max_mb * 1024 * 1024
-            if cl and int(cl) > max_bytes:
-                logger.info(f"Resource {filename} exceeds size limit: {cl} bytes")
+            filename = sanitize_filename(filename, default="document")
+
+            max_bytes = max(1, int(max_mb)) * 1024 * 1024
+            cl_int = self._parse_content_length(resp)
+            if cl_int is not None and cl_int > max_bytes:
+                logger.info(f"Resource {filename} exceeds size limit: {cl_int} bytes")
                 return None
 
-            chunks = []
+            chunks: List[bytes] = []
             total = 0
             for chunk in resp.iter_content(chunk_size=65536):
                 if chunk:
-                    chunks.append(chunk)
                     total += len(chunk)
                     if total > max_bytes:
                         logger.info(f"Resource {filename} exceeded {max_mb}MB while downloading")
                         return None
+                    chunks.append(chunk)
 
             file_bytes = b"".join(chunks)
 
@@ -1593,15 +2141,19 @@ class LMSScraper:
                 elif "image/png" in content_type:
                     filename += ".png"
 
+            filename = sanitize_filename(filename, default="document")
             return filename, file_bytes
         except Exception as e:
             logger.warning(f"Error downloading resource {url}: {e}")
             return None
+        finally:
+            _close_response(resp)
 
-    def get_course_grades(self, course_id: int) -> List[Dict[str, Any]]:
+    def get_course_grades(self, course_id: int, *, raise_auth_errors: bool = False) -> List[Dict[str, Any]]:
         """Scrape Moodle User Grade Report (/grade/report/user/index.php?id=course_id)."""
         grades = []
         url = f"{LMS_BASE_URL}/grade/report/user/index.php?id={course_id}"
+        resp = None
         try:
             resp = self.authenticated_get(url, timeout=25)
             if resp.status_code != 200:
@@ -1740,12 +2292,22 @@ class LMSScraper:
                 })
 
             logger.debug(f"المادة {course_id} | grades: {len(grades)} عنصر تقييم")
+        except (LMSAuthError, LMSWafError):
+            if raise_auth_errors:
+                raise
         except Exception as e:
             logger.warning(f"خطأ في جلب العلامات للمادة {course_id}: {e}")
+        finally:
+            _close_response(resp)
         return grades
 
-    def get_course_announcements(self, course_id: int,
-                                 course_soup: Optional[BeautifulSoup] = None) -> List[Dict[str, Any]]:
+    def get_course_announcements(
+        self,
+        course_id: int,
+        course_soup: Optional[BeautifulSoup] = None,
+        *,
+        raise_auth_errors: bool = False,
+    ) -> List[Dict[str, Any]]:
         """Scrape forum discussions / announcements for a course."""
         announcements = []
         try:
@@ -1756,7 +2318,7 @@ class LMSScraper:
                 for a in course_soup.find_all("a", href=re.compile(r"/mod/forum/view\.php\?id=\d+")):
                     href = a.get("href", "")
                     if not href.startswith("http"):
-                        href = LMS_BASE_URL + href
+                        href = urljoin(LMS_BASE_URL + "/", href)
                     m = re.search(r"id=(\d+)", href)
                     if not m or m.group(1) in seen_forums:
                         continue
@@ -1766,22 +2328,27 @@ class LMSScraper:
 
             if not forum_links:
                 idx_url = f"{LMS_BASE_URL}/mod/forum/index.php?id={course_id}"
-                resp = self.authenticated_get(idx_url, timeout=20)
-                if resp.status_code == 200:
-                    idx_soup = BeautifulSoup(resp.text, "lxml")
-                    for a in idx_soup.find_all("a", href=re.compile(r"/mod/forum/view\.php\?id=\d+")):
-                        href = a.get("href", "")
-                        if not href.startswith("http"):
-                            href = LMS_BASE_URL + href
-                        m = re.search(r"id=(\d+)", href)
-                        if not m or m.group(1) in seen_forums:
-                            continue
-                        seen_forums.add(m.group(1))
-                        fname = self._clean_link_text(a) or "منتدى الإعلانات"
-                        forum_links.append((href, fname))
+                resp = None
+                try:
+                    resp = self.authenticated_get(idx_url, timeout=20)
+                    if resp.status_code == 200:
+                        idx_soup = BeautifulSoup(resp.text, "lxml")
+                        for a in idx_soup.find_all("a", href=re.compile(r"/mod/forum/view\.php\?id=\d+")):
+                            href = a.get("href", "")
+                            if not href.startswith("http"):
+                                href = urljoin(LMS_BASE_URL + "/", href)
+                            m = re.search(r"id=(\d+)", href)
+                            if not m or m.group(1) in seen_forums:
+                                continue
+                            seen_forums.add(m.group(1))
+                            fname = self._clean_link_text(a) or "منتدى الإعلانات"
+                            forum_links.append((href, fname))
+                finally:
+                    _close_response(resp)
 
             seen_discuss = set()
             for f_url, f_name in forum_links[:4]:
+                f_resp = None
                 try:
                     f_resp = self.authenticated_get(f_url, timeout=20)
                     if f_resp.status_code != 200:
@@ -1848,10 +2415,19 @@ class LMSScraper:
                             "url": d_href,
                             "course_id": course_id,
                         })
+                except (LMSAuthError, LMSWafError):
+                    if raise_auth_errors:
+                        raise
+                    break
                 except Exception as fe:
                     logger.debug(f"Forum fetch error ({f_url}): {fe}")
+                finally:
+                    _close_response(f_resp)
 
             logger.debug(f"المادة {course_id} | announcements: {len(announcements)} إعلان")
+        except (LMSAuthError, LMSWafError):
+            if raise_auth_errors:
+                raise
         except Exception as e:
             logger.warning(f"خطأ في جلب الإعلانات للمادة {course_id}: {e}")
         return announcements
@@ -1859,6 +2435,7 @@ class LMSScraper:
     def get_announcement_details(self, discuss_url: str) -> Dict[str, str]:
         """Fetch the body text, author, and date of a specific forum discussion post."""
         info = {"body": "", "author": "", "date": ""}
+        resp = None
         try:
             resp = self.authenticated_get(discuss_url, timeout=20)
             if resp.status_code != 200:
@@ -1882,10 +2459,16 @@ class LMSScraper:
                 info["date"] = time_el.get_text(strip=True)
         except Exception as e:
             logger.debug(f"Error fetching announcement details {discuss_url}: {e}")
+        finally:
+            _close_response(resp)
         return info
 
     def get_course_attendance(
-        self, course_id: int, course_soup: Optional[BeautifulSoup] = None
+        self,
+        course_id: int,
+        course_soup: Optional[BeautifulSoup] = None,
+        *,
+        raise_auth_errors: bool = False,
     ) -> List[Dict[str, Any]]:
         """
         Discover and scrape Moodle Attendance (/mod/attendance/view.php?id=...)
@@ -1895,12 +2478,16 @@ class LMSScraper:
         try:
             soup = course_soup
             if soup is None:
-                resp = self.authenticated_get(
-                    f"{LMS_BASE_URL}/course/view.php", params={"id": course_id}, timeout=20
-                )
-                if resp.status_code != 200 or "/login/" in resp.url:
-                    return attendance_records
-                soup = BeautifulSoup(resp.text, "lxml")
+                resp = None
+                try:
+                    resp = self.authenticated_get(
+                        f"{LMS_BASE_URL}/course/view.php", params={"id": course_id}, timeout=20
+                    )
+                    if resp.status_code != 200 or "/login/" in (getattr(resp, "url", "") or ""):
+                        return attendance_records
+                    soup = BeautifulSoup(resp.text, "lxml")
+                finally:
+                    _close_response(resp)
 
             att_links: List[Tuple[str, str, str]] = []
             seen_cmids = set()
@@ -1917,11 +2504,12 @@ class LMSScraper:
                 att_links.append((cmid, title, clean_href))
 
             for cmid, title, base_url in att_links:
+                r = None
                 try:
                     # view=5 forces Moodle Attendance to display all sessions in the semester
                     full_url = f"{LMS_BASE_URL}/mod/attendance/view.php?id={cmid}&view=5"
                     r = self.authenticated_get(full_url, timeout=20)
-                    if r.status_code != 200 or "/login/" in r.url:
+                    if r.status_code != 200 or "/login/" in (getattr(r, "url", "") or ""):
                         continue
                     att_soup = BeautifulSoup(r.text, "lxml")
                     tables = att_soup.find_all("table")
@@ -2018,10 +2606,19 @@ class LMSScraper:
                         "url": base_url,
                         "course_id": course_id,
                     })
+                except (LMSAuthError, LMSWafError):
+                    if raise_auth_errors:
+                        raise
+                    break
                 except Exception as ae:
                     logger.debug(f"Attendance fetch error ({base_url}): {ae}")
+                finally:
+                    _close_response(r)
 
             logger.debug(f"المادة {course_id} | attendance: {len(attendance_records)} سجل")
+        except (LMSAuthError, LMSWafError):
+            if raise_auth_errors:
+                raise
         except Exception as e:
             logger.warning(f"خطأ في جلب الحضور والغياب للمادة {course_id}: {e}")
         return attendance_records

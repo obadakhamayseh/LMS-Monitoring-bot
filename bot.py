@@ -7,6 +7,7 @@ import logging
 import asyncio
 import time
 from datetime import datetime
+from typing import Awaitable, Callable, Optional
 
 from telegram import (
     Update, InlineKeyboardButton, InlineKeyboardMarkup,
@@ -17,7 +18,7 @@ from telegram.ext import (
     ContextTypes, MessageHandler, ConversationHandler, filters
 )
 from telegram.constants import ParseMode
-from telegram.error import TelegramError
+from telegram.error import BadRequest, TelegramError
 
 import database as db
 from lms_scraper import LMSScraper
@@ -232,6 +233,50 @@ async def _show_main(msg_obj, tid, edit=False):
         )
     await _send(msg_obj, text, _main_kb(user), edit=edit)
 
+def _is_harmless_callback_error(exc: BaseException) -> bool:
+    """Return True for benign Telegram BadRequest errors on expired/invalid callback queries."""
+    msg = str(exc).lower()
+    return (
+        "query is too old" in msg
+        or "query id is invalid" in msg
+        or "response timeout expired" in msg
+    )
+
+
+def _make_answer_once(q) -> Callable[..., Awaitable[None]]:
+    """Return an async helper that answers a CallbackQuery at most once."""
+    answered = False
+
+    async def _answer_once(text: Optional[str] = None, *, show_alert: bool = False) -> None:
+        nonlocal answered
+        if answered:
+            return
+        answered = True
+        try:
+            if text is None and not show_alert:
+                await q.answer()
+            else:
+                await q.answer(text, show_alert=show_alert)
+        except BadRequest as e:
+            if _is_harmless_callback_error(e):
+                logger.debug("Ignored harmless callback query answer error: %s", e)
+                return
+            raise
+
+    _answer_once.is_answered = lambda: answered  # type: ignore[attr-defined]
+    return _answer_once
+
+
+async def error_handler(update: object, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Global Telegram error handler: ignore harmless expired-query errors, log all others."""
+    err = ctx.error
+    if isinstance(err, BadRequest) and _is_harmless_callback_error(err):
+        logger.debug("Ignored harmless Telegram BadRequest: %s", err)
+        return
+    exc_info = (type(err), err, err.__traceback__) if isinstance(err, BaseException) else True
+    logger.error("Unhandled exception while handling update %r: %s", update, err, exc_info=exc_info)
+
+
 def _is_owner(update: Update) -> bool:
     u = update.effective_user
     return bool(u and int(u.id) == int(OWNER_TELEGRAM_ID))
@@ -240,13 +285,13 @@ async def _reject_unauthorized(update: Update):
     if update.callback_query:
         try:
             await update.callback_query.answer("🔒 هذا البوت خاص بصاحبه فقط.", show_alert=True)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to answer unauthorized callback query: %s", e)
     elif update.message:
         try:
             await update.message.reply_text("🔒 هذا البوت خاص بصاحبه فقط وغير متاح للاستخدام العام.")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to reply to unauthorized message: %s", e)
     return ConversationHandler.END
 
 async def cmd_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -301,147 +346,181 @@ async def login_got_user(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     return STATE_LOGIN_PASS
 
 async def login_got_pass(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    raw_pass = update.message.text.strip()
-    password = raw_pass.translate(str.maketrans('٠١٢٣٤٥٦٧٨٩', '0123456789'))
-    username = ctx.user_data.get("lms_user", "")
-    tid      = update.effective_user.id
+    msg = update.message
+    password: str = ""
+    msg_deleted = False
 
-    if not username:
+    async def _delete_password_message() -> None:
+        nonlocal msg_deleted
+        if msg_deleted or msg is None:
+            return
+        msg_deleted = True
+        try:
+            await msg.delete()
+        except Exception as del_err:
+            logger.warning(
+                "Failed to delete password message for user %s: %s",
+                getattr(update.effective_user, "id", None),
+                del_err,
+            )
+            try:
+                await msg.reply_text(
+                    "⚠️ تعذّر حذف رسالة كلمة المرور تلقائياً. "
+                    "يُرجى حذف رسالتك يدوياً فوراً حفاظاً على أمان حسابك."
+                )
+            except Exception as warn_err:
+                logger.error("Failed to send manual password-deletion warning: %s", warn_err)
+
+    try:
+        # Read password verbatim (never strip/translate/modify) and delete the message FIRST.
+        if msg is not None and msg.text is not None:
+            password = msg.text
+        await _delete_password_message()
+
+        username = ctx.user_data.get("lms_user", "")
+        tid      = update.effective_user.id
+
+        if not username:
+            bot = update.get_bot()
+            try:
+                await bot.edit_message_text(
+                    chat_id=update.effective_chat.id,
+                    message_id=ctx.user_data.get("login_msg_id"),
+                    text=(
+                        "⚠️ *انتهت الجلسة المؤقتة!*\n\n"
+                        "يرجى إعادة المحاولة من جديد بالضغط على الزر أدناه وإدخال رقم الطالب ثم كلمة المرور."
+                    ),
+                    parse_mode=MD,
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔄 البدء من جديد", callback_data="login_start"),
+                        InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
+                    ]])
+                )
+            except Exception as e:
+                logger.debug("Could not edit expired-session login message: %s", e)
+            return ConversationHandler.END
+
         bot = update.get_bot()
         try:
             await bot.edit_message_text(
                 chat_id=update.effective_chat.id,
                 message_id=ctx.user_data.get("login_msg_id"),
-                text=(
-                    "⚠️ *انتهت الجلسة المؤقتة!*\n\n"
-                    "يرجى إعادة المحاولة من جديد بالضغط على الزر أدناه وإدخال رقم الطالب ثم كلمة المرور."
-                ),
+                text="⏳ *جارٍ تسجيل الدخول إلى LMS...*",
                 parse_mode=MD,
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔄 البدء من جديد", callback_data="login_start"),
-                    InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
-                ]])
             )
-        except Exception:
-            pass
-        return ConversationHandler.END
+        except Exception as e:
+            logger.debug("Could not edit in-progress login message: %s", e)
 
-    try:
-        await update.message.delete()
-    except Exception:
-        pass
+        scraper = LMSScraper(username, password)
+        loop    = asyncio.get_running_loop()
+        ok      = await loop.run_in_executor(None, scraper.login)
 
-    bot = update.get_bot()
-    try:
-        await bot.edit_message_text(
-            chat_id=update.effective_chat.id,
-            message_id=ctx.user_data.get("login_msg_id"),
-            text="⏳ *جارٍ تسجيل الدخول إلى LMS...*",
-            parse_mode=MD,
-        )
-    except Exception:
-        pass
+        if ok:
+            db.save_user(tid, username, password, scraper.user_id, scraper.full_name)
+            asyncio.create_task(_ensure_user_menu_button(bot, tid))
+            engine: MonitorEngine = ctx.bot_data.get("engine")
+            if engine:
+                await engine.resume_user(tid, scraper)
+            else:
+                scraper.close()
+            full = _esc(scraper.full_name or username)
+            monitored_courses = db.get_user_courses(tid, monitored_only=True)
+            registered_courses = db.get_user_courses(tid)
+            if monitored_courses and db.get_user(tid).get("is_monitoring"):
+                next_step = "موادك المراقبة محفوظة، وسيستأنف البوت متابعتها قريباً."
+                actions = [
+                    InlineKeyboardButton("📚 موادي المراقَبة", callback_data="my_courses"),
+                    InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
+                ]
+            elif registered_courses:
+                next_step = "موادك المضافة محفوظة. يمكنك مراجعتها أو إضافة مواد جديدة من القائمة أدناه."
+                actions = [
+                    InlineKeyboardButton("📚 موادي المراقَبة", callback_data="my_courses"),
+                    InlineKeyboardButton("➕ إضافة مادة", callback_data="add_course_start"),
+                ]
+            else:
+                next_step = "اضغط على «➕ إضافة مادة للمراقبة» لإدخال رقم أو رابط المواد التي ترغب بمراقبتها:"
+                actions = [
+                    InlineKeyboardButton("➕ إضافة مادة للمراقبة", callback_data="add_course_start"),
+                    InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
+                ]
 
-    scraper = LMSScraper(username, password)
-    loop    = asyncio.get_running_loop()
-    ok      = await loop.run_in_executor(None, scraper.login)
-
-    if ok:
-        db.save_user(tid, username, password, scraper.user_id, scraper.full_name)
-        asyncio.create_task(_ensure_user_menu_button(bot, tid))
-        engine: MonitorEngine = ctx.bot_data.get("engine")
-        if engine:
-            await engine.resume_user(tid, scraper)
+            try:
+                await bot.edit_message_text(
+                    chat_id=update.effective_chat.id,
+                    message_id=ctx.user_data.get("login_msg_id"),
+                    text=(
+                        f"✅ *تم تسجيل الدخول بنجاح!*\n\n"
+                        f"👤 الطالب: *{full}*\n"
+                        f"🆔 الرقم الجامعي: `{_esc(username)}`\n\n"
+                        f"{next_step}"
+                    ),
+                    parse_mode=MD,
+                    reply_markup=InlineKeyboardMarkup([
+                        actions
+                    ])
+                )
+            except Exception as e:
+                logger.debug("Could not edit login-success message: %s", e)
         else:
+            err_detail = scraper.error_message or "تحقق من رقم الطالب وكلمة المرور وحاول مجدداً."
             scraper.close()
-        full = _esc(scraper.full_name or username)
-        monitored_courses = db.get_user_courses(tid, monitored_only=True)
-        registered_courses = db.get_user_courses(tid)
-        if monitored_courses and db.get_user(tid).get("is_monitoring"):
-            next_step = "موادك المراقبة محفوظة، وسيستأنف البوت متابعتها قريباً."
-            actions = [
-                InlineKeyboardButton("📚 موادي المراقَبة", callback_data="my_courses"),
-                InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
-            ]
-        elif registered_courses:
-            next_step = "موادك المضافة محفوظة. يمكنك مراجعتها أو إضافة مواد جديدة من القائمة أدناه."
-            actions = [
-                InlineKeyboardButton("📚 موادي المراقَبة", callback_data="my_courses"),
-                InlineKeyboardButton("➕ إضافة مادة", callback_data="add_course_start"),
-            ]
-        else:
-            next_step = "اضغط على «➕ إضافة مادة للمراقبة» لإدخال رقم أو رابط المواد التي ترغب بمراقبتها:"
-            actions = [
-                InlineKeyboardButton("➕ إضافة مادة للمراقبة", callback_data="add_course_start"),
-                InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
-            ]
+            try:
+                await bot.edit_message_text(
+                    chat_id=update.effective_chat.id,
+                    message_id=ctx.user_data.get("login_msg_id"),
+                    text=(
+                        "❌ *فشل تسجيل الدخول!*\n\n"
+                        f"📌 *السبب:* {_esc(err_detail)}\n\n"
+                        "يرجى التأكد من البيانات والمحاولة مجدداً."
+                    ),
+                    parse_mode=MD,
+                    reply_markup=InlineKeyboardMarkup([[
+                        InlineKeyboardButton("🔄 إعادة المحاولة", callback_data="login_start"),
+                        InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
+                    ]])
+                )
+            except Exception as e:
+                logger.debug("Could not edit login-failure message: %s", e)
 
-        try:
-            await bot.edit_message_text(
-                chat_id=update.effective_chat.id,
-                message_id=ctx.user_data.get("login_msg_id"),
-                text=(
-                    f"✅ *تم تسجيل الدخول بنجاح!*\n\n"
-                    f"👤 الطالب: *{full}*\n"
-                    f"🆔 الرقم الجامعي: `{_esc(username)}`\n\n"
-                    f"{next_step}"
-                ),
-                parse_mode=MD,
-                reply_markup=InlineKeyboardMarkup([
-                    actions
-                ])
-            )
-        except Exception:
-            pass
-    else:
-        err_detail = scraper.error_message or "تحقق من رقم الطالب وكلمة المرور وحاول مجدداً."
-        scraper.close()
-        try:
-            await bot.edit_message_text(
-                chat_id=update.effective_chat.id,
-                message_id=ctx.user_data.get("login_msg_id"),
-                text=(
-                    "❌ *فشل تسجيل الدخول!*\n\n"
-                    f"📌 *السبب:* {_esc(err_detail)}\n\n"
-                    "يرجى التأكد من البيانات والمحاولة مجدداً."
-                ),
-                parse_mode=MD,
-                reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("🔄 إعادة المحاولة", callback_data="login_start"),
-                    InlineKeyboardButton("🏠 القائمة الرئيسية", callback_data="main_menu"),
-                ]])
-            )
-        except Exception:
-            pass
-
-    ctx.user_data.clear()
-    return ConversationHandler.END
+        ctx.user_data.clear()
+        return ConversationHandler.END
+    finally:
+        await _delete_password_message()
 
 async def add_course_start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not _is_owner(update):
         return await _reject_unauthorized(update)
     q   = update.callback_query
     tid = update.effective_user.id
-    await q.answer()
+    _answer_once = _make_answer_once(q)
 
-    if not db.get_user(tid):
-        await q.answer("سجّل دخولك أولاً!", show_alert=True)
-        return ConversationHandler.END
+    try:
+        if not db.get_user(tid):
+            await _answer_once("سجّل دخولك أولاً!", show_alert=True)
+            return ConversationHandler.END
 
-    ctx.user_data["add_course_msg_id"] = q.message.message_id
+        await _answer_once()
+        ctx.user_data["add_course_msg_id"] = q.message.message_id
 
-    await _send(q.message,
-        "➕ *إضافة مادة للمراقبة*\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "📌 *كيف أجد رقم المادة (Course ID)?*\n"
-        "افتح المادة في LMS وانظر للرابط:\n"
-        "`course/view.php?id=`*XXXX*\n\n"
-        "الرقم بعد `id=` هو ما تحتاجه.\n\n"
-        "أرسل *رقم المادة (Course ID)* الآن:",
-        [[InlineKeyboardButton("❌ إلغاء العملية", callback_data="cancel_conv")]],
-        edit=True
-    )
-    return STATE_ADD_COURSE
+        await _send(q.message,
+            "➕ *إضافة مادة للمراقبة*\n"
+            "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "📌 *كيف أجد رقم المادة (Course ID)?*\n"
+            "افتح المادة في LMS وانظر للرابط:\n"
+            "`course/view.php?id=`*XXXX*\n\n"
+            "الرقم بعد `id=` هو ما تحتاجه.\n\n"
+            "أرسل *رقم المادة (Course ID)* الآن:",
+            [[InlineKeyboardButton("❌ إلغاء العملية", callback_data="cancel_conv")]],
+            edit=True
+        )
+        return STATE_ADD_COURSE
+    finally:
+        if not _answer_once.is_answered():
+            try:
+                await _answer_once()
+            except Exception as e:
+                logger.warning("Failed to answer add_course_start callback query: %s", e)
 
 async def add_course_got_id(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     tid = update.effective_user.id
@@ -771,10 +850,29 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await _reject_unauthorized(update)
         return
     q    = update.callback_query
-    await q.answer()
     tid  = update.effective_user.id
     data = q.data
     user = db.get_user(tid)
+    _answer_once = _make_answer_once(q)
+    try:
+        await _dispatch_callback(update, ctx, q, tid, data, user, _answer_once)
+    finally:
+        if not _answer_once.is_answered():
+            try:
+                await _answer_once()
+            except Exception as e:
+                logger.warning("Failed to answer callback query in finally: %s", e)
+
+
+async def _dispatch_callback(
+    update: Update,
+    ctx: ContextTypes.DEFAULT_TYPE,
+    q,
+    tid: int,
+    data: Optional[str],
+    user,
+    _answer_once: Callable[..., Awaitable[None]],
+):
 
     if data == "main_menu":
         await _show_main(q.message, tid, edit=True)
@@ -807,8 +905,9 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     elif data == "sync_courses":
         if not user:
-            await q.answer("سجّل دخولك أولاً!", show_alert=True)
+            await _answer_once("سجّل دخولك أولاً!", show_alert=True)
             return
+        await _answer_once()
 
         await _send(
             q.message,
@@ -958,10 +1057,10 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     elif data == "start_monitor":
         if not user:
-            await q.answer("سجّل دخولك أولاً!", show_alert=True); return
+            await _answer_once("سجّل دخولك أولاً!", show_alert=True); return
         courses = db.get_user_courses(tid, monitored_only=True)
         if not courses:
-            await q.answer("لا توجد مواد مراقَبة!\nأضف مادة أولاً.", show_alert=True); return
+            await _answer_once("لا توجد مواد مراقَبة!\nأضف مادة أولاً.", show_alert=True); return
         db.set_monitoring(tid, True)
         iv_txt = _format_interval(user.get("check_interval", 10))
         clist = "\n".join(f"  • *{_esc(c['course_name'][:40])}*" for c in courses)
@@ -985,7 +1084,7 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     elif data == "stop_monitor":
         if not user:
-            await q.answer("سجّل دخولك أولاً!", show_alert=True); return
+            await _answer_once("سجّل دخولك أولاً!", show_alert=True); return
         db.set_monitoring(tid, False)
         await _send(q.message,
             "🔴 *تم إيقاف المراقبة المؤقتة.*\n\nلن تصلك إشعارات حتى تقوم بإعادة تشغيل المراقبة.",
@@ -1001,7 +1100,7 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     elif data == "deadlines":
         if not user:
-            await q.answer("سجّل دخولك أولاً!", show_alert=True); return
+            await _answer_once("سجّل دخولك أولاً!", show_alert=True); return
         courses = db.get_user_courses(tid)
         upcoming = db.get_upcoming_deadlines(tid, limit=50)
         due_map = {str(r["content_id"]): r for r in upcoming}
@@ -1066,10 +1165,11 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     elif data == "check_now":
         if not user:
-            await q.answer("سجّل دخولك أولاً!", show_alert=True); return
+            await _answer_once("سجّل دخولك أولاً!", show_alert=True); return
         courses = db.get_user_courses(tid, monitored_only=True)
         if not courses:
-            await q.answer("لا توجد مواد مراقَبة!", show_alert=True); return
+            await _answer_once("لا توجد مواد مراقَبة!", show_alert=True); return
+        await _answer_once()
         await _send(q.message, "🔍 *جارٍ الفحص الفوري في LMS...*", edit=True)
         engine: MonitorEngine = ctx.bot_data.get("engine")
         if engine:
@@ -1092,7 +1192,7 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     elif data == "stats":
         if not user:
-            await q.answer("سجّل دخولك أولاً!", show_alert=True); return
+            await _answer_once("سجّل دخولك أولاً!", show_alert=True); return
         courses = db.get_user_courses(tid)
         mon     = db.get_user_courses(tid, monitored_only=True)
         stats   = db.get_stats(tid)
@@ -1136,15 +1236,16 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     elif data == "grades_menu":
         if not user:
-            await q.answer("سجّل دخولك أولاً!", show_alert=True); return
+            await _answer_once("سجّل دخولك أولاً!", show_alert=True); return
         await _render_grades_view(q.message, tid, edit=True)
 
     elif data == "refresh_grades":
         if not user:
-            await q.answer("سجّل دخولك أولاً!", show_alert=True); return
+            await _answer_once("سجّل دخولك أولاً!", show_alert=True); return
         courses = db.get_user_courses(tid)
         if not courses:
-            await q.answer("أضف موادك أولاً!", show_alert=True); return
+            await _answer_once("أضف موادك أولاً!", show_alert=True); return
+        await _answer_once()
         await _send(q.message, "⏳ *جارٍ فحص وتحديث سجل العلامات من LMS...*", edit=True)
         loop = asyncio.get_running_loop()
 
@@ -1171,15 +1272,16 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     elif data == "announcements_menu":
         if not user:
-            await q.answer("سجّل دخولك أولاً!", show_alert=True); return
+            await _answer_once("سجّل دخولك أولاً!", show_alert=True); return
         await _render_announcements_view(q.message, tid, edit=True)
 
     elif data == "refresh_announcements":
         if not user:
-            await q.answer("سجّل دخولك أولاً!", show_alert=True); return
+            await _answer_once("سجّل دخولك أولاً!", show_alert=True); return
         courses = db.get_user_courses(tid)
         if not courses:
-            await q.answer("أضف موادك أولاً!", show_alert=True); return
+            await _answer_once("أضف موادك أولاً!", show_alert=True); return
+        await _answer_once()
         await _send(q.message, "⏳ *جارٍ فحص إعلانات الدكاترة ومنتديات المقررات...*", edit=True)
         loop = asyncio.get_running_loop()
 
@@ -1214,15 +1316,16 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     elif data == "attendance_menu":
         if not user:
-            await q.answer("سجّل دخولك أولاً!", show_alert=True); return
+            await _answer_once("سجّل دخولك أولاً!", show_alert=True); return
         await _render_attendance_view(q.message, tid, edit=True)
 
     elif data == "refresh_attendance":
         if not user:
-            await q.answer("سجّل دخولك أولاً!", show_alert=True); return
+            await _answer_once("سجّل دخولك أولاً!", show_alert=True); return
         courses = db.get_user_courses(tid)
         if not courses:
-            await q.answer("أضف موادك أولاً!", show_alert=True); return
+            await _answer_once("أضف موادك أولاً!", show_alert=True); return
+        await _answer_once()
         await _send(q.message, "⏳ *جارٍ فحص وتحديث سجلات الحضور والغياب من LMS...*", edit=True)
         loop = asyncio.get_running_loop()
 
@@ -1257,7 +1360,7 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     elif data == "settings":
         if not user:
-            await q.answer("سجّل دخولك أولاً!", show_alert=True); return
+            await _answer_once("سجّل دخولك أولاً!", show_alert=True); return
         await _render_settings(q.message, user, edit=True)
 
     elif data == "sett_assign":
@@ -1295,7 +1398,7 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if user:
             db.update_check_interval(tid, minutes)
             iv_txt = _format_interval(minutes)
-            await q.answer(f"✅ تم ضبط فترة الفحص: كل {iv_txt}", show_alert=True)
+            await _answer_once(f"✅ تم ضبط فترة الفحص: كل {iv_txt}", show_alert=True)
             await _render_settings(q.message, db.get_user(tid), edit=True)
 
     elif data == "logout_prompt":
@@ -1329,21 +1432,22 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("view_"):
         course_id = int(data.split("_", 1)[1])
         if not user:
-            await q.answer("سجّل دخولك أولاً!", show_alert=True); return
+            await _answer_once("سجّل دخولك أولاً!", show_alert=True); return
+        await _answer_once()
         await _fetch_show_course(q.message, tid, user, course_id, edit=True)
 
     elif data.startswith("toggle_"):
         course_id = int(data.split("_", 1)[1])
         db.toggle_course(tid, course_id)
-        await q.answer("تم تغيير حالة المراقبة للمادة")
+        await _answer_once("تم تغيير حالة المراقبة للمادة")
         await _render_courses(q.message, tid, edit=True)
 
     elif data.startswith("cToggle_"):
         course_id = int(data.split("_", 1)[1])
         db.toggle_course(tid, course_id)
         if not user:
-            await q.answer("سجّل دخولك أولاً!", show_alert=True); return
-        await q.answer("تم تغيير حالة المراقبة للمادة")
+            await _answer_once("سجّل دخولك أولاً!", show_alert=True); return
+        await _answer_once("تم تغيير حالة المراقبة للمادة")
         await _fetch_show_course(q.message, tid, user, course_id, edit=True)
 
     elif data.startswith("del_"):
@@ -1366,7 +1470,7 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("confirmDel_"):
         course_id = int(data.split("_", 1)[1])
         db.remove_course(tid, course_id)
-        await q.answer("🗑 تم حذف المادة بنجاح", show_alert=True)
+        await _answer_once("🗑 تم حذف المادة بنجاح", show_alert=True)
         await _render_courses(q.message, tid, edit=True)
 
     elif data == "clear_all_courses_prompt":
@@ -1385,13 +1489,14 @@ async def handle_callback(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     elif data == "confirm_clear_all_courses":
         db.clear_all_user_courses(tid)
-        await q.answer("🗑 تم حذف جميع المواد بنجاح", show_alert=True)
+        await _answer_once("🗑 تم حذف جميع المواد بنجاح", show_alert=True)
         await _render_courses(q.message, tid, edit=True)
 
     elif data.startswith("refresh_"):
         course_id = int(data.split("_", 1)[1])
         if not user:
-            await q.answer("سجّل دخولك أولاً!", show_alert=True); return
+            await _answer_once("سجّل دخولك أولاً!", show_alert=True); return
+        await _answer_once()
         await _fetch_show_course(q.message, tid, user, course_id, edit=True)
 
 async def _render_courses(msg_obj, tid, edit=False):
@@ -1924,6 +2029,7 @@ def main():
     app.add_handler(CommandHandler("unlink", cmd_unlink))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    app.add_error_handler(error_handler)
 
     logger.info("Starting bot (button-only mode)...")
     app.run_polling(drop_pending_updates=True)

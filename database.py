@@ -8,7 +8,13 @@ import logging
 import threading
 from datetime import datetime
 from config import DATABASE_PATH, DATABASE_URL, DIRECT_URL, CHECK_INTERVAL_MINUTES
-from security import encrypt_password, decrypt_password
+from security import (
+    decrypt_legacy_password,
+    decrypt_password,
+    encrypt_password,
+    is_encrypted_v1,
+    is_legacy_fernet_token,
+)
 
 try:
     import psycopg
@@ -397,18 +403,39 @@ def init_db():
         except Exception as e:
             logger.debug(f"Migration for new columns: {e}")
 
-        # Encrypt existing plain-text passwords if any
-        try:
-            legacy_users = db.fetchall("SELECT telegram_id, lms_password FROM users")
-            for u in legacy_users:
-                pwd = u.get("lms_password") or ""
-                if pwd and not pwd.startswith("gAAAAA"):
-                    enc = encrypt_password(pwd)
-                    db.execute("UPDATE users SET lms_password=? WHERE telegram_id=?", (enc, u["telegram_id"]))
-        except Exception as e:
-            logger.warning(f"Password encryption migration check failed: {e}")
+        # Idempotent migration of stored user passwords to enc:v1: format
+        migrate_user_passwords(db)
 
     logger.info("DB initialised")
+
+
+def migrate_user_passwords(db: DBContext) -> None:
+    """Migrate legacy encrypted and plaintext user passwords to enc:v1: format idempotently."""
+    rows = db.fetchall("SELECT telegram_id, lms_password FROM users")
+    for row in rows:
+        telegram_id = row.get("telegram_id")
+        stored_pwd = row.get("lms_password") or ""
+        if not stored_pwd or is_encrypted_v1(stored_pwd):
+            continue
+
+        if is_legacy_fernet_token(stored_pwd):
+            try:
+                plain_pwd = decrypt_legacy_password(stored_pwd)
+            except RuntimeError:
+                logger.error(
+                    "Password migration skipped for telegram_id=%s: unable to decrypt legacy token; row left untouched.",
+                    telegram_id,
+                )
+                continue
+        else:
+            # Legacy plaintext password without enc:v1: prefix
+            plain_pwd = stored_pwd
+
+        new_ciphertext = encrypt_password(plain_pwd)
+        db.execute(
+            "UPDATE users SET lms_password=? WHERE telegram_id=?",
+            (new_ciphertext, telegram_id),
+        )
 
 def save_user(telegram_id, lms_username, lms_password,
               lms_user_id=None, full_name=None):

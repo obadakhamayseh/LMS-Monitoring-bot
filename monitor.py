@@ -9,7 +9,8 @@ from telegram.constants import ParseMode
 
 MD = ParseMode.MARKDOWN
 from telegram.error import TelegramError
-from lms_scraper import LMSScraper
+from config import LMS_BASE_URL
+from lms_scraper import LMSScraper, FetchResult
 from reminder import _parse_due_date
 import database as db
 
@@ -46,6 +47,8 @@ def _canonical_content_url(url: str) -> str:
 class MonitorEngine:
 
     KEEPALIVE_SECONDS = 120
+    MAX_AUTO_DOWNLOAD_COUNT = 3
+    MAX_AUTO_DOWNLOAD_MB = 20
 
     def __init__(self, bot: Bot, reminder_engine=None):
         self.bot = bot
@@ -59,6 +62,8 @@ class MonitorEngine:
         self._auth_alerted = set()
         self._waf_backoff_until = {}  # tid -> monotonic timestamp
         self._transient_backoff_until = {}  # tid -> monotonic timestamp (timeouts/503/maintenance)
+        self._last_scan_waf = {}  # tid -> bool from latest FetchResult scan
+        self._last_scan_expired = {}  # tid -> bool from latest FetchResult scan
         self._course_cache = {}  # course_id -> (timestamp, content)
         self.COURSE_CACHE_TTL = 300  # 5 minutes shared cache TTL
         self.WAF_BACKOFF_SECONDS = 900  # 15 minutes polite cooldown if WAF triggers
@@ -200,19 +205,19 @@ class MonitorEngine:
 
             logger.info(f"Checking user {tid}")
             count, complete = await self._scan_user(user, courses, scraper)
-            if scraper.waf_blocked:
+            if self._last_scan_waf.get(tid) or scraper.waf_blocked:
                 logger.warning(f"WAF challenge during scan for {tid}; pausing checks for {self.WAF_BACKOFF_SECONDS}s")
                 self._waf_backoff_until[tid] = time.monotonic() + self.WAF_BACKOFF_SECONDS
                 return
-            if scraper.session_expired:
+            if self._last_scan_expired.get(tid) or scraper.session_expired:
                 logger.info(f"Session expired during scan for {tid}; auto-relogging in and retrying once")
                 if not await _ensure_logged_in(force_fresh=True):
                     return
                 count, complete = await self._scan_user(user, courses, scraper)
-                if scraper.waf_blocked:
+                if self._last_scan_waf.get(tid) or scraper.waf_blocked:
                     self._waf_backoff_until[tid] = time.monotonic() + self.WAF_BACKOFF_SECONDS
                     return
-                if scraper.session_expired:
+                if self._last_scan_expired.get(tid) or scraper.session_expired:
                     self._transient_backoff_until[tid] = time.monotonic() + self.TRANSIENT_BACKOFF_SECONDS
                     return
             if complete:
@@ -287,28 +292,55 @@ class MonitorEngine:
             self._auth_alerted.add(tid)
         return sent
 
+    @staticmethod
+    def _is_auto_downloadable_resource(event: dict) -> bool:
+        """Allow automatic file download ONLY for Moodle /mod/resource/ files on the LMS host.
+
+        Explicitly excludes /mod/url/ (SSRF/redirect risk) and non-file modules (/mod/page/, /mod/folder/, etc.).
+        """
+        if not event.get("is_new") or event.get("content_type") != "resource":
+            return False
+        url = (event.get("url") or "").strip()
+        if not url:
+            return False
+        parts = urlsplit(url)
+        allowed_host = urlsplit(LMS_BASE_URL).netloc.lower()
+        if parts.scheme.lower() != "https" or parts.netloc.lower() != allowed_host:
+            return False
+        path_low = parts.path.lower()
+        if "/mod/url/" in path_low:
+            return False
+        return "/mod/resource/" in path_low
+
     async def _scan_user(self, user: dict, courses: list, scraper: LMSScraper, bypass_cache: bool = False):
         tid = int(user["telegram_id"])
         sent_count = 0
         complete = True
         events = []
+        self._last_scan_waf[tid] = False
+        self._last_scan_expired[tid] = False
 
-        sem = asyncio.Semaphore(2)
+        # Scan courses strictly sequentially per user (thread-safe on LMSScraper and polite to NetScaler WAF)
+        for course in courses:
+            if self._last_scan_waf[tid] or self._last_scan_expired[tid] or scraper.session_expired or scraper.waf_blocked:
+                complete = False
+                break
+            try:
+                course_events, course_complete, sess_expired, waf_blocked = await self._check_course_result(
+                    tid, user, scraper, course, bypass_cache=bypass_cache
+                )
+            except Exception as e:
+                logger.error(f"Error checking course {course.get('course_id')} for {tid}: {e}")
+                course_events, course_complete, sess_expired, waf_blocked = [], False, False, False
 
-        async def _check_course_safe(course):
-            async with sem:
-                if scraper.session_expired or scraper.waf_blocked:
-                    return [], False
-                try:
-                    return await self._check_course(
-                        tid, user, scraper, course, bypass_cache=bypass_cache
-                    )
-                except Exception as e:
-                    logger.error(f"Error checking course {course.get('course_id')} for {tid}: {e}")
-                    return [], False
-
-        course_results = await asyncio.gather(*(_check_course_safe(c) for c in courses))
-        for course_events, course_complete in course_results:
+            if waf_blocked:
+                self._last_scan_waf[tid] = True
+                complete = False
+                break
+            if sess_expired:
+                self._last_scan_expired[tid] = True
+                complete = False
+                break
             events.extend(course_events)
             complete = complete and course_complete
 
@@ -323,15 +355,20 @@ class MonitorEngine:
                     self._save_change(event)
                 sent_count += len(chunk_events)
 
-                # Direct document dispatch for newly added resources
+                # Direct document dispatch ONLY for newly added /mod/resource/ files (bounded count & size)
                 if user.get("notify_resource", 1):
-                    new_resources = [e for e in chunk_events if e["is_new"] and e["content_type"] == "resource"]
-                    for res_ev in new_resources[:3]:
+                    new_resources = [e for e in chunk_events if self._is_auto_downloadable_resource(e)]
+                    for res_ev in new_resources[:self.MAX_AUTO_DOWNLOAD_COUNT]:
                         try:
-                            course_ref = f"https://mulms.mutah.edu.jo/course/view.php?id={res_ev['course_id']}"
+                            course_ref = f"{LMS_BASE_URL}/course/view.php?id={res_ev['course_id']}"
                             file_info = await loop.run_in_executor(
                                 None,
-                                lambda u=res_ev["url"], ru=res_ev.get("raw_url"), ref=course_ref: scraper.download_resource(u, raw_url=ru, referer=ref),
+                                lambda u=res_ev["url"], ru=res_ev.get("raw_url"), ref=course_ref: scraper.download_resource(
+                                    u,
+                                    max_mb=self.MAX_AUTO_DOWNLOAD_MB,
+                                    raw_url=ru,
+                                    referer=ref,
+                                ),
                             )
                             if file_info:
                                 filename, file_bytes = file_info
@@ -372,6 +409,12 @@ class MonitorEngine:
         return sent_count, complete
 
     async def _check_course(self, tid, user, scraper, course, bypass_cache: bool = False):
+        events, ok, _, _ = await self._check_course_result(
+            tid, user, scraper, course, bypass_cache=bypass_cache
+        )
+        return events, ok
+
+    async def _check_course_result(self, tid, user, scraper, course, bypass_cache: bool = False):
         loop = asyncio.get_running_loop()
         cid  = course["course_id"]
         cname = course["course_name"]
@@ -388,12 +431,26 @@ class MonitorEngine:
                 logger.debug(f"Using course cache for course {cid} (user {tid})")
 
         if content is None:
-            content = await loop.run_in_executor(
-                None, scraper.get_course_content, cid
+            fetch_res = await loop.run_in_executor(
+                None, scraper.fetch_course_content, cid
             )
-            if not scraper.last_fetch_ok:
-                logger.warning(f"Incomplete LMS content response for user {tid}, course {cid}")
-                return [], False
+            if isinstance(fetch_res, FetchResult):
+                if fetch_res.waf_blocked:
+                    logger.warning(f"WAF blocked LMS fetch for user {tid}, course {cid}: {fetch_res.error}")
+                    return [], False, False, True
+                if fetch_res.session_expired:
+                    logger.info(f"Session expired during LMS fetch for user {tid}, course {cid}")
+                    return [], False, True, False
+                if not fetch_res.ok:
+                    logger.warning(f"Incomplete LMS content response for user {tid}, course {cid}: {fetch_res.error}")
+                    return [], False, False, False
+                content = fetch_res.content
+            else:
+                # Defensive fallback if an external caller passed a mock returning a raw dict
+                if not getattr(scraper, "last_fetch_ok", True):
+                    logger.warning(f"Incomplete LMS content response for user {tid}, course {cid}")
+                    return [], False, bool(getattr(scraper, "session_expired", False)), bool(getattr(scraper, "waf_blocked", False))
+                content = fetch_res
             self._course_cache[cache_key] = (now, content)
 
         assignments = content.get("assignments", [])
@@ -652,7 +709,7 @@ class MonitorEngine:
         except Exception as atte:
             logger.warning(f"Error checking attendance for course {cid} (user {tid}): {atte}")
 
-        return events, True
+        return events, True, False, False
 
     @staticmethod
     def _normalize_name(value: str) -> str:
@@ -939,17 +996,17 @@ class MonitorEngine:
             for c in courses:
                 self._course_cache.pop((tid, c["course_id"]), None)
             count, complete = await self._scan_user(user, courses, scraper, bypass_cache=True)
-            if scraper.waf_blocked:
+            if self._last_scan_waf.get(tid) or scraper.waf_blocked:
                 self._waf_backoff_until[tid] = time.monotonic() + self.WAF_BACKOFF_SECONDS
                 return count, "جدار حماية موقع الجامعة طلب تحققاً أمنياً مؤقتاً؛ تم إيقاف الفحص مؤقتاً"
-            if scraper.session_expired:
+            if self._last_scan_expired.get(tid) or scraper.session_expired:
                 self._discard_session(tid)
                 scraper = self._get_session(user)
                 ok = await loop.run_in_executor(None, scraper.login)
                 if not ok:
                     return count, scraper.error_message or "انتهت جلسة LMS وتعذّر تجديدها مؤقتاً"
                 count, complete = await self._scan_user(user, courses, scraper, bypass_cache=True)
-                if scraper.session_expired:
+                if self._last_scan_expired.get(tid) or scraper.session_expired:
                     return count, "انتهت جلسة LMS؛ حاول مجدداً بعد قليل"
             if complete:
                 db.update_last_check(tid)

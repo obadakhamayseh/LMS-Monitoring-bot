@@ -199,7 +199,7 @@ button{cursor:pointer}
 <div class="pair-view" id="pairView">
   <div class="pair-card">
     <div style="text-align:center">
-      <img src="/logo.png" style="width:68px;height:68px;border-radius:18px;box-shadow:0 8px 24px rgba(36,87,167,0.22);display:inline-block;margin-bottom:12px;object-fit:cover" alt="شعار دفتر الطالب" onerror="this.style.display='none'">
+      <img src="/logo.png" style="width:68px;height:68px;border-radius:18px;box-shadow:0 8px 24px rgba(36,87,167,0.22);display:inline-block;margin-bottom:12px;object-fit:cover" alt="شعار دفتر الطالب" data-img-fallback="hide">
     </div>
     <h1>ربط هذا الجهاز بدفتر الطالب</h1>
     <p>التطبيق خاص بصاحبه فقط. اربط هذا الهاتف مرة واحدة ثم يبقى مسجلاً حتى تفصله بنفسك. التنبيهات تستمر بالوصول عبر تيليجرام كالمعتاد.</p>
@@ -208,15 +208,15 @@ button{cursor:pointer}
       <li>انسخ الرمز المكوّن من ٨ أرقام (صالح ١٠ دقائق)</li>
       <li>أدخله هنا واضغط «ربط الجهاز»</li>
     </ol>
-    <input class="field" id="pairCode" inputmode="numeric" autocomplete="one-time-code" maxlength="12" placeholder="00000000" onkeydown="if(event.key==='Enter')submitPairCode()">
+    <input class="field" id="pairCode" inputmode="numeric" autocomplete="one-time-code" maxlength="12" placeholder="00000000" data-keydown="submit-pair-code">
     <div class="pair-err" id="pairErr"></div>
-    <button class="btn btn-primary" id="pairBtn" style="width:100%;padding:12px" onclick="submitPairCode()">ربط الجهاز</button>
+    <button class="btn btn-primary" id="pairBtn" style="width:100%;padding:12px" data-action="submit-pair-code">ربط الجهاز</button>
   </div>
 </div>
 <header class="top">
   <div class="shell top-inner">
-    <div class="brand" onclick="go('home')">
-      <img src="/logo.png" class="brand-logo" alt="شعار دفتر الطالب" onerror="this.style.display='none';this.nextElementSibling.style.display='grid'">
+    <div class="brand" data-action="go" data-page="home">
+      <img src="/logo.png" class="brand-logo" alt="شعار دفتر الطالب" data-img-fallback="next">
       <div class="mark" style="display:none">م</div>
       <div>
         <strong>دفتر الطالب</strong>
@@ -225,9 +225,9 @@ button{cursor:pointer}
     </div>
     <div class="right-head">
       <div class="sync" id="syncBox">● <b id="syncState">مزامنة نشطة</b> <span id="syncLong" class="sync-long">· آخر فحص <span id="syncWhen">الآن</span></span></div>
-      <button class="icon-btn" title="مركز الإشعارات" onclick="go('notifications')">♧<sup id="bellCount" style="font-size:8px;color:#a14f49;font-weight:700"></sup></button>
-      <button class="icon-btn" id="btnSyncTop" title="مزامنة الآن من LMS" onclick="syncNow()">↻</button>
-      <div class="avatar" id="userAvatar" title="الإعدادات والحساب" onclick="go('settings')">ط</div>
+      <button class="icon-btn" title="مركز الإشعارات" data-action="go" data-page="notifications">♧<sup id="bellCount" style="font-size:8px;color:#a14f49;font-weight:700"></sup></button>
+      <button class="icon-btn" id="btnSyncTop" title="مزامنة الآن من LMS" data-action="sync-now">↻</button>
+      <div class="avatar" id="userAvatar" title="الإعدادات والحساب" data-action="go" data-page="settings">ط</div>
     </div>
   </div>
 </header>
@@ -249,7 +249,7 @@ button{cursor:pointer}
 
 <nav class="bottom" id="bottomNav"></nav>
 <div class="toast" id="toast"></div>
-<div class="modal-back" id="modalBack" onclick="if(event.target===this)closeModal()">
+<div class="modal-back" id="modalBack" data-action="close-modal-backdrop">
   <div class="modal" id="modal"></div>
 </div>
 
@@ -287,11 +287,14 @@ window.fetch = function (input, init) {
     const h = new Headers(init.headers || {});
     const t = getAppToken();
     if (t) h.set('Authorization', 'Bearer ' + t);
+    // H1: pass Telegram initData exclusively via header, never in URL or JSON body
+    const initData = (tg && tg.initData) ? String(tg.initData) : '';
+    if (initData) h.set('X-Telegram-Init-Data', initData);
     init.headers = h;
   }
   return _nativeFetch(input, init).then(res => {
     if (isApi && res.status === 401 && !url.startsWith('/api/pair')) {
-      res.clone().json().then(d => { if (d && d.auth_required) showPairing(); }).catch(() => {});
+      res.clone().json().then(d => { if (d && d.auth_required) showPairing(); }).catch((err) => { console.warn('Failed to parse 401 response:', err); });
     }
     return res;
   });
@@ -427,10 +430,18 @@ let newsFilterState = { filter: 'all', course: 'all' };
 let fileFilterState = { course: 'all', q: '' };
 let courseSearchQuery = '';
 
+const _HTML_ESC_MAP = {
+  '&': '&amp;',
+  '<': '&lt;',
+  '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
+  '`': '&#96;',
+  '\\': '&#92;'
+};
+
 function escapeHTML(s) {
-  return String(s ?? '').replace(/[&<>"']/g, m => ({
-    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-  }[m]));
+  return String(s ?? '').replace(/[&<>"'`\\]/g, m => _HTML_ESC_MAP[m]);
 }
 
 function persist(syncServer = true) {
@@ -450,7 +461,6 @@ function persist(syncServer = true) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         tid: getTelegramId(),
-        initData: tg?.initData || '',
         meta: {
           notes,
           personal_reminders: reminders,
@@ -460,7 +470,7 @@ function persist(syncServer = true) {
           sync_logs: syncLogs.slice(0, 15)
         }
       })
-    }).catch(() => {});
+    }).catch((err) => { console.warn('Failed to sync user-meta:', err); });
   }
 }
 
@@ -633,7 +643,6 @@ async function fetchUserData() {
     const tid = getTelegramId();
     const qs = new URLSearchParams({
       tid: tid,
-      initData: tg?.initData || '',
       _t: Date.now()
     });
     const res = await fetch('/api/user-data?' + qs.toString());
@@ -710,7 +719,7 @@ async function fetchUserData() {
       return {
         id: cid,
         name: c.name,
-        url: c.url || `https://mulms.mutah.edu.jo/course/view.php?id=${cid}`,
+        url: c.url || `https://mulms.mutah.edu.jo/course/view.php?id=${encodeURIComponent(cid)}`,
         is_monitored: Boolean(c.is_monitored),
         code: meta.code || `ID ${cid}`,
         teacher: meta.teacher || extractTeacher(c.name),
@@ -756,7 +765,7 @@ async function fetchUserData() {
         desc: isQuiz
           ? 'اختبار إلكتروني عبر منصة جامعة مؤتة (Moodle LMS).'
           : 'واجب تسليم إلكتروني عبر منصة جامعة مؤتة (Moodle LMS).',
-        url: d.content_url || `https://mulms.mutah.edu.jo/course/view.php?id=${d.course_id}`,
+        url: d.content_url || `https://mulms.mutah.edu.jo/course/view.php?id=${encodeURIComponent(d.course_id)}`,
         done: isSub,
         grade: matchedGrade
       };
@@ -791,18 +800,36 @@ async function fetchUserData() {
   }
 }
 
+function safeHttpUrl(raw) {
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim();
+  if (!s || /[\u0000-\u001F\u007F]/.test(s)) return null;
+  // Reject protocol-relative URLs (//evil) and require explicit http(s):// scheme
+  if (s.startsWith('//') || !/^https?:\/\//i.test(s)) return null;
+  try {
+    const u = new URL(s);
+    return (u.protocol === 'https:' || u.protocol === 'http:') ? u.href : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 function openExternalLink(url) {
-  if (!url) {
-    toast('الرابط غير متوفر');
-    return;
+  const safeUrl = safeHttpUrl(url);
+  if (!safeUrl) {
+    toast('الرابط غير صالح أو غير متوفر');
+    return false;
   }
-  if (tg && tg.openLink) {
+  if (tg && typeof tg.openLink === 'function') {
     try {
-      tg.openLink(url);
-      return;
-    } catch (e) {}
+      tg.openLink(safeUrl);
+      return true;
+    } catch (e) {
+      console.warn('tg.openLink failed, falling back to window.open:', e);
+    }
   }
-  window.open(url, '_blank', 'noopener');
+  window.open(safeUrl, '_blank', 'noopener,noreferrer');
+  return true;
 }
 
 function header(title, sub) {
@@ -835,12 +862,12 @@ function courseCard(c) {
 
   return `<article class="course">
     <div>
-      <button class="text-link course-title" onclick="openCourse('${escapeHTML(c.id)}')">${escapeHTML(c.name)}</button>
+      <button class="text-link course-title" data-action="open-course" data-id="${escapeHTML(c.id)}">${escapeHTML(c.name)}</button>
       <div class="course-meta">${escapeHTML(c.code)} · ${escapeHTML(c.teacher)}${escapeHTML(tasksInfo)}${escapeHTML(filesInfo)}${c.time ? ' · ' + escapeHTML(c.time) : ''}</div>
     </div>
     <div class="course-end">
       <span class="pill ${pillClass}">${pillText}</span>
-      <button class="text-link" onclick="openCourse('${escapeHTML(c.id)}')">تفاصيل ‹</button>
+      <button class="text-link" data-action="open-course" data-id="${escapeHTML(c.id)}">تفاصيل ‹</button>
     </div>
   </article>`;
 }
@@ -853,7 +880,7 @@ function taskCard(t) {
 
   return `<article class="task">
     <div>
-      <button class="text-link item-title" onclick="taskDetail('${escapeHTML(t.id)}')">${escapeHTML(t.title)}</button>
+      <button class="text-link item-title" data-action="task-detail" data-id="${escapeHTML(t.id)}">${escapeHTML(t.title)}</button>
       <div class="item-meta">${escapeHTML(t.course_name)} · ${escapeHTML(t.type)} · ${escapeHTML(dueDisplay)}</div>
       <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
         ${!done && t.time_remaining && !label.includes(t.time_remaining) ? `<span class="due ${cl === 'pill red' ? 'late' : ''}">◷ متبقي ${escapeHTML(t.time_remaining)}</span>` : ''}
@@ -863,7 +890,7 @@ function taskCard(t) {
     </div>
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end">
       <span class="${cl}">${escapeHTML(label)}</span>
-      <button class="btn" onclick="toggleDone('${escapeHTML(t.id)}')">${done ? 'إلغاء الإنجاز' : 'إنجاز ✓'}</button>
+      <button class="btn" data-action="toggle-done" data-id="${escapeHTML(t.id)}">${done ? 'إلغاء الإنجاز' : 'إنجاز ✓'}</button>
     </div>
   </article>`;
 }
@@ -873,11 +900,11 @@ function announceCard(a) {
   return `<article class="notice ${read ? '' : 'unread'}">
     <div class="notice-mark">${read ? '✓' : '!'}</div>
     <div>
-      <button class="text-link item-title" onclick="openAnnouncementModal('${escapeHTML(a.id)}')">${escapeHTML(a.title)}</button>
+      <button class="text-link item-title" data-action="open-announcement" data-id="${escapeHTML(a.id)}">${escapeHTML(a.title)}</button>
       <div class="item-meta">${escapeHTML(a.course_name)}${a.author ? ' · ' + escapeHTML(a.author) : ''} · ${escapeHTML(a.date)}</div>
       <p class="item-meta">${escapeHTML(a.body)}</p>
     </div>
-    <button class="btn" onclick="readAnnouncement('${escapeHTML(a.id)}')">${read ? 'مقروء' : 'تمييز كمقروء'}</button>
+    <button class="btn" data-action="read-announcement" data-id="${escapeHTML(a.id)}">${read ? 'مقروء' : 'تمييز كمقروء'}</button>
   </article>`;
 }
 
@@ -887,13 +914,13 @@ function fileCard(f) {
       <strong class="item-title">▧ ${escapeHTML(f.name)}</strong>
       <div class="item-meta">${escapeHTML(f.course)} · ${escapeHTML(f.kind)} · رُصد: ${escapeHTML(f.date)}</div>
     </div>
-    <button class="btn" onclick="openExternalLink('${escapeHTML(f.url)}')">فتح / تنزيل ↗</button>
+    <button class="btn" data-action="open-link" data-url="${escapeHTML(f.url)}">فتح / تنزيل ↗</button>
   </article>`;
 }
 
 function render() {
   document.getElementById('sideNav').innerHTML = navItems.map(n => `
-    <button class="${active === n[0] ? 'active' : ''}" onclick="go('${n[0]}')">
+    <button class="${active === n[0] ? 'active' : ''}" data-action="go" data-page="${escapeHTML(n[0])}">
       <span class="ico">${n[1]}</span>${n[2]}
       ${n[0] === 'notifications' && unreadCount() > 0 ? `<span class="count">${unreadCount()}</span>` : ''}
       ${n[0] === 'tasks' && tasks.filter(t => !isTaskDone(t)).length > 0 ? `<span class="count">${tasks.filter(t => !isTaskDone(t)).length}</span>` : ''}
@@ -902,11 +929,11 @@ function render() {
 
   const mobilePrimary = [navItems[0], navItems[2], navItems[3], navItems[4], navItems[8]];
   document.getElementById('bottomNav').innerHTML = mobilePrimary.map(n => `
-    <button class="${active === n[0] ? 'active' : ''}" onclick="go('${n[0]}')">
+    <button class="${active === n[0] ? 'active' : ''}" data-action="go" data-page="${escapeHTML(n[0])}">
       <span>${n[1]}</span>${n[2]}
     </button>
   `).join('') + `
-    <button class="${!mobilePrimary.some(m => m[0] === active) ? 'active' : ''}" onclick="openMoreMenuModal()">
+    <button class="${!mobilePrimary.some(m => m[0] === active) ? 'active' : ''}" data-action="open-more-menu">
       <span>☰</span>المزيد
     </button>
   `;
@@ -942,12 +969,12 @@ function openMoreMenuModal() {
   document.getElementById('modal').innerHTML = `
     <div class="modal-head">
       <h2>أقسام دفتر الطالب</h2>
-      <button class="close" onclick="closeModal()">×</button>
+      <button class="close" data-action="close-modal">×</button>
     </div>
     <p class="item-meta">انتقل لأي قسم من أقسام المتابعة الأكاديمية:</p>
     <div class="help-grid" style="margin-top:12px">
       ${navItems.map(n => `
-        <button class="btn ${active === n[0] ? 'btn-primary' : ''}" style="display:flex;align-items:center;gap:8px;justify-content:flex-start;padding:11px" onclick="closeModal();go('${n[0]}')">
+        <button class="btn ${active === n[0] ? 'btn-primary' : ''}" style="display:flex;align-items:center;gap:8px;justify-content:flex-start;padding:11px" data-action="close-and-go" data-page="${escapeHTML(n[0])}">
           <span style="font-size:16px">${n[1]}</span>
           <span>${n[2]}</span>
         </button>
@@ -972,16 +999,17 @@ function loginBannerCard() {
         <input id="loginPass" type="password" class="field" style="width:100%" placeholder="••••••••" dir="ltr">
       </div>
       <div class="actions">
-        <button class="btn btn-primary" id="btnDoLogin" onclick="submitLogin()">تسجيل الدخول وربط الحساب</button>
+        <button class="btn btn-primary" id="btnDoLogin" data-action="submit-login">تسجيل الدخول وربط الحساب</button>
       </div>
     </div>
   </section>`;
 }
 
 async function submitLogin() {
-  const u = document.getElementById('loginUser')?.value?.trim();
-  const p = document.getElementById('loginPass')?.value?.trim();
-  if (!u || !p) {
+  const u = document.getElementById('loginUser')?.value?.trim() || '';
+  const pRaw = document.getElementById('loginPass')?.value;
+  const p = typeof pRaw === 'string' ? pRaw : '';
+  if (!u || p.length === 0) {
     toast('يرجى إدخال الرقم الجامعي وكلمة المرور');
     return;
   }
@@ -994,7 +1022,7 @@ async function submitLogin() {
     const res = await fetch('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '', username: u, password: p })
+      body: JSON.stringify({ tid: getTelegramId(), username: u, password: p })
     });
     const d = await res.json();
     if (d.success) {
@@ -1038,7 +1066,7 @@ function homePage() {
           <p>${escapeHTML(upcoming.course_name)} · الموعد: ${escapeHTML(fmtDate(upcoming.dueDateObj, upcoming.due_str))}</p>
           <span class="due ${dueInfo(upcoming)[1] === 'pill red' ? 'late' : ''}">◷ ${escapeHTML(dueInfo(upcoming)[0])}</span>
         </div>
-        <button class="btn" onclick="taskDetail('${escapeHTML(upcoming.id)}')">التفاصيل ←</button>
+        <button class="btn" data-action="task-detail" data-id="${escapeHTML(upcoming.id)}">التفاصيل ←</button>
       </section>`
     : `<section class="card callout info">لا توجد مهام غير منجزة حالياً. أحسنت، جميع واجباتك واختباراتك مكتملة.</section>`;
 
@@ -1061,25 +1089,25 @@ function homePage() {
     ${!isLoggedIn ? loginBannerCard() : urgent}
     <div class="section-head">
       <h2>ملخص اليوم</h2>
-      <button onclick="go('week')">عرض الأسبوع ←</button>
+      <button data-action="go" data-page="week">عرض الأسبوع ←</button>
     </div>
     <div class="stats">
-      <article class="stat" onclick="go('courses')">
+      <article class="stat" data-action="go" data-page="courses">
         <div class="stat-top">مقرراتي <span class="stat-icon">▤</span></div>
         <strong>${courses.length}</strong>
         <small>${courses.filter(c => c.is_monitored).length} قيد المتابعة</small>
       </article>
-      <article class="stat" onclick="go('tasks')">
+      <article class="stat" data-action="go" data-page="tasks">
         <div class="stat-top">مهام مفتوحة <span class="stat-icon">☷</span></div>
         <strong>${remaining.length}</strong>
         <small>من أصل ${tasks.length} مهام</small>
       </article>
-      <article class="stat" onclick="go('attendance')">
+      <article class="stat" data-action="go" data-page="attendance">
         <div class="stat-top">الحضور <span class="stat-icon">✓</span></div>
         <strong>${attAvgText}</strong>
         <small>${attCourses.length ? `عبر ${attCourses.length} مقررات مسجلة` : 'لا يوجد سجل حضور بعد'}</small>
       </article>
-      <article class="stat" onclick="go('announcements')">
+      <article class="stat" data-action="go" data-page="announcements">
         <div class="stat-top">جديد الإعلانات <span class="stat-icon">♧</span></div>
         <strong>${unreadCount()}</strong>
         <small>${files.length} ملفات دراسية مرصودة</small>
@@ -1089,7 +1117,7 @@ function homePage() {
       <div>
         <div class="section-head">
           <h2>المهام القادمة</h2>
-          <button onclick="go('tasks')">كل المهام (${tasks.length}) ←</button>
+          <button data-action="go" data-page="tasks">كل المهام (${tasks.length}) ←</button>
         </div>
         <div class="task-list">
           ${remaining.slice(0, 4).map(taskCard).join('') || '<div class="empty">لا توجد مهام معلقة حالياً.</div>'}
@@ -1098,7 +1126,7 @@ function homePage() {
       <div>
         <div class="section-head">
           <h2>إعلانات المقررات</h2>
-          <button onclick="go('announcements')">كل الإعلانات (${announcements.length}) ←</button>
+          <button data-action="go" data-page="announcements">كل الإعلانات (${announcements.length}) ←</button>
         </div>
         <div class="notice-list">
           ${announcements.slice(0, 3).map(announceCard).join('') || '<div class="empty">لا توجد إعلانات منشورة من المدرسين حتى الآن.</div>'}
@@ -1107,7 +1135,7 @@ function homePage() {
     </div>
     <div class="section-head">
       <h2>مقرراتك الدراسية</h2>
-      <button onclick="go('courses')">إدارة المقررات (${courses.length}) ←</button>
+      <button data-action="go" data-page="courses">إدارة المقررات (${courses.length}) ←</button>
     </div>
     <div class="course-list">
       ${courses.slice(0, 4).map(courseCard).join('') || '<div class="empty">لم تقم بإضافة أي مقررات للمراقبة بعد. اضغط على «المقررات» لإضافة أو استيراد موادك.</div>'}
@@ -1133,7 +1161,7 @@ function changeWeek(delta, reset = false) {
 function weekCourseEvents(dayName) {
   return courses
     .filter(c => c.time && c.time.includes(dayName))
-    .map(c => `<div class="event" onclick="openCourse('${escapeHTML(c.id)}')" style="cursor:pointer">${escapeHTML(c.name)}<small>${escapeHTML(c.time.split('·').slice(-1)[0] || 'محاضرة')}</small></div>`)
+    .map(c => `<div class="event" data-action="open-course" data-id="${escapeHTML(c.id)}" style="cursor:pointer">${escapeHTML(c.name)}<small>${escapeHTML(c.time.split('·').slice(-1)[0] || 'محاضرة')}</small></div>`)
     .join('');
 }
 
@@ -1146,11 +1174,11 @@ function weekPage() {
   return `
     ${header('المخطط الأسبوعي', 'نظرة واحدة على المحاضرات ومواعيد تسليم الواجبات والاختبارات خلال الأسبوع. انقر على أي مهمة لعرض تفاصيلها.')}
     <div class="toolbar">
-      <button class="btn" onclick="changeWeek(-1)">‹ الأسبوع السابق</button>
+      <button class="btn" data-action="change-week" data-delta="-1">‹ الأسبوع السابق</button>
       <span class="tag">${escapeHTML(rangeStr)}</span>
-      ${weekOffset !== 0 ? `<button class="btn" onclick="changeWeek(0, true)">الأسبوع الحالي</button>` : ''}
-      <button class="btn" onclick="changeWeek(1)">الأسبوع التالي ›</button>
-      <button class="btn" style="margin-right:auto" onclick="openScheduleModal()">✎ ضبط مواعيد المحاضرات</button>
+      ${weekOffset !== 0 ? `<button class="btn" data-action="change-week" data-delta="0" data-reset="1">الأسبوع الحالي</button>` : ''}
+      <button class="btn" data-action="change-week" data-delta="1">الأسبوع التالي ›</button>
+      <button class="btn" style="margin-right:auto" data-action="open-schedule-modal">✎ ضبط مواعيد المحاضرات</button>
     </div>
     <div class="calendar">
       ${days.map((dName, i) => {
@@ -1165,7 +1193,7 @@ function weekPage() {
         });
         const tev = dayTasks.map(t => {
           const done = isTaskDone(t);
-          return `<button class="event ${done ? 'done-ev' : 'assignment'}" onclick="taskDetail('${escapeHTML(t.id)}')">
+          return `<button class="event ${done ? 'done-ev' : 'assignment'}" data-action="task-detail" data-id="${escapeHTML(t.id)}">
             ${done ? '✓ ' : '◷ '}${escapeHTML(t.title)}
             <small>${escapeHTML(t.course_name)} · ${done ? 'مكتمل' : 'موعد تسليم'}</small>
           </button>`;
@@ -1188,7 +1216,7 @@ function openScheduleModal() {
   document.getElementById('modal').innerHTML = `
     <div class="modal-head">
       <h2>ضبط أوقات وقاعات المحاضرات</h2>
-      <button class="close" onclick="closeModal()">×</button>
+      <button class="close" data-action="close-modal">×</button>
     </div>
     <p class="item-meta">حدّد أيام وأوقات المحاضرات لكل مقرر ليتم عرضها تلقائياً في المخطط الأسبوعي (مثال: الأحد والثلاثاء · ١٠:٠٠):</p>
     <div class="form-grid" style="margin-top:12px">
@@ -1203,8 +1231,8 @@ function openScheduleModal() {
       `).join('')}
     </div>
     <div class="actions" style="margin-top:14px">
-      <button class="btn btn-primary" onclick="saveAllSchedules()">حفظ الجدول الدراسي</button>
-      <button class="btn" onclick="closeModal()">إلغاء</button>
+      <button class="btn btn-primary" data-action="save-all-schedules">حفظ الجدول الدراسي</button>
+      <button class="btn" data-action="close-modal">إلغاء</button>
     </div>
   `;
   document.getElementById('modalBack').style.display = 'flex';
@@ -1233,9 +1261,9 @@ function coursesPage() {
   return `
     ${header('المقررات الدراسية', 'افتح أي مقرر لعرض مهامه وعلاماته وحضوره وإعلاناته وملفاته بالتفصيل، أو أضف مقررات جديدة للمراقبة.')}
     <div class="toolbar">
-      <input class="field search" id="courseSearch" value="${escapeHTML(courseSearchQuery)}" placeholder="ابحث باسم المقرر أو رمزه أو المدرس..." oninput="filterCourses(this.value)">
-      <button class="btn btn-primary" onclick="openAddCourseModal()">＋ إضافة مقرر</button>
-      <button class="btn" onclick="syncAllCoursesFromLms()">استيراد من LMS</button>
+      <input class="field search" id="courseSearch" value="${escapeHTML(courseSearchQuery)}" placeholder="ابحث باسم المقرر أو رمزه أو المدرس..." data-input="filter-courses">
+      <button class="btn btn-primary" data-action="open-add-course-modal">＋ إضافة مقرر</button>
+      <button class="btn" data-action="sync-all-courses">استيراد من LMS</button>
     </div>
     <div class="course-list" id="courseList">
       ${filtered.map(courseCard).join('') || '<div class="empty">لا توجد مقررات مطابقة أو مضافة حالياً. اضغط على «＋ إضافة مقرر» لإضافة موادك.</div>'}
@@ -1262,7 +1290,7 @@ function openAddCourseModal() {
   document.getElementById('modal').innerHTML = `
     <div class="modal-head">
       <h2>إضافة مقرر دراسي للمراقبة</h2>
-      <button class="close" onclick="closeModal()">×</button>
+      <button class="close" data-action="close-modal">×</button>
     </div>
     <p class="item-meta">أدخل رقم المقرر (Course ID) أو الصق رابط صفحة المقرر من موقع جامعة مؤتة LMS:</p>
     <div class="form-grid">
@@ -1271,8 +1299,8 @@ function openAddCourseModal() {
         <input id="newCourseInput" class="field" style="width:100%" placeholder="مثال: 71177 أو https://mulms.mutah.edu.jo/course/view.php?id=71177" dir="ltr">
       </div>
       <div class="actions">
-        <button class="btn btn-primary" id="btnAddCourseSubmit" onclick="submitAddCourse()">＋ ربط المقرر وفحص محتواه</button>
-        <button class="btn" onclick="closeModal();syncAllCoursesFromLms()">استيراد كافة مقرراتي تلقائياً</button>
+        <button class="btn btn-primary" id="btnAddCourseSubmit" data-action="submit-add-course">＋ ربط المقرر وفحص محتواه</button>
+        <button class="btn" data-action="close-and-sync-courses">استيراد كافة مقرراتي تلقائياً</button>
       </div>
     </div>
   `;
@@ -1294,7 +1322,7 @@ async function submitAddCourse() {
     const res = await fetch('/api/add-course', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '', course_id: val })
+      body: JSON.stringify({ tid: getTelegramId(), course_id: val })
     });
     const d = await res.json();
     if (d.success) {
@@ -1325,7 +1353,7 @@ async function syncAllCoursesFromLms() {
     const res = await fetch('/api/sync-courses', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '' })
+      body: JSON.stringify({ tid: getTelegramId() })
     });
     const d = await res.json();
     if (d.success) {
@@ -1351,7 +1379,7 @@ function openEditCourseMetaModal(cid) {
   document.getElementById('modal').innerHTML = `
     <div class="modal-head">
       <h2>بيانات المقرر: ${escapeHTML(c.name)}</h2>
-      <button class="close" onclick="closeModal()">×</button>
+      <button class="close" data-action="close-modal">×</button>
     </div>
     <div class="form-grid" style="margin-top:12px">
       <div>
@@ -1371,8 +1399,8 @@ function openEditCourseMetaModal(cid) {
         <input id="metaTime" class="field" style="width:100%" placeholder="مثال: الأحد والثلاثاء · ١٠:٠٠" value="${escapeHTML(c.time)}">
       </div>
       <div class="actions">
-        <button class="btn btn-primary" onclick="saveSingleCourseMeta('${escapeHTML(c.id)}')">حفظ التعديلات</button>
-        <button class="btn" onclick="closeModal()">إلغاء</button>
+        <button class="btn btn-primary" data-action="save-course-meta" data-id="${escapeHTML(c.id)}">حفظ التعديلات</button>
+        <button class="btn" data-action="close-modal">إلغاء</button>
       </div>
     </div>
   `;
@@ -1400,7 +1428,7 @@ async function toggleCourseMonitoring(cid) {
     const res = await fetch('/api/toggle-course', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '', course_id: cid })
+      body: JSON.stringify({ tid: getTelegramId(), course_id: cid })
     });
     const d = await res.json();
     if (d.success) {
@@ -1418,7 +1446,7 @@ async function removeCourseById(cid) {
     const res = await fetch('/api/delete-course', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '', course_id: cid })
+      body: JSON.stringify({ tid: getTelegramId(), course_id: cid })
     });
     const d = await res.json();
     if (d.success) {
@@ -1440,35 +1468,35 @@ function courseDetailPage() {
   const as = announcements.filter(a => a.course === c.id);
   const gs = grades.filter(g => g.course_id === c.id);
   const fs = files.filter(f => String(f.course_id) === c.id || f.course === c.name);
-  const rate = c.total ? Math.round((c.attendance / c.total) * 100) : 0;
+  const rate = Math.max(0, Math.min(100, c.total ? Math.round((c.attendance / c.total) * 100) : 0));
 
   return `
     ${header(c.name, `${c.code} · ${c.teacher} · ${c.room}${c.time ? ' · ' + c.time : ''}`)}
     <div class="toolbar">
-      <button class="btn" onclick="go('courses')">← كل المقررات</button>
+      <button class="btn" data-action="go" data-page="courses">← كل المقررات</button>
       <span class="tag" title="التاريخ الكامل: ${escapeHTML(formatFriendlyDateTime(userProfile.last_check, false))}">آخر فحص: ${escapeHTML(formatFriendlyDateTime(userProfile.last_check, true))}</span>
-      <button class="btn" onclick="openEditCourseMetaModal('${escapeHTML(c.id)}')">✎ تعديل بيانات المحاضرة</button>
-      <button class="btn" onclick="openExternalLink('${escapeHTML(c.url)}')">فتح المقرر في LMS ↗</button>
-      <button class="btn" onclick="toggleCourseMonitoring('${escapeHTML(c.id)}')">${c.is_monitored ? 'إيقاف المراقبة' : 'تفعيل المراقبة'}</button>
-      <button class="btn btn-danger" onclick="removeCourseById('${escapeHTML(c.id)}')">حذف المقرر</button>
+      <button class="btn" data-action="open-edit-course-meta" data-id="${escapeHTML(c.id)}">✎ تعديل بيانات المحاضرة</button>
+      <button class="btn" data-action="open-link" data-url="${escapeHTML(c.url)}">فتح المقرر في LMS ↗</button>
+      <button class="btn" data-action="toggle-course-monitoring" data-id="${escapeHTML(c.id)}">${c.is_monitored ? 'إيقاف المراقبة' : 'تفعيل المراقبة'}</button>
+      <button class="btn btn-danger" data-action="remove-course" data-id="${escapeHTML(c.id)}">حذف المقرر</button>
     </div>
     <div class="stats">
-      <article class="stat" onclick="go('attendance')">
+      <article class="stat" data-action="go" data-page="attendance">
         <div class="stat-top">الحضور <span class="stat-icon">✓</span></div>
         <strong>${c.total ? rate + '٪' : '—'}</strong>
         <small>${c.attendance} حضور · ${c.absent} غياب</small>
       </article>
-      <article class="stat" onclick="go('grades')">
+      <article class="stat" data-action="go" data-page="grades">
         <div class="stat-top">العلامات المرصودة <span class="stat-icon">▥</span></div>
         <strong>${c.grade !== null ? c.grade + '٪' : gs.filter(g => g.grade_val).length}</strong>
         <small>${gs.length} بند تقييم مسجل</small>
       </article>
-      <article class="stat" onclick="go('tasks')">
+      <article class="stat" data-action="go" data-page="tasks">
         <div class="stat-top">المهام <span class="stat-icon">☷</span></div>
         <strong>${ts.length}</strong>
         <small>${ts.filter(isTaskDone).length} مكتمل · ${ts.filter(t => !isTaskDone(t)).length} قيد الحل</small>
       </article>
-      <article class="stat" onclick="go('files')">
+      <article class="stat" data-action="go" data-page="files">
         <div class="stat-top">الملفات والإعلانات <span class="stat-icon">▧</span></div>
         <strong>${fs.length}</strong>
         <small>${as.length} إعلانات منشورة</small>
@@ -1477,7 +1505,7 @@ function courseDetailPage() {
 
     <div class="section-head">
       <h2>مهام المقرر (${ts.length})</h2>
-      <button onclick="go('tasks')">كل المهام</button>
+      <button data-action="go" data-page="tasks">كل المهام</button>
     </div>
     <div class="task-list">
       ${ts.map(taskCard).join('') || '<div class="empty">لا توجد واجبات أو اختبارات مسجلة لهذا المقرر.</div>'}
@@ -1485,7 +1513,7 @@ function courseDetailPage() {
 
     <div class="section-head">
       <h2>علامات المقرر (${gs.length})</h2>
-      <button onclick="go('grades')">السجل الكامل</button>
+      <button data-action="go" data-page="grades">السجل الكامل</button>
     </div>
     ${gs.length ? `
       <div class="table-wrap">
@@ -1507,7 +1535,7 @@ function courseDetailPage() {
 
     <div class="section-head">
       <h2>حضور المحاضرات</h2>
-      <button onclick="go('attendance')">السجل الكامل</button>
+      <button data-action="go" data-page="attendance">السجل الكامل</button>
     </div>
     <div class="card">
       <div class="item-meta">
@@ -1519,7 +1547,7 @@ function courseDetailPage() {
 
     <div class="section-head">
       <h2>إعلانات المقرر (${as.length})</h2>
-      <button onclick="go('announcements')">كل الإعلانات</button>
+      <button data-action="go" data-page="announcements">كل الإعلانات</button>
     </div>
     <div class="notice-list">
       ${as.map(announceCard).join('') || '<div class="empty">لا توجد إعلانات مسجلة لهذا المقرر.</div>'}
@@ -1527,7 +1555,7 @@ function courseDetailPage() {
 
     <div class="section-head">
       <h2>ملفات وموارد المقرر (${fs.length})</h2>
-      <button onclick="go('files')">مكتبة الملفات</button>
+      <button data-action="go" data-page="files">مكتبة الملفات</button>
     </div>
     <div class="file-list">
       ${fs.map(fileCard).join('') || '<div class="empty">لا توجد ملفات مسجلة لهذا المقرر.</div>'}
@@ -1570,22 +1598,22 @@ function tasksPage() {
   return `
     ${header('المهام والمواعيد', 'تابع الواجبات والاختبارات القصيرة وحالة تسليمها في LMS، وأضف ملاحظاتك وتذكيراتك أو صدّر الموعد إلى التقويم.')}
     <div class="toolbar">
-      <select class="field" id="taskState" onchange="filterTasks()">
+      <select class="field" id="taskState" data-change="filter-tasks">
         <option value="all" ${taskFilterState.state === 'all' ? 'selected' : ''}>كل الحالات (${tasks.length})</option>
         <option value="pending" ${taskFilterState.state === 'pending' ? 'selected' : ''}>قيد الحل (${tasks.length - doneCount})</option>
         <option value="done" ${taskFilterState.state === 'done' ? 'selected' : ''}>مكتملة (${doneCount})</option>
         <option value="late" ${taskFilterState.state === 'late' ? 'selected' : ''}>متأخرة</option>
       </select>
-      <select class="field" id="taskCourse" onchange="filterTasks()">
+      <select class="field" id="taskCourse" data-change="filter-tasks">
         <option value="all">كل المقررات</option>
         ${courses.map(c => `<option value="${escapeHTML(c.id)}" ${String(taskFilterState.course) === String(c.id) ? 'selected' : ''}>${escapeHTML(c.name)}</option>`).join('')}
       </select>
-      <select class="field" id="taskType" onchange="filterTasks()">
+      <select class="field" id="taskType" data-change="filter-tasks">
         <option value="all" ${taskFilterState.type === 'all' ? 'selected' : ''}>كل الأنواع</option>
         <option value="واجب" ${taskFilterState.type === 'واجب' ? 'selected' : ''}>واجب</option>
         <option value="اختبار قصير" ${taskFilterState.type === 'اختبار قصير' ? 'selected' : ''}>اختبار قصير</option>
       </select>
-      <button class="btn" style="margin-right:auto" onclick="syncNow()">↻ تحديث من LMS</button>
+      <button class="btn" style="margin-right:auto" data-action="sync-now">↻ تحديث من LMS</button>
     </div>
     <div class="task-list" id="taskList">
       ${list.map(taskCard).join('') || '<div class="empty">لا توجد مهام ضمن هذا التصنيف حالياً.</div>'}
@@ -1607,15 +1635,15 @@ function gradesPage() {
   return `
     ${header('سجل العلامات', 'تفاصيل الدرجات والتقييمات المرصودة لكل مقرر مباشرة من كشف علامات LMS.')}
     <div class="toolbar">
-      <select class="field" id="gradeCourse" onchange="filterGrades()">
+      <select class="field" id="gradeCourse" data-change="filter-grades">
         <option value="all">كل المقررات</option>
         ${courses.map(c => `<option value="${escapeHTML(c.id)}" ${String(gradeFilterState.course) === String(c.id) ? 'selected' : ''}>${escapeHTML(c.name)}</option>`).join('')}
       </select>
-      <select class="field" id="gradeFilter" onchange="filterGrades()">
+      <select class="field" id="gradeFilter" data-change="filter-grades">
         <option value="all" ${gradeFilterState.filter === 'all' ? 'selected' : ''}>كل التقييمات (${grades.length})</option>
         <option value="graded" ${gradeFilterState.filter === 'graded' ? 'selected' : ''}>المرصودة فقط (${grades.filter(g => g.grade_val && g.grade_val !== '-').length})</option>
       </select>
-      <button class="btn" style="margin-right:auto" onclick="syncNow()">↻ تحديث العلامات</button>
+      <button class="btn" style="margin-right:auto" data-action="sync-now">↻ تحديث العلامات</button>
     </div>
     <div id="gradeTable"></div>
     <div class="callout">تُجلب الدرجات كما رصدها مدرس المقرر في سجل الدرجات (Gradebook) على منصة جامعة مؤتة.</div>
@@ -1658,7 +1686,7 @@ function filterGrades() {
             <tr>
               <td>${escapeHTML(r.course_name)}</td>
               <td>
-                ${r.url ? `<button class="text-link" style="font-weight:600" onclick="openExternalLink('${escapeHTML(r.url)}')">${escapeHTML(r.item_name)} ↗</button>` : `<b>${escapeHTML(r.item_name)}</b>`}
+                ${r.url ? `<button class="text-link" style="font-weight:600" data-action="open-link" data-url="${escapeHTML(r.url)}">${escapeHTML(r.item_name)} ↗</button>` : `<b>${escapeHTML(r.item_name)}</b>`}
               </td>
               <td><b style="color:var(--teal)">${escapeHTML(r.grade_val || '—')}</b></td>
               <td>${escapeHTML(r.grade_max || '—')}</td>
@@ -1680,16 +1708,16 @@ function attendancePage() {
     <div class="toolbar">
       <label class="tag" style="padding:6px 10px;font-size:11px">
         حد التنبيه الشخصي:
-        <input id="absenceLimit" type="number" value="${limit}" min="5" max="50" style="width:45px;border:1px solid var(--line);border-radius:5px;background:#fff;padding:2px 4px;text-align:center" onchange="setLimit(this.value)">
+        <input id="absenceLimit" type="number" value="${limit}" min="5" max="50" style="width:45px;border:1px solid var(--line);border-radius:5px;background:#fff;padding:2px 4px;text-align:center" data-change="set-limit">
         ٪ من الغياب
       </label>
       <span class="tag">النسبة الرسمية تعتمد على سياسة الجامعة</span>
-      <button class="btn" style="margin-right:auto" onclick="syncNow()">↻ تحديث السجلات</button>
+      <button class="btn" style="margin-right:auto" data-action="sync-now">↻ تحديث السجلات</button>
     </div>
     <div class="course-list">
       ${withAtt.map(c => {
-        const rate = c.total ? Math.round((c.attendance / c.total) * 100) : 100;
-        const miss = c.total ? Math.round((c.absent / c.total) * 100) : 0;
+        const rate = Math.max(0, Math.min(100, c.total ? Math.round((c.attendance / c.total) * 100) : 100));
+        const miss = Math.max(0, Math.min(100, c.total ? Math.round((c.absent / c.total) * 100) : 0));
         const alert = c.total > 0 && miss >= limit;
         return `
           <article class="card">
@@ -1703,8 +1731,8 @@ function attendancePage() {
               </div>
               <div style="display:flex;gap:6px;align-items:center">
                 <span class="${alert ? 'pill red' : 'pill good'}">${alert ? 'تنبيه غياب (' + miss + '٪)' : rate + '٪ حضور'}</span>
-                ${c.att_sessions && c.att_sessions.length ? `<button class="btn" onclick="openAttendanceSessionsModal('${escapeHTML(c.id)}')">سجل الجلسات (${c.att_sessions.length})</button>` : ''}
-                ${c.att_url ? `<button class="btn" onclick="openExternalLink('${escapeHTML(c.att_url)}')">LMS ↗</button>` : ''}
+                ${c.att_sessions && c.att_sessions.length ? `<button class="btn" data-action="open-attendance-sessions" data-id="${escapeHTML(c.id)}">سجل الجلسات (${c.att_sessions.length})</button>` : ''}
+                ${c.att_url ? `<button class="btn" data-action="open-link" data-url="${escapeHTML(c.att_url)}">LMS ↗</button>` : ''}
               </div>
             </div>
             <div class="progress"><i style="width:${rate}%;background:${alert ? 'var(--red)' : 'var(--teal)'}"></i></div>
@@ -1740,7 +1768,7 @@ function openAttendanceSessionsModal(cid) {
         <span class="pill">سجل المحاضرات</span>
         <h2 style="margin-top:6px">${escapeHTML(c.name)}</h2>
       </div>
-      <button class="close" onclick="closeModal()">×</button>
+      <button class="close" data-action="close-modal">×</button>
     </div>
     <p class="item-meta">${c.attendance} حضور · ${c.absent} غياب · الإجمالي: ${c.total} محاضرة</p>
     <div class="table-wrap" style="margin-top:10px">
@@ -1764,8 +1792,8 @@ function openAttendanceSessionsModal(cid) {
       </table>
     </div>
     <div class="actions" style="margin-top:14px">
-      ${c.att_url ? `<button class="btn btn-primary" onclick="openExternalLink('${escapeHTML(c.att_url)}')">فتح سجل الحضور في LMS ↗</button>` : ''}
-      <button class="btn" onclick="closeModal()">إغلاق</button>
+      ${c.att_url ? `<button class="btn btn-primary" data-action="open-link" data-url="${escapeHTML(c.att_url)}">فتح سجل الحضور في LMS ↗</button>` : ''}
+      <button class="btn" data-action="close-modal">إغلاق</button>
     </div>
   `;
   document.getElementById('modalBack').style.display = 'flex';
@@ -1791,16 +1819,16 @@ function announcementsPage() {
   return `
     ${header('إعلانات المقررات', 'الإعلانات والمنشورات الصادرة من مدرسي المقررات في منتديات الأخبار على LMS.')}
     <div class="toolbar">
-      <select class="field" id="newsFilter" onchange="filterNews()">
+      <select class="field" id="newsFilter" data-change="filter-news">
         <option value="all" ${f === 'all' ? 'selected' : ''}>كل الإعلانات (${announcements.length})</option>
         <option value="unread" ${f === 'unread' ? 'selected' : ''}>غير المقروءة (${unreadCount()})</option>
         <option value="read" ${f === 'read' ? 'selected' : ''}>المقروءة</option>
       </select>
-      <select class="field" id="newsCourse" onchange="filterNews()">
+      <select class="field" id="newsCourse" data-change="filter-news">
         <option value="all">كل المقررات</option>
         ${courses.map(co => `<option value="${escapeHTML(co.id)}" ${String(c) === String(co.id) ? 'selected' : ''}>${escapeHTML(co.name)}</option>`).join('')}
       </select>
-      <button class="btn" onclick="markAllRead()">تعليم الكل كمقروء</button>
+      <button class="btn" data-action="mark-all-read">تعليم الكل كمقروء</button>
     </div>
     <div class="notice-list" id="newsList">
       ${list.map(announceCard).join('') || '<div class="empty">لا توجد إعلانات ضمن هذا الفلتر حالياً.</div>'}
@@ -1826,13 +1854,13 @@ function openAnnouncementModal(id) {
         <span class="pill">إعلان مقرر</span>
         <h2 style="margin-top:8px">${escapeHTML(a.title)}</h2>
       </div>
-      <button class="close" onclick="closeModal()">×</button>
+      <button class="close" data-action="close-modal">×</button>
     </div>
     <p class="item-meta">${escapeHTML(a.course_name)}${a.author ? ' · الناشر: ' + escapeHTML(a.author) : ''} · ${escapeHTML(a.date)}</p>
     <div class="callout" style="white-space:pre-line">${escapeHTML(a.body)}</div>
     <div class="actions">
-      ${a.url ? `<button class="btn btn-primary" onclick="openExternalLink('${escapeHTML(a.url)}')">فتح الإعلان في LMS ↗</button>` : ''}
-      <button class="btn" onclick="closeModal()">إغلاق</button>
+      ${a.url ? `<button class="btn btn-primary" data-action="open-link" data-url="${escapeHTML(a.url)}">فتح الإعلان في LMS ↗</button>` : ''}
+      <button class="btn" data-action="close-modal">إغلاق</button>
     </div>
   `;
   document.getElementById('modalBack').style.display = 'flex';
@@ -1865,11 +1893,11 @@ function filesPage() {
   return `
     ${header('ملفات المقررات', 'المحاضرات والشرائح والملفات الدراسية التي رُفعت على صفحات مقرراتك في LMS.')}
     <div class="toolbar">
-      <select class="field" id="fileCourse" onchange="filterFiles()">
+      <select class="field" id="fileCourse" data-change="filter-files">
         <option value="all">كل المقررات (${files.length} ملف)</option>
         ${courses.map(co => `<option value="${escapeHTML(co.name)}" ${c === co.name ? 'selected' : ''}>${escapeHTML(co.name)}</option>`).join('')}
       </select>
-      <input class="field search" id="fileSearch" value="${escapeHTML(fileFilterState.q)}" placeholder="ابحث عن ملف أو محاضرة..." oninput="filterFiles()">
+      <input class="field search" id="fileSearch" value="${escapeHTML(fileFilterState.q)}" placeholder="ابحث عن ملف أو محاضرة..." data-input="filter-files">
     </div>
     <div class="file-list" id="fileList">
       ${list.map(fileCard).join('') || '<div class="empty">لا توجد ملفات مطابقة لبحثك.</div>'}
@@ -1898,7 +1926,8 @@ function notificationsPage() {
       pill: 'pill',
       title: a.title,
       meta: `${a.course_name} · ${a.date}`,
-      onclick: `openAnnouncementModal('${escapeHTML(a.id)}')`
+      action: 'open-announcement',
+      id: String(a.id)
     })),
     ...tasks.filter(t => !isTaskDone(t)).map(t => {
       const [lbl, cl] = dueInfo(t);
@@ -1907,7 +1936,8 @@ function notificationsPage() {
         pill: cl,
         title: `${t.type}: ${t.title}`,
         meta: `${t.course_name} · ${fmtDate(t.dueDateObj, t.due_str)}`,
-        onclick: `taskDetail('${escapeHTML(t.id)}')`
+        action: 'task-detail',
+        id: String(t.id)
       };
     }),
     ...courses.filter(c => c.total > 0 && Math.round((c.absent / c.total) * 100) >= limit).map(c => ({
@@ -1915,14 +1945,17 @@ function notificationsPage() {
       pill: 'pill red',
       title: `تجاوز حد الغياب الشخصي في: ${c.name}`,
       meta: `${c.absent} غياب من ${c.total} محاضرة (${Math.round((c.absent / c.total) * 100)}٪)`,
-      onclick: `go('attendance')`
+      action: 'go',
+      page: 'attendance'
     })),
     ...reminders.map((r, idx) => ({
       kind: 'تذكير شخصي',
       pill: 'pill purple',
       title: `تذكير: ${r.title}`,
       meta: `${r.course_name ? r.course_name + ' · ' : ''}${r.when}`,
-      onclick: r.task_id ? `taskDetail('${escapeHTML(r.task_id)}')` : `toast('تذكير شخصي محفوظ')`,
+      action: r.task_id ? 'task-detail' : 'show-toast',
+      id: r.task_id ? String(r.task_id) : '',
+      msg: r.task_id ? '' : 'تذكير شخصي محفوظ',
       delIdx: idx
     }))
   ];
@@ -1930,20 +1963,20 @@ function notificationsPage() {
   return `
     ${header('مركز الإشعارات والتنبيهات', 'الإعلانات غير المقروءة والمهام الجارية وتنبيهات الغياب والتذكيرات الشخصية في مكان واحد.')}
     <div class="toolbar">
-      <button class="btn" onclick="markAllRead()">تعليم الإعلانات كمقروءة</button>
-      <button class="btn" onclick="openCustomReminderModal()">＋ تذكير شخصي جديد</button>
+      <button class="btn" data-action="mark-all-read">تعليم الإعلانات كمقروءة</button>
+      <button class="btn" data-action="open-custom-reminder">＋ تذكير شخصي جديد</button>
       <span class="tag">${entries.length} عناصر</span>
     </div>
     <div class="generic-list">
       ${entries.map(e => `
         <article class="generic-row">
           <div>
-            <button class="text-link item-title" onclick="${e.onclick}">${escapeHTML(e.title)}</button>
+            <button class="text-link item-title" data-action="${escapeHTML(e.action)}"${e.id ? ` data-id="${escapeHTML(e.id)}"` : ''}${e.page ? ` data-page="${escapeHTML(e.page)}"` : ''}${e.msg ? ` data-msg="${escapeHTML(e.msg)}"` : ''}>${escapeHTML(e.title)}</button>
             <div class="item-meta">${escapeHTML(e.meta)}</div>
           </div>
           <div style="display:flex;align-items:center;gap:6px">
-            <span class="${e.pill}">${escapeHTML(e.kind)}</span>
-            ${typeof e.delIdx === 'number' ? `<button class="btn" style="padding:4px 8px" title="حذف التذكير" onclick="removePersonalReminder(${e.delIdx})">×</button>` : ''}
+            <span class="${escapeHTML(e.pill)}">${escapeHTML(e.kind)}</span>
+            ${typeof e.delIdx === 'number' ? `<button class="btn" style="padding:4px 8px" title="حذف التذكير" data-action="remove-personal-reminder" data-index="${Number(e.delIdx)}">×</button>` : ''}
           </div>
         </article>
       `).join('') || '<div class="empty">لا توجد إشعارات أو تنبيهات معلقة حالياً.</div>'}
@@ -1957,7 +1990,7 @@ function openCustomReminderModal(taskId = '') {
   document.getElementById('modal').innerHTML = `
     <div class="modal-head">
       <h2>إضافة تذكير شخصي</h2>
-      <button class="close" onclick="closeModal()">×</button>
+      <button class="close" data-action="close-modal">×</button>
     </div>
     <div class="form-grid" style="margin-top:12px">
       <div>
@@ -1969,8 +2002,8 @@ function openCustomReminderModal(taskId = '') {
         <input id="remWhen" class="field" style="width:100%" placeholder="مثال: غداً الساعة ٨ مساءً / قبل الموعد بيوم">
       </div>
       <div class="actions">
-        <button class="btn btn-primary" onclick="saveCustomReminder('${escapeHTML(taskId)}', '${escapeHTML(t ? t.course_name : '')}')">حفظ التذكير</button>
-        <button class="btn" onclick="closeModal()">إلغاء</button>
+        <button class="btn btn-primary" data-action="save-custom-reminder" data-task-id="${escapeHTML(taskId)}" data-course-name="${escapeHTML(t ? t.course_name : '')}">حفظ التذكير</button>
+        <button class="btn" data-action="close-modal">إلغاء</button>
       </div>
     </div>
   `;
@@ -2031,7 +2064,7 @@ function settingsPage() {
       ${prefItems.map(([k, t, d]) => `
         <div class="setting">
           <div><strong>${t}</strong><p>${d}</p></div>
-          <input class="switch" type="checkbox" ${userProfile[k] ? 'checked' : ''} onchange="setServerPref('${k}', this.checked)">
+          <input class="switch" type="checkbox" ${userProfile[k] ? 'checked' : ''} data-change="set-server-pref" data-key="${escapeHTML(k)}">
         </div>
       `).join('')}
     </div>
@@ -2043,7 +2076,7 @@ function settingsPage() {
           <strong>تكرار الفحص التلقائي</strong>
           <p>الفترة الزمنية بين كل دورة فحص آلي لحسابك في LMS.</p>
         </div>
-        <select class="field" onchange="setServerInterval(this.value)">
+        <select class="field" data-change="set-server-interval">
           ${intervals.map(([n, lbl]) => `<option value="${n}" ${Number(userProfile.check_interval) === n ? 'selected' : ''}>${lbl}</option>`).join('')}
         </select>
       </div>
@@ -2052,10 +2085,10 @@ function settingsPage() {
           <strong>تشغيل المراقبة التلقائية النشطة</strong>
           <p>فحص المقررات في الخلفية على مدار الساعة وإرسال تنبيهات تيليجرام.</p>
         </div>
-        <input class="switch" type="checkbox" ${userProfile.is_monitoring ? 'checked' : ''} onchange="setServerMonitoring(this.checked)">
+        <input class="switch" type="checkbox" ${userProfile.is_monitoring ? 'checked' : ''} data-change="set-server-monitoring">
       </div>
       <div style="padding:12px 14px">
-        <button class="btn btn-primary" onclick="syncNow()">↻ فحص فوري الآن لكافة المقررات</button>
+        <button class="btn btn-primary" data-action="sync-now">↻ فحص فوري الآن لكافة المقررات</button>
       </div>
     </div>
 
@@ -2071,9 +2104,9 @@ function settingsPage() {
         </div>
         <div class="callout info">كلمة المرور مشفرة ومحفوظة بأمان لمعالجة جلسات المراقبة التلقائية مع بوابة جامعة مؤتة.</div>
         <div class="actions">
-          <button class="btn btn-primary" onclick="openAddCourseModal()">＋ إضافة مقرر برقم ID</button>
-          <button class="btn" onclick="syncAllCoursesFromLms()">استيراد مقرراتي من LMS</button>
-          <button class="btn btn-danger" onclick="logoutAccount()">تسجيل الخروج من الحساب</button>
+          <button class="btn btn-primary" data-action="open-add-course-modal">＋ إضافة مقرر برقم ID</button>
+          <button class="btn" data-action="sync-all-courses">استيراد مقرراتي من LMS</button>
+          <button class="btn btn-danger" data-action="logout-account">تسجيل الخروج من الحساب</button>
         </div>
       </div>
     ` : loginBannerCard()}
@@ -2098,8 +2131,8 @@ function appDevicePanel() {
         <span class="pill ${linked ? 'good' : 'warn'}">${linked ? 'جهاز مرتبط' : 'غير مرتبط'}</span>
       </div>
       <div class="actions">
-        ${!installed && deferredInstall ? `<button class="btn btn-primary" onclick="installApp()">⬇ تثبيت التطبيق</button>` : ''}
-        ${linked ? `<button class="btn btn-danger" onclick="unlinkThisDevice()">فصل هذا الجهاز</button>` : ''}
+        ${!installed && deferredInstall ? `<button class="btn btn-primary" data-action="install-app">⬇ تثبيت التطبيق</button>` : ''}
+        ${linked ? `<button class="btn btn-danger" data-action="unlink-device">فصل هذا الجهاز</button>` : ''}
       </div>
       ${!installed && !deferredInstall ? `<div class="callout info">${ios
         ? 'للتثبيت على آيفون: افتح الصفحة في Safari ← زر المشاركة ← «إضافة إلى الشاشة الرئيسية».'
@@ -2108,13 +2141,19 @@ function appDevicePanel() {
   `;
 }
 
+const _ALLOWED_PREF_KEYS = new Set([
+  'notify_assign', 'notify_quiz', 'notify_resource',
+  'notify_grade', 'notify_announcement', 'notify_attendance'
+]);
+
 async function setServerPref(key, val) {
+  if (!_ALLOWED_PREF_KEYS.has(key)) return;
   userProfile[key] = Boolean(val);
   try {
     await fetch('/api/update-settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '', [key]: Boolean(val) })
+      body: JSON.stringify({ tid: getTelegramId(), [key]: Boolean(val) })
     });
     toast('تم حفظ تفضيل الإشعارات في النظام');
   } catch (e) {
@@ -2129,7 +2168,7 @@ async function setServerInterval(val) {
     await fetch('/api/update-settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '', check_interval: num })
+      body: JSON.stringify({ tid: getTelegramId(), check_interval: num })
     });
     toast(`تم ضبط فترة الفحص التلقائي: كل ${num} دقائق`);
   } catch (e) {
@@ -2144,7 +2183,7 @@ async function setServerMonitoring(val) {
     await fetch('/api/update-settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '', is_monitoring: Boolean(val) })
+      body: JSON.stringify({ tid: getTelegramId(), is_monitoring: Boolean(val) })
     });
     toast(val ? 'تم تفعيل المراقبة التلقائية' : 'تم إيقاف المراقبة التلقائية');
   } catch (e) {
@@ -2158,7 +2197,7 @@ async function logoutAccount() {
     const res = await fetch('/api/logout', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '' })
+      body: JSON.stringify({ tid: getTelegramId() })
     });
     const d = await res.json();
     if (d.success) {
@@ -2211,7 +2250,7 @@ function helpPage() {
     </div>
     <div class="section-head">
       <h2>سجل عمليات المزامنة</h2>
-      <button onclick="go('settings')">الإعدادات ←</button>
+      <button data-action="go" data-page="settings">الإعدادات ←</button>
     </div>
     <div class="generic-list">
       ${syncLogs.slice(0, 8).map(l => `
@@ -2242,7 +2281,7 @@ function taskDetail(id) {
         <span class="pill ${pillMod}">${escapeHTML(t.type)}</span>
         <h2 style="margin-top:8px">${escapeHTML(t.title)}</h2>
       </div>
-      <button class="close" onclick="closeModal()">×</button>
+      <button class="close" data-action="close-modal">×</button>
     </div>
     <p class="item-meta">${escapeHTML(t.course_name)} · ${escapeHTML(c.teacher)}</p>
     <div class="callout">
@@ -2251,15 +2290,15 @@ function taskDetail(id) {
       ${t.grade ? `<br><b>الدرجة المرصودة:</b> ${escapeHTML(t.grade.grade_val)}${t.grade.grade_max ? ' / ' + escapeHTML(t.grade.grade_max) : ''}` : ''}
     </div>
     <div class="actions">
-      <button class="btn btn-primary" onclick="openExternalLink('${escapeHTML(t.url)}')">فتح المهمة في LMS ↗</button>
-      <button class="btn" onclick="openCustomReminderModal('${escapeHTML(t.id)}')">＋ تذكير شخصي</button>
-      <button class="btn" onclick="downloadICS('${escapeHTML(t.id)}')">إضافة للتقويم (.ics)</button>
-      <button class="btn" onclick="toggleDone('${escapeHTML(t.id)}', true)">${done ? 'إلغاء الإنجاز' : 'تسجيل إنجاز ✓'}</button>
+      <button class="btn btn-primary" data-action="open-link" data-url="${escapeHTML(t.url)}">فتح المهمة في LMS ↗</button>
+      <button class="btn" data-action="open-custom-reminder" data-id="${escapeHTML(t.id)}">＋ تذكير شخصي</button>
+      <button class="btn" data-action="download-ics" data-id="${escapeHTML(t.id)}">إضافة للتقويم (.ics)</button>
+      <button class="btn" data-action="toggle-done" data-id="${escapeHTML(t.id)}" data-reopen="1">${done ? 'إلغاء الإنجاز' : 'تسجيل إنجاز ✓'}</button>
     </div>
     <div class="section-head"><h2>ملاحظتك الشخصية</h2></div>
     <textarea id="taskNote" class="field" style="width:100%;min-height:80px" placeholder="اكتب ملاحظة أو خطوة تالية حول هذا الواجب أو الاختبار...">${escapeHTML(note)}</textarea>
     <div class="actions">
-      <button class="btn btn-primary" onclick="saveNote('${escapeHTML(t.id)}')">حفظ الملاحظة</button>
+      <button class="btn btn-primary" data-action="save-note" data-id="${escapeHTML(t.id)}">حفظ الملاحظة</button>
       <span class="tag">تُحفظ في حسابك وعلى هذا الجهاز</span>
     </div>
   `;
@@ -2290,7 +2329,6 @@ async function toggleDone(id, reopenModal = false) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         tid: getTelegramId(),
-        initData: tg?.initData || '',
         content_id: sid,
         is_submitted: nextDone ? 1 : 0
       })
@@ -2315,6 +2353,7 @@ function downloadICS(id) {
   const date = t.dueDateObj || new Date(Date.now() + 86400000);
   const stamp = date.toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
   const nowStamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  const safeUrl = safeHttpUrl(t.url) || '';
   const ics = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
@@ -2324,8 +2363,8 @@ function downloadICS(id) {
     `DTSTAMP:${nowStamp}`,
     `DTSTART:${stamp}`,
     `SUMMARY:${t.title} (${t.course_name})`,
-    `DESCRIPTION:${t.course_name} - ${t.type} - ${t.url}`,
-    `URL:${t.url}`,
+    `DESCRIPTION:${t.course_name} - ${t.type}${safeUrl ? ' - ' + safeUrl : ''}`,
+    ...(safeUrl ? [`URL:${safeUrl}`] : []),
     'END:VEVENT',
     'END:VCALENDAR'
   ].join('\r\n');
@@ -2357,7 +2396,7 @@ async function syncNow() {
     const res = await fetch('/api/force-check', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tid: getTelegramId(), initData: tg?.initData || '' })
+      body: JSON.stringify({ tid: getTelegramId() })
     });
     const d = await res.json();
     await fetchUserData();
@@ -2384,6 +2423,115 @@ function toast(s) {
   clearTimeout(window.toastTimer);
   window.toastTimer = setTimeout(() => { e.style.display = 'none'; }, 3000);
 }
+
+// C1: Document-level event delegation with explicit null-prototype allowlists (no inline handlers)
+const _CLICK_ACTIONS = Object.assign(Object.create(null), {
+  'go': (el) => go(el.dataset.page),
+  'close-and-go': (el) => { closeModal(); go(el.dataset.page); },
+  'close-modal': () => closeModal(),
+  'close-modal-backdrop': (el, e) => { if (e.target === el) closeModal(); },
+  'submit-pair-code': () => submitPairCode(),
+  'sync-now': () => syncNow(),
+  'open-more-menu': () => openMoreMenuModal(),
+  'submit-login': () => submitLogin(),
+  'open-course': (el) => openCourse(el.dataset.id),
+  'task-detail': (el) => taskDetail(el.dataset.id),
+  'toggle-done': (el) => toggleDone(el.dataset.id, el.dataset.reopen === '1'),
+  'open-announcement': (el) => openAnnouncementModal(el.dataset.id),
+  'read-announcement': (el) => readAnnouncement(el.dataset.id),
+  'open-link': (el) => openExternalLink(el.dataset.url),
+  'change-week': (el) => changeWeek(Number(el.dataset.delta || 0), el.dataset.reset === '1'),
+  'open-schedule-modal': () => openScheduleModal(),
+  'save-all-schedules': () => saveAllSchedules(),
+  'open-add-course-modal': () => openAddCourseModal(),
+  'submit-add-course': () => submitAddCourse(),
+  'sync-all-courses': () => syncAllCoursesFromLms(),
+  'close-and-sync-courses': () => { closeModal(); syncAllCoursesFromLms(); },
+  'open-edit-course-meta': (el) => openEditCourseMetaModal(el.dataset.id),
+  'save-course-meta': (el) => saveSingleCourseMeta(el.dataset.id),
+  'toggle-course-monitoring': (el) => toggleCourseMonitoring(el.dataset.id),
+  'remove-course': (el) => removeCourseById(el.dataset.id),
+  'open-attendance-sessions': (el) => openAttendanceSessionsModal(el.dataset.id),
+  'mark-all-read': () => markAllRead(),
+  'open-custom-reminder': (el) => openCustomReminderModal(el.dataset.id || ''),
+  'save-custom-reminder': (el) => saveCustomReminder(el.dataset.taskId || '', el.dataset.courseName || ''),
+  'remove-personal-reminder': (el) => {
+    const idx = Number(el.dataset.index);
+    if (Number.isInteger(idx) && idx >= 0) removePersonalReminder(idx);
+  },
+  'show-toast': (el) => toast(el.dataset.msg || ''),
+  'logout-account': () => logoutAccount(),
+  'install-app': () => installApp(),
+  'unlink-device': () => unlinkThisDevice(),
+  'download-ics': (el) => downloadICS(el.dataset.id),
+  'save-note': (el) => saveNote(el.dataset.id)
+});
+
+const _CHANGE_ACTIONS = Object.assign(Object.create(null), {
+  'filter-tasks': () => filterTasks(),
+  'filter-grades': () => filterGrades(),
+  'filter-news': () => filterNews(),
+  'filter-files': () => filterFiles(),
+  'set-limit': (el) => setLimit(el.value),
+  'set-server-pref': (el) => setServerPref(el.dataset.key, el.checked),
+  'set-server-interval': (el) => setServerInterval(el.value),
+  'set-server-monitoring': (el) => setServerMonitoring(el.checked)
+});
+
+const _INPUT_ACTIONS = Object.assign(Object.create(null), {
+  'filter-courses': (el) => filterCourses(el.value),
+  'filter-files': () => filterFiles()
+});
+
+const _KEYDOWN_ACTIONS = Object.assign(Object.create(null), {
+  'submit-pair-code': (el, e) => { if (e.key === 'Enter') submitPairCode(); }
+});
+
+document.addEventListener('click', (e) => {
+  const el = e.target && typeof e.target.closest === 'function' ? e.target.closest('[data-action]') : null;
+  if (!el) return;
+  const action = el.dataset && el.dataset.action;
+  if (action && Object.prototype.hasOwnProperty.call(_CLICK_ACTIONS, action)) {
+    _CLICK_ACTIONS[action](el, e);
+  }
+});
+
+document.addEventListener('change', (e) => {
+  const el = e.target && typeof e.target.closest === 'function' ? e.target.closest('[data-change]') : null;
+  if (!el) return;
+  const action = el.dataset && el.dataset.change;
+  if (action && Object.prototype.hasOwnProperty.call(_CHANGE_ACTIONS, action)) {
+    _CHANGE_ACTIONS[action](el, e);
+  }
+});
+
+document.addEventListener('input', (e) => {
+  const el = e.target && typeof e.target.closest === 'function' ? e.target.closest('[data-input]') : null;
+  if (!el) return;
+  const action = el.dataset && el.dataset.input;
+  if (action && Object.prototype.hasOwnProperty.call(_INPUT_ACTIONS, action)) {
+    _INPUT_ACTIONS[action](el, e);
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  const el = e.target && typeof e.target.closest === 'function' ? e.target.closest('[data-keydown]') : null;
+  if (!el) return;
+  const action = el.dataset && el.dataset.keydown;
+  if (action && Object.prototype.hasOwnProperty.call(_KEYDOWN_ACTIONS, action)) {
+    _KEYDOWN_ACTIONS[action](el, e);
+  }
+});
+
+document.addEventListener('error', (e) => {
+  const el = e.target;
+  const mode = el && el.dataset && el.dataset.imgFallback;
+  if (!mode) return;
+  el.style.display = 'none';
+  if (mode === 'next' && el.nextElementSibling) {
+    el.nextElementSibling.style.display = 'grid';
+  }
+}, true);
 
 // Initial render & live fetch
 (async function boot() {
