@@ -47,6 +47,7 @@ class LMSScraper:
         self.last_fetch_ok = True
         self.session_expired = False
         self.waf_blocked = False
+        self.credentials_invalid = False
 
     @staticmethod
     def _clean_url(url: str) -> str:
@@ -170,6 +171,7 @@ class LMSScraper:
         self.logged_in = False
         self.session_expired = False
         self.waf_blocked = False
+        self.credentials_invalid = False
         self.last_fetch_ok = True
         self.error_message = None
         try:
@@ -227,6 +229,7 @@ class LMSScraper:
             resp = self.session.post(
                 post_url,
                 data=payload,
+                headers={"Referer": LMS_LOGIN_URL, "Origin": LMS_BASE_URL},
                 timeout=30,
                 allow_redirects=True
             )
@@ -266,6 +269,12 @@ class LMSScraper:
             err = soup.find(class_=["loginerrors", "alert-danger", "error"]) or soup.find(id="loginerrormessage")
             if err:
                 msg = err.get_text(" ", strip=True)
+                msg_low = msg.lower()
+                if any(k in msg_low for k in (
+                    "invalid login", "incorrect", "غير صحيحة", "غير صحيح",
+                    "خطأ في اسم المستخدم", "wrong password",
+                )):
+                    self.credentials_invalid = True
             else:
                 title = soup.title.get_text(strip=True) if soup.title else ""
                 msg = f"بيانات غير صحيحة أو تم حظر الجلسة (الصفحة: {title})"
@@ -1378,6 +1387,9 @@ class LMSScraper:
             soup = BeautifulSoup(resp.text, "lxml")
 
             # 1. Check all tables on the quiz page (handles quizreviewsummary cards & quizattemptsummary tables)
+            # Note: Moodle shows BOTH 'Marks' (raw points, e.g. 5/5) AND 'Grade' (scaled grade, e.g. 10/10).
+            # Always prefer 'Grade' over 'Marks'.
+            has_final_grade_row = False
             for tr in soup.find_all("tr"):
                 cells = [c.get_text(" ", strip=True) for c in tr.find_all(["th", "td"])]
                 if not cells:
@@ -1394,7 +1406,16 @@ class LMSScraper:
                     elif any(k in hdr for k in ["completed", "اكتمل", "تاريخ الإكتمال"]) and len(val) > 4 and val not in ("-", "—"):
                         result["is_submitted"] = True
                         result["status_text"] = result["status_text"] or "تم الحل (Finished)"
-                    elif any(k in hdr for k in ["grade", "mark", "الدرجة", "العلامة", "النتيجة"]) and not result["grade_val"]:
+                    elif any(k in hdr for k in ["grade", "الدرجة", "العلامة", "النتيجة"]):
+                        pg = self._parse_quiz_grade_text(val_raw)
+                        if pg.get("grade_val"):
+                            result["grade_val"] = pg["grade_val"]
+                            result["grade_max"] = pg.get("grade_max", "")
+                            result["percentage"] = pg.get("percentage", "")
+                            result["is_submitted"] = True
+                            result["status_text"] = result["status_text"] or "تم التقييم"
+                            has_final_grade_row = True
+                    elif any(k in hdr for k in ["mark", "marks", "نقاط"]) and not has_final_grade_row and not result["grade_val"]:
                         pg = self._parse_quiz_grade_text(val_raw)
                         if pg.get("grade_val"):
                             result["grade_val"] = pg["grade_val"]
@@ -1472,10 +1493,12 @@ class LMSScraper:
             logger.debug(f"Error checking quiz status at {url}: {e}")
         return result
 
-    def download_resource(self, url: str, max_mb: int = 40, raw_url: Optional[str] = None) -> Optional[tuple]:
+    def download_resource(self, url: str, max_mb: int = 40, raw_url: Optional[str] = None,
+                          referer: Optional[str] = None) -> Optional[tuple]:
         """Download a resource file from Moodle safely.
 
         Tries raw_url (with same-session NetScaler __ncforminfo if present) first, then falls back to url.
+        Passes Referer header to match browser behavior with NetScaler AppFW.
         Returns:
             Tuple[str, bytes] -> (filename, file_content_bytes) if successful, None otherwise.
         """
@@ -1484,10 +1507,11 @@ class LMSScraper:
             if raw_url and raw_url != url:
                 candidates.append(raw_url)
             candidates.append(url)
+            req_headers = {"Referer": referer} if referer else {"Referer": f"{LMS_BASE_URL}/my/"}
 
             resp = None
             for cand in candidates:
-                r = self.authenticated_get(cand, timeout=30, stream=True, allow_redirects=True)
+                r = self.authenticated_get(cand, timeout=30, stream=True, allow_redirects=True, headers=req_headers)
                 if r.status_code == 200:
                     resp = r
                     break

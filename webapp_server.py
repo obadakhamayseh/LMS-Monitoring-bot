@@ -524,6 +524,14 @@ class WebAppRequestHandler(BaseHTTPRequestHandler):
                     return
 
                 db.save_user(tid, raw_user, raw_pass, scraper.user_id, scraper.full_name)
+                if _ENGINE:
+                    try:
+                        _ENGINE._auth_required.discard(tid)
+                        _ENGINE._auth_alerted.discard(tid)
+                        _ENGINE._waf_backoff_until.pop(tid, None)
+                        _ENGINE._transient_backoff_until.pop(tid, None)
+                    except Exception:
+                        pass
                 self._send_json({"success": True})
             finally:
                 scraper.close()
