@@ -1552,12 +1552,48 @@ def _build_user_data_payload(tid: int) -> dict[str, Any]:
     }
 
 
+def _persist_webapp_session(tid: int, scraper: Any) -> None:
+    """Save active LMS cookies encrypted in DB to avoid redundant logins."""
+    export_fn = getattr(scraper, "export_session_state", None)
+    save_fn = getattr(db, "save_lms_session", None)
+    if not callable(export_fn) or not callable(save_fn):
+        return
+    try:
+        state = export_fn()
+        if isinstance(state, dict) and state.get("cookies"):
+            save_fn(tid, state)
+    except Exception as exc:
+        logger.debug("Could not persist webapp LMS session for %s: %s", tid, exc)
+
+
+def _open_webapp_scraper(tid: int, user: dict) -> tuple[Any, bool, bool]:
+    """Create LMSScraper and restore saved encrypted session cookies before falling back to login().
+
+    Returns `(scraper, auth_ok, restored_from_db)`.
+    """
+    scraper = LMSScraper(user["lms_username"], user["lms_password"])
+    load_fn = getattr(db, "load_lms_session", None)
+    restore_fn = getattr(scraper, "restore_session_state", None)
+    if callable(load_fn) and callable(restore_fn):
+        try:
+            saved = load_fn(tid)
+            if saved and restore_fn(saved):
+                return scraper, True, True
+        except Exception as exc:
+            logger.debug("Could not restore webapp LMS session for %s: %s", tid, exc)
+    if scraper.login():
+        _persist_webapp_session(tid, scraper)
+        return scraper, True, False
+    return scraper, False, False
+
+
 def _do_lms_login(tid: int, username: str, password: str) -> tuple[int, dict[str, Any]]:
     scraper = LMSScraper(username, password)
     try:
         if not scraper.login():
             return 401, {"success": False, "error": scraper.error_message or "فشل تسجيل الدخول إلى LMS"}
         db.save_user(tid, username, password, scraper.user_id, scraper.full_name)
+        _persist_webapp_session(tid, scraper)
         if _ENGINE is not None:
             try:
                 _ENGINE.invalidate_user_session(tid, logout=False)
@@ -1584,11 +1620,18 @@ def _do_sync_courses(tid: int) -> tuple[int, dict[str, Any]]:
     if not user:
         return 404, {"success": False, "not_registered": True, "error": "المستخدم غير مسجل"}
 
-    scraper = LMSScraper(user["lms_username"], user["lms_password"])
+    scraper, auth_ok, restored = _open_webapp_scraper(tid, user)
     try:
-        if not scraper.login():
+        if not auth_ok:
             return 400, {"success": False, "error": scraper.error_message or "فشل تسجيل الدخول إلى LMS"}
         courses_list = scraper.get_courses()
+        if restored and getattr(scraper, "session_expired", False):
+            if hasattr(db, "clear_lms_session"):
+                db.clear_lms_session(tid)
+            if not scraper.login():
+                return 400, {"success": False, "error": scraper.error_message or "فشل تسجيل الدخول إلى LMS"}
+            _persist_webapp_session(tid, scraper)
+            courses_list = scraper.get_courses()
         if getattr(scraper, "waf_blocked", False):
             return 429, {
                 "success": False,
@@ -1635,6 +1678,7 @@ def _do_sync_courses(tid: int) -> tuple[int, dict[str, Any]]:
             if result.content:
                 _persist_course_content(tid, cid, result.content, course_name=c.get("name", ""))
 
+        _persist_webapp_session(tid, scraper)
         db.update_last_check(tid)
         db.append_sync_log(tid, "استيراد المقررات", f"تم جلب ومزامنة {added} مقررات من LMS")
         return 200, {"success": True, "synced_count": added}
@@ -1647,16 +1691,24 @@ def _do_add_course(tid: int, cid: int) -> tuple[int, dict[str, Any]]:
     if not user:
         return 404, {"success": False, "not_registered": True, "error": "المستخدم غير مسجل"}
 
-    scraper = LMSScraper(user["lms_username"], user["lms_password"])
+    scraper, auth_ok, restored = _open_webapp_scraper(tid, user)
     try:
-        if not scraper.login():
+        if not auth_ok:
             return 400, {"success": False, "error": scraper.error_message or "فشل تسجيل الدخول إلى LMS"}
         cname, content = scraper.get_course_info(cid)
+        if restored and getattr(scraper, "session_expired", False):
+            if hasattr(db, "clear_lms_session"):
+                db.clear_lms_session(tid)
+            if not scraper.login():
+                return 400, {"success": False, "error": scraper.error_message or "فشل تسجيل الدخول إلى LMS"}
+            _persist_webapp_session(tid, scraper)
+            cname, content = scraper.get_course_info(cid)
         if not cname:
             return 404, {"success": False, "error": f"لم يتم العثور على مادة بالرقم {cid}"}
         curl = f"https://mulms.mutah.edu.jo/course/view.php?id={cid}"
         db.add_course(tid, cid, cname, curl)
         _persist_course_content(tid, cid, content, course_name=cname)
+        _persist_webapp_session(tid, scraper)
         db.update_last_check(tid)
         db.append_sync_log(tid, "إضافة مقرر", f"تم ربط ومزامنة مقرر: {cname}")
         return 200, {"success": True, "course_name": cname, "course_id": cid}
@@ -1673,9 +1725,9 @@ def _do_force_check(tid: int) -> tuple[int, dict[str, Any]]:
     if not courses:
         return 400, {"success": False, "error": "لا توجد مقررات مفعلة للمراقبة"}
 
-    scraper = LMSScraper(user["lms_username"], user["lms_password"])
+    scraper, auth_ok, restored = _open_webapp_scraper(tid, user)
     try:
-        if not scraper.login():
+        if not auth_ok:
             return 400, {"success": False, "error": scraper.error_message or "فشل تسجيل الدخول إلى LMS"}
 
         # H15: Load all seen content once in memory instead of calling db.is_seen per item
@@ -1687,6 +1739,7 @@ def _do_force_check(tid: int) -> tuple[int, dict[str, Any]]:
         }
 
         new_items = 0
+        relogged_once = False
         for c in courses:
             cid = c["course_id"]
             try:
@@ -1694,6 +1747,19 @@ def _do_force_check(tid: int) -> tuple[int, dict[str, Any]]:
             except Exception as exc:
                 logger.warning("Error fetching course %s in force-check: %s", cid, exc)
                 continue
+
+            if restored and not relogged_once and (result.session_expired or getattr(scraper, "session_expired", False)):
+                relogged_once = True
+                if hasattr(db, "clear_lms_session"):
+                    db.clear_lms_session(tid)
+                if not scraper.login():
+                    return 400, {"success": False, "error": scraper.error_message or "فشل تسجيل الدخول إلى LMS"}
+                _persist_webapp_session(tid, scraper)
+                try:
+                    result = scraper.fetch_course_content(cid)
+                except Exception as exc:
+                    logger.warning("Error retrying course %s in force-check: %s", cid, exc)
+                    continue
 
             if result.waf_blocked or getattr(scraper, "waf_blocked", False):
                 return 429, {
@@ -1723,6 +1789,7 @@ def _do_force_check(tid: int) -> tuple[int, dict[str, Any]]:
                         new_items += 1
             _persist_course_content(tid, cid, content, course_name=c.get("course_name", ""))
 
+        _persist_webapp_session(tid, scraper)
         db.update_last_check(tid)
         detail_msg = (
             f"تم فحص {len(courses)} مقررات — رُصد {new_items} عنصر جديد"

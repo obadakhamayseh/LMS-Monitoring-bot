@@ -166,6 +166,27 @@ class MonitorEngine:
         if current:
             self._close_scraper_sync(current[2], logout=logout)
 
+    @staticmethod
+    def _persist_scraper_session_sync(tid: int, scraper: Any) -> None:
+        """Persist active LMS cookies encrypted in DB so restarts resume without re-logging in."""
+        if not scraper or not getattr(scraper, "logged_in", False):
+            return
+        export_fn = getattr(scraper, "export_session_state", None)
+        save_fn = getattr(db, "save_lms_session", None)
+        if not callable(export_fn) or not callable(save_fn):
+            return
+        try:
+            state = export_fn()
+            if isinstance(state, dict) and state.get("cookies"):
+                save_fn(int(tid), state)
+        except Exception as exc:
+            logger.debug("Ignoring LMS session persist error for %s: %s", tid, exc)
+
+    async def _persist_scraper_session_async(self, tid: int, scraper: Any) -> None:
+        if not scraper or not getattr(scraper, "logged_in", False):
+            return
+        await self._run_db(self._persist_scraper_session_sync, int(tid), scraper)
+
     async def invalidate_user_session_async(self, telegram_id: int, logout: bool = True) -> None:
         """Async locked session invalidation: discards scraper (via executor) and clears user state."""
         tid = int(telegram_id)
@@ -173,6 +194,8 @@ class MonitorEngine:
         async with lock:
             with self._state_lock:
                 self._clear_user_state_locked(tid)
+            if logout and hasattr(db, "clear_lms_session"):
+                await self._run_db(db.clear_lms_session, tid)
             await self._discard_session_async(tid, logout=logout)
 
     def invalidate_user_session(
@@ -584,6 +607,8 @@ class MonitorEngine:
         tid = int(user["telegram_id"])
         loop = asyncio.get_running_loop()
         if force_fresh:
+            if hasattr(db, "clear_lms_session"):
+                await self._run_db(db.clear_lms_session, tid)
             await self._discard_session_async(tid, logout=False)
         scraper = self._get_session(user)
         if scraper.logged_in:
@@ -596,6 +621,7 @@ class MonitorEngine:
                 self._auth_required.discard(tid)
                 self._auth_alerted.discard(tid)
                 self._transient_backoff_until.pop(tid, None)
+            await self._persist_scraper_session_async(tid, scraper)
             return scraper, None
 
         if scraper.waf_blocked:
@@ -755,6 +781,7 @@ class MonitorEngine:
                         "requests_saved": cycle_m.estimated_requests_saved if cycle_m else 0,
                     }
                 )
+                await self._persist_scraper_session_async(tid, scraper)
                 await self._run_db(db.update_last_check, tid)
                 try:
                     await self._run_db(
@@ -794,6 +821,15 @@ class MonitorEngine:
                 return current[2]
             old_scraper = current[2] if current else None
             scraper = LMSScraper(username, password)
+            load_fn = getattr(db, "load_lms_session", None)
+            restore_fn = getattr(scraper, "restore_session_state", None)
+            if callable(load_fn) and callable(restore_fn):
+                try:
+                    saved = load_fn(tid)
+                    if saved and restore_fn(saved):
+                        logger.info("Restored persisted LMS session for user %s (no re-login needed)", tid)
+                except Exception as exc:
+                    logger.debug("Could not restore persisted LMS session for %s: %s", tid, exc)
             self._sessions[tid] = (username, password, scraper)
         if old_scraper is not None:
             self._close_scraper_sync(old_scraper, logout=False)
@@ -809,6 +845,8 @@ class MonitorEngine:
                 self._clear_user_state_locked(tid)
                 if scraper:
                     self._sessions[tid] = (scraper.username, scraper.password, scraper)
+            if scraper:
+                await self._persist_scraper_session_async(tid, scraper)
 
     async def stop_user(self, telegram_id: int):
         """Clean up active scraper session and cache when a user logs out."""
@@ -1802,6 +1840,7 @@ class MonitorEngine:
                         "requests_saved": cycle_m.estimated_requests_saved if cycle_m else 0,
                     }
                 )
+                await self._persist_scraper_session_async(tid, scraper)
                 await self._run_db(db.update_last_check, tid)
                 try:
                     await self._run_db(

@@ -172,6 +172,13 @@ async def login_got_pass(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> int:
 
         if ok:
             await _run_blocking(db.save_user, tid, username, password, scraper.user_id, scraper.full_name)
+            if hasattr(scraper, "export_session_state") and hasattr(db, "save_lms_session"):
+                try:
+                    state = scraper.export_session_state()
+                    if isinstance(state, dict) and state.get("cookies"):
+                        await _run_blocking(db.save_lms_session, tid, state)
+                except Exception as sess_err:
+                    logger.debug("Could not persist LMS session on login for %s: %s", tid, sess_err)
             ensure_fn = resolve_hook("_ensure_user_menu_button", _ensure_user_menu_button, _DEFAULT_ENSURE_MENU)
             _track_background_task(asyncio.create_task(ensure_fn(tg_bot, tid)))
             engine = get_engine(ctx)

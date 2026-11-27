@@ -7,7 +7,7 @@ import re
 import sys
 import threading
 from typing import Any
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 import requests
 from bs4 import BeautifulSoup
@@ -374,6 +374,74 @@ class LMSScraper:
 
     def close(self) -> None:
         self.http.close()
+
+    def export_session_state(self) -> dict[str, Any]:
+        """Export current LMS host cookies and session metadata for encrypted persistence."""
+        allowed_host = (urlsplit(LMS_BASE_URL).hostname or "").lower()
+        cookies_out: list[dict[str, Any]] = []
+        with self._state_lock:
+            for c in self.session.cookies:
+                dom = (getattr(c, "domain", "") or "").lstrip(".").lower()
+                if dom and allowed_host and not (dom == allowed_host or allowed_host.endswith("." + dom)):
+                    continue
+                cookies_out.append({
+                    "name": c.name,
+                    "value": c.value,
+                    "domain": c.domain or allowed_host,
+                    "path": c.path or "/",
+                    "secure": bool(getattr(c, "secure", True)),
+                    "expires": getattr(c, "expires", None),
+                })
+            return {
+                "username": self.username,
+                "cookies": cookies_out,
+                "sesskey": self.sesskey or "",
+                "user_id": self.user_id or "",
+                "full_name": self.full_name or "",
+            }
+
+    def restore_session_state(self, state: dict[str, Any] | None) -> bool:
+        """Restore persisted LMS cookies and session metadata for the matching username."""
+        if not isinstance(state, dict):
+            return False
+        if state.get("username") != self.username:
+            return False
+        raw_cookies = state.get("cookies")
+        if not isinstance(raw_cookies, list) or not raw_cookies:
+            return False
+        allowed_host = (urlsplit(LMS_BASE_URL).hostname or "").lower()
+        restored = 0
+        with self._state_lock:
+            for item in raw_cookies:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name") or "").strip()
+                value = str(item.get("value") or "")
+                if not name:
+                    continue
+                dom = str(item.get("domain") or allowed_host).strip()
+                dom_clean = dom.lstrip(".").lower()
+                if allowed_host and dom_clean and not (
+                    dom_clean == allowed_host or allowed_host.endswith("." + dom_clean)
+                ):
+                    continue
+                self.session.cookies.set(
+                    name,
+                    value,
+                    domain=dom or allowed_host,
+                    path=str(item.get("path") or "/"),
+                )
+                restored += 1
+            if restored <= 0:
+                return False
+            self.sesskey = str(state.get("sesskey") or "") or self.sesskey
+            self.user_id = str(state.get("user_id") or "") or self.user_id
+            self.full_name = str(state.get("full_name") or "") or self.full_name
+            self.logged_in = True
+            self.session_expired = False
+            self.waf_blocked = False
+            self.credentials_invalid = False
+        return True
 
     def login(self) -> bool:
         with self._state_lock:

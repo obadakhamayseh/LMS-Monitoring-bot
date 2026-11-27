@@ -517,6 +517,14 @@ def init_db():
                     FOREIGN KEY(telegram_id) REFERENCES users(telegram_id)
                 )
             """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS lms_sessions (
+                    telegram_id     BIGINT PRIMARY KEY,
+                    encrypted_state TEXT   NOT NULL,
+                    updated_at      BIGINT NOT NULL,
+                    FOREIGN KEY(telegram_id) REFERENCES users(telegram_id)
+                )
+            """)
         else:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS users (
@@ -688,6 +696,14 @@ def init_db():
                     p256dh       TEXT NOT NULL,
                     auth         TEXT NOT NULL,
                     created_at   INTEGER NOT NULL,
+                    FOREIGN KEY(telegram_id) REFERENCES users(telegram_id)
+                )
+            """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS lms_sessions (
+                    telegram_id     INTEGER PRIMARY KEY,
+                    encrypted_state TEXT    NOT NULL,
+                    updated_at      INTEGER NOT NULL,
                     FOREIGN KEY(telegram_id) REFERENCES users(telegram_id)
                 )
             """)
@@ -1431,9 +1447,62 @@ def cleanup_pair_codes(now_ts: Optional[int] = None) -> int:
         return count
 
 
+def save_lms_session(telegram_id, state: dict) -> bool:
+    """Encrypt and persist active LMS session cookies/metadata for seamless reuse across restarts."""
+    if not isinstance(state, dict) or not state.get("cookies"):
+        return False
+    try:
+        payload_json = json.dumps(state, ensure_ascii=False, separators=(",", ":"))
+        encrypted = encrypt_password(payload_json)
+        now_ts = int(time.time())
+        with DBContext() as db:
+            db.execute(
+                """
+                INSERT INTO lms_sessions (telegram_id, encrypted_state, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(telegram_id) DO UPDATE SET
+                    encrypted_state = excluded.encrypted_state,
+                    updated_at      = excluded.updated_at
+                """,
+                (int(telegram_id), encrypted, now_ts),
+            )
+        return True
+    except Exception as exc:
+        logger.debug("Failed to persist LMS session for %s: %s", telegram_id, exc)
+        return False
+
+
+def load_lms_session(telegram_id) -> Optional[dict]:
+    """Load and decrypt persisted LMS session state for a user, or return None."""
+    try:
+        with DBContext() as db:
+            row = db.fetchone(
+                "SELECT encrypted_state FROM lms_sessions WHERE telegram_id=?",
+                (int(telegram_id),),
+            )
+        if not row or not row.get("encrypted_state"):
+            return None
+        decrypted = decrypt_password(row["encrypted_state"])
+        parsed = json.loads(decrypted)
+        return parsed if isinstance(parsed, dict) else None
+    except Exception as exc:
+        logger.debug("Could not load persisted LMS session for %s: %s", telegram_id, exc)
+        return None
+
+
+def clear_lms_session(telegram_id) -> None:
+    """Delete persisted LMS session state for a user."""
+    try:
+        with DBContext() as db:
+            db.execute("DELETE FROM lms_sessions WHERE telegram_id=?", (int(telegram_id),))
+    except Exception as exc:
+        logger.debug("Could not clear persisted LMS session for %s: %s", telegram_id, exc)
+
+
 def delete_user(telegram_id):
     """Atomically delete a user and all dependent records across every table."""
     with DBContext() as db:
+        db.execute("DELETE FROM lms_sessions          WHERE telegram_id=?", (telegram_id,))
         db.execute("DELETE FROM push_subscriptions    WHERE telegram_id=?", (telegram_id,))
         db.execute("DELETE FROM calendar_tokens       WHERE telegram_id=?", (telegram_id,))
         db.execute("DELETE FROM app_sessions         WHERE telegram_id=?", (telegram_id,))
