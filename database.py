@@ -838,20 +838,36 @@ def migrate_user_passwords(db: DBContext) -> None:
         if not stored_pwd or is_encrypted_v1(stored_pwd):
             continue
 
+        new_ciphertext: Optional[str] = None
         if is_legacy_fernet_token(stored_pwd):
             try:
                 plain_pwd = decrypt_legacy_password(stored_pwd)
             except RuntimeError:
-                logger.error(
-                    "Password migration skipped for telegram_id=%s: unable to decrypt legacy token; row left untouched.",
-                    telegram_id,
-                )
-                continue
+                # Fallback: pre-C4 instances with ENCRYPTION_KEY set stored unprefixed Fernet tokens.
+                candidate_v1 = f"enc:v1:{stored_pwd}"
+                try:
+                    decrypt_password(candidate_v1)
+                    new_ciphertext = candidate_v1
+                except RuntimeError:
+                    logger.error(
+                        "Password migration skipped for telegram_id=%s: unable to decrypt legacy token; row left untouched.",
+                        telegram_id,
+                    )
+                    continue
+            else:
+                if is_encrypted_v1(plain_pwd):
+                    # Unwrap double-encrypted token (e.g. an old instance wrapped an enc:v1: value).
+                    try:
+                        decrypt_password(plain_pwd)
+                        new_ciphertext = plain_pwd
+                    except RuntimeError:
+                        new_ciphertext = encrypt_password(plain_pwd)
+                else:
+                    new_ciphertext = encrypt_password(plain_pwd)
         else:
             # Legacy plaintext password without enc:v1: prefix
-            plain_pwd = stored_pwd
+            new_ciphertext = encrypt_password(stored_pwd)
 
-        new_ciphertext = encrypt_password(plain_pwd)
         db.execute(
             "UPDATE users SET lms_password=? WHERE telegram_id=?",
             (new_ciphertext, telegram_id),

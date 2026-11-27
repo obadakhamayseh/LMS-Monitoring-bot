@@ -181,3 +181,52 @@ def test_password_migration_idempotent_and_preserves_undecryptable(
     user_101 = database.get_user(101)
     assert user_101 is not None
     assert user_101["lms_password"] == "legacy_bot_pass"
+
+
+def test_password_migration_unwraps_double_wrapped_and_unprefixed_env_key(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_file = tmp_path / "migration_unwrap.db"
+    key = Fernet.generate_key().decode("utf-8")
+    bot_token = "123456:MIGRATION_UNWRAP"
+
+    monkeypatch.setenv("ENCRYPTION_KEY", key)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", bot_token)
+    monkeypatch.setenv("DATABASE_URL", "")
+    monkeypatch.setenv("DIRECT_URL", "")
+    monkeypatch.setattr(database, "DATABASE_PATH", str(db_file))
+    monkeypatch.setattr(database, "DATABASE_URL", "")
+    monkeypatch.setattr(database, "DIRECT_URL", "")
+
+    database.init_db()
+
+    # Case 1: enc:v1: token wrapped again by a pre-C4 instance using TELEGRAM_BOT_TOKEN
+    inner_v1 = security.encrypt_password("real_pass_1")
+    double_wrapped = _legacy_encrypt_from_bot_token(inner_v1, bot_token)
+
+    # Case 2: unprefixed Fernet token encrypted directly with ENCRYPTION_KEY (pre-C4 with ENCRYPTION_KEY set)
+    unprefixed_env_key = Fernet(key.encode("utf-8")).encrypt(b"real_pass_2").decode("utf-8")
+
+    conn = sqlite3.connect(str(db_file))
+    try:
+        conn.executemany(
+            "INSERT INTO users (telegram_id, lms_username, lms_password) VALUES (?, ?, ?)",
+            [
+                (201, "u201", double_wrapped),
+                (202, "u202", unprefixed_env_key),
+            ],
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    database.init_db()
+
+    user_201 = database.get_user(201)
+    assert user_201 is not None
+    assert user_201["lms_password"] == "real_pass_1"
+
+    user_202 = database.get_user(202)
+    assert user_202 is not None
+    assert user_202["lms_password"] == "real_pass_2"
